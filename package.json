@@ -1,0 +1,25 @@
+{
+  "name": "zelux-dl",
+  "version": "1.0.0",
+  "description": "ZELUX-DL — Lightning-fast terminal file downloader",
+  "main": "zelux.js",
+  "bin": {
+    "zelux-dl": "./zelux.js"
+  },
+  "scripts": {
+    "start": "node zelux.js"
+  },
+  "dependencies": {
+    "blessed": "^0.1.81",
+    "caxa": "^3.0.1",
+    "chalk": "^4.1.2",
+    "cli-progress": "^3.12.0",
+    "jimp": "^0.22.12",
+    "png-to-ico": "^3.0.1",
+    "rcedit": "^5.0.2",
+    "resedit": "^3.0.2"
+  },
+  "devDependencies": {
+    "pkg": "^5.8.1"
+  }
+}

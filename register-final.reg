@@ -1,0 +1,8 @@
+Windows Registry Editor Version 5.00
+
+[HKEY_CURRENT_USER\Software\Classes\zelux]
+@="URL:ZELUX Protocol"
+"URL Protocol"=""
+
+[HKEY_CURRENT_USER\Software\Classes\zelux\shell\open\command]
+@="\"e:\\ProjectCode\\ZELUX-DL\\dist\\ZELUX-DL.exe\" \"%1\""

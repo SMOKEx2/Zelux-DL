@@ -1,0 +1,7 @@
+node_modules/
+downloads/
+cache/
+dist/
+*.exe
+*.log
+.env

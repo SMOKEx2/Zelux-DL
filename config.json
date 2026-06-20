@@ -1,0 +1,7 @@
+{
+  "DOWNLOADS_DIR": "downloads",
+  "MAX_REDIRECTS": 15,
+  "TIMEOUT_MS": 60000,
+  "MAX_RETRIES": 3,
+  "NUM_CONNECTIONS": 4
+}

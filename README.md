@@ -22,10 +22,29 @@
 
 ## 📥 วิธีติดตั้งและใช้งาน (Installation)
 
-### สำหรับ Windows
+### 🪟 สำหรับ Windows
 1. ไปที่หน้า [Releases](../../releases/latest)
 2. ดาวน์โหลดไฟล์ `ZELUX-DL.exe`
 3. ดับเบิ้ลคลิกเปิดใช้งานได้ทันที (ไม่ต้องติดตั้ง)
+
+### 🐧 สำหรับ Linux
+1. ไปที่หน้า [Releases](../../releases/latest)
+2. ดาวน์โหลดไฟล์ `ZELUX-DL-linux`
+3. เปิด Terminal แล้วรันคำสั่ง:
+```bash
+# ให้สิทธิ์รันโปรแกรม
+chmod +x ZELUX-DL-linux
+
+# เปิดใช้งาน
+./ZELUX-DL-linux
+```
+
+#### ลงทะเบียน Custom Protocol (zelux://) สำหรับ Linux
+หากต้องการใช้งานร่วมกับ Browser Extension ให้รัน:
+```bash
+chmod +x register-linux.sh
+./register-linux.sh
+```
 
 ### การโหลดวิดีโอ
 - เปิดโปรแกรมขึ้นมาแล้ว **คลิกขวาเพื่อวางลิงก์ (Paste)** วิดีโอที่ต้องการ แล้วกด `Enter`
@@ -69,8 +88,12 @@ npm install
 # รันโปรแกรมแบบทดสอบ
 npm start
 
-# บิวด์เป็นไฟล์ .exe
+# บิวด์เป็นไฟล์ .exe (Windows) และ binary (Linux)
 npm run build
+
+# หรือบิวด์แยกแพลตฟอร์ม
+npx pkg zelux.js -t node18-win-x64 -o dist/ZELUX-DL.exe     # Windows
+npx pkg zelux.js -t node18-linux-x64 -o dist/ZELUX-DL-linux  # Linux
 ```
 
 ## 📝 License

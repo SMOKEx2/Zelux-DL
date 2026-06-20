@@ -7,7 +7,8 @@
     "zelux-dl": "./zelux.js"
   },
   "scripts": {
-    "start": "node zelux.js"
+    "start": "node zelux.js",
+    "build": "pkg zelux.js -t node18-win-x64 -o dist/ZELUX-DL.exe && node scratch/set_exe_icon.js"
   },
   "dependencies": {
     "blessed": "^0.1.81",

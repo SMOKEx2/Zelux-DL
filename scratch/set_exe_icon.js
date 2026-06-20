@@ -1,7 +1,7 @@
 const fs = require('fs');
 const Jimp = require('jimp');
 const pngToIco = require('png-to-ico');
-const rcedit = require('rcedit');
+const rcedit = require('rcedit').rcedit;
 const path = require('path');
 
 async function main() {
@@ -19,7 +19,7 @@ async function main() {
     image.circle();
     
     console.log('Saving round PNG...');
-    await image.write(roundPngPath);
+    await image.writeAsync(roundPngPath);
 
     console.log('Converting to ICO...');
     const buf = await pngToIco.default(roundPngPath);

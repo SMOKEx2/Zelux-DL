@@ -3,12 +3,31 @@
   <h1>🚀 ZELUX-DL</h1>
   <p><b>Lightning-fast, beautiful, and interactive terminal video downloader.</b></p>
   
-  [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](#)
   [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
 </div>
 
 ---
+
+## ZELUX-DL 1.1
+
+เวอร์ชัน 1.1 เพิ่มระบบดาวน์โหลดต่อจากไฟล์ `.part`, ประวัติและ Retry, คิว Batch แบบพร้อมกัน,
+หน้า Settings และการตรวจ SHA-256 ก่อนติดตั้งอัปเดต
+
+คำสั่งใหม่:
+
+| คำสั่ง | คำอธิบาย |
+| :--- | :--- |
+| `settings` | แสดงค่าปัจจุบันทั้งหมด |
+| `set KEY VALUE` | เปลี่ยนค่า เช่น `set BATCH_CONCURRENCY 3` |
+| `history` | แสดงประวัติล่าสุดพร้อม ID และสถานะ |
+| `retry failed` | ลองดาวน์โหลดรายการที่ล้มเหลวทั้งหมดอีกครั้ง |
+| `retry <ID>` | ลองดาวน์โหลดรายการตาม History ID |
+
+การออก Release อัตโนมัติทำงานเมื่อ push tag รูปแบบ `v*` และจะสร้าง Windows EXE, Linux binary
+และ `SHA256SUMS.txt` หากตั้งค่า GitHub Secrets `WINDOWS_CERTIFICATE_BASE64` กับ
+`WINDOWS_CERTIFICATE_PASSWORD` ระบบจะเซ็น EXE ก่อนเผยแพร่ด้วย
 
 **ZELUX-DL** คือโปรแกรมช่วยดาวน์โหลดวิดีโอ (Wrapper สำหรับ `yt-dlp`) ที่ออกแบบมาเพื่อความง่าย รวดเร็ว และสวยงาม ด้วยหน้าจอ Terminal แบบ Interactive ที่มาพร้อมกับระบบสีสันและแอนิเมชัน ไม่ต้องจำคำสั่งให้ยุ่งยากอีกต่อไป!
 

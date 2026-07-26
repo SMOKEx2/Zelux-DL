@@ -33,6 +33,7 @@ async function main() {
     console.log('Done!');
   } catch (err) {
     console.error(err);
+    process.exitCode = 1;
   }
 }
 

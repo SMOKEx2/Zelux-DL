@@ -1,6 +1,6 @@
 {
   "name": "zelux-dl",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "ZELUX-DL — Lightning-fast terminal file downloader",
   "main": "zelux.js",
   "bin": {
@@ -8,19 +8,20 @@
   },
   "scripts": {
     "start": "node zelux.js",
-    "build": "pkg zelux.js -t node18-win-x64 -o dist/ZELUX-DL.exe && node scratch/set_exe_icon.js && pkg zelux.js -t node18-linux-x64 -o dist/ZELUX-DL-linux"
+    "build": "npm run build:windows && npm run build:linux && npm run checksums",
+    "build:windows": "pkg zelux.js -t node18-win-x64 -o dist/ZELUX-DL.exe && node scratch/set_exe_icon.js",
+    "build:linux": "pkg zelux.js -t node18-linux-x64 -o dist/ZELUX-DL-linux",
+    "checksums": "node scripts/generate-checksums.js",
+    "sign:windows": "powershell -ExecutionPolicy Bypass -File scripts/sign-windows.ps1",
+    "check": "node --check zelux.js && node --check make-cookies.js && node --test",
+    "test": "node --test"
   },
   "dependencies": {
-    "blessed": "^0.1.81",
-    "caxa": "^3.0.1",
     "chalk": "^4.1.2",
-    "cli-progress": "^3.12.0",
-    "jimp": "^0.22.12",
-    "png-to-ico": "^3.0.1",
-    "rcedit": "^5.0.2",
-    "resedit": "^3.0.2"
+    "cli-progress": "^3.12.0"
   },
   "devDependencies": {
-    "pkg": "^5.8.1"
+    "pkg": "^5.8.1",
+    "resedit": "^3.0.2"
   }
 }

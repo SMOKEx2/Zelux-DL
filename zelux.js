@@ -17,7 +17,7 @@ const crypto = require('crypto');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -38,6 +38,14 @@ let MAX_REDIRECTS = 15;
 let TIMEOUT_MS = 60000;
 let MAX_RETRIES = 3;
 let NUM_CONNECTIONS = 4;
+let MAX_PLAYLIST_ITEMS = 200;
+let BATCH_CONCURRENCY = 2;
+let HISTORY_LIMIT = 200;
+
+function toBoundedInteger(value, fallback, min, max) {
+  const parsed = typeof value === 'number' ? value : Number(value);
+  return Number.isSafeInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
+}
 
 function loadConfig() {
   const configPath = path.join(BASE_DIR, 'config.json');
@@ -46,7 +54,10 @@ function loadConfig() {
     MAX_REDIRECTS: 15,
     TIMEOUT_MS: 60000,
     MAX_RETRIES: 3,
-    NUM_CONNECTIONS: 16
+    NUM_CONNECTIONS: 16,
+    MAX_PLAYLIST_ITEMS: 200,
+    BATCH_CONCURRENCY: 2,
+    HISTORY_LIMIT: 200
   };
 
   if (fs.existsSync(configPath)) {
@@ -55,10 +66,13 @@ function loadConfig() {
       if (userConfig.DOWNLOADS_DIR) {
         DOWNLOADS_DIR = path.isAbsolute(userConfig.DOWNLOADS_DIR) ? userConfig.DOWNLOADS_DIR : path.join(BASE_DIR, userConfig.DOWNLOADS_DIR);
       }
-      if (userConfig.MAX_REDIRECTS) MAX_REDIRECTS = userConfig.MAX_REDIRECTS;
-      if (userConfig.TIMEOUT_MS) TIMEOUT_MS = userConfig.TIMEOUT_MS;
-      if (userConfig.MAX_RETRIES) MAX_RETRIES = userConfig.MAX_RETRIES;
-      if (userConfig.NUM_CONNECTIONS) NUM_CONNECTIONS = userConfig.NUM_CONNECTIONS;
+      MAX_REDIRECTS = toBoundedInteger(userConfig.MAX_REDIRECTS, defaults.MAX_REDIRECTS, 0, 50);
+      TIMEOUT_MS = toBoundedInteger(userConfig.TIMEOUT_MS, defaults.TIMEOUT_MS, 1000, 600000);
+      MAX_RETRIES = toBoundedInteger(userConfig.MAX_RETRIES, defaults.MAX_RETRIES, 0, 10);
+      NUM_CONNECTIONS = toBoundedInteger(userConfig.NUM_CONNECTIONS, defaults.NUM_CONNECTIONS, 1, 32);
+      MAX_PLAYLIST_ITEMS = toBoundedInteger(userConfig.MAX_PLAYLIST_ITEMS, defaults.MAX_PLAYLIST_ITEMS, 1, 5000);
+      BATCH_CONCURRENCY = toBoundedInteger(userConfig.BATCH_CONCURRENCY, defaults.BATCH_CONCURRENCY, 1, 8);
+      HISTORY_LIMIT = toBoundedInteger(userConfig.HISTORY_LIMIT, defaults.HISTORY_LIMIT, 10, 5000);
     } catch (e) {
       console.log(chalk.yellow('⚠️ ไม่สามารถอ่าน config.json ได้ จะใช้ค่าเริ่มต้นแทน'));
     }
@@ -74,6 +88,94 @@ function loadConfig() {
 }
 
 loadConfig();
+
+function getConfigSnapshot() {
+  return {
+    DOWNLOADS_DIR: path.relative(BASE_DIR, DOWNLOADS_DIR) || '.',
+    MAX_REDIRECTS,
+    TIMEOUT_MS,
+    MAX_RETRIES,
+    NUM_CONNECTIONS,
+    MAX_PLAYLIST_ITEMS,
+    BATCH_CONCURRENCY,
+    HISTORY_LIMIT,
+  };
+}
+
+function saveConfig() {
+  const configPath = path.join(BASE_DIR, 'config.json');
+  const tempPath = `${configPath}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(getConfigSnapshot(), null, 2) + '\n', 'utf8');
+  fs.renameSync(tempPath, configPath);
+}
+
+function updateSetting(name, rawValue) {
+  const key = String(name || '').toUpperCase();
+  const specs = {
+    MAX_REDIRECTS: [0, 50], TIMEOUT_MS: [1000, 600000], MAX_RETRIES: [0, 10],
+    NUM_CONNECTIONS: [1, 32], MAX_PLAYLIST_ITEMS: [1, 5000],
+    BATCH_CONCURRENCY: [1, 8], HISTORY_LIMIT: [10, 5000],
+  };
+  if (key === 'DOWNLOADS_DIR') {
+    const value = String(rawValue || '').trim();
+    if (!value) throw new Error('DOWNLOADS_DIR must not be empty');
+    DOWNLOADS_DIR = path.isAbsolute(value) ? value : path.join(BASE_DIR, value);
+    fs.mkdirSync(DOWNLOADS_DIR, { recursive: true });
+    saveConfig();
+    return DOWNLOADS_DIR;
+  }
+  if (!specs[key]) throw new Error(`Unknown setting: ${key}`);
+  const [min, max] = specs[key];
+  const value = toBoundedInteger(rawValue, NaN, min, max);
+  if (!Number.isSafeInteger(value)) throw new Error(`${key} must be an integer from ${min} to ${max}`);
+  ({ MAX_REDIRECTS, TIMEOUT_MS, MAX_RETRIES, NUM_CONNECTIONS, MAX_PLAYLIST_ITEMS, BATCH_CONCURRENCY, HISTORY_LIMIT } = {
+    MAX_REDIRECTS, TIMEOUT_MS, MAX_RETRIES, NUM_CONNECTIONS, MAX_PLAYLIST_ITEMS, BATCH_CONCURRENCY, HISTORY_LIMIT,
+    [key]: value,
+  });
+  saveConfig();
+  return value;
+}
+
+const HISTORY_PATH = path.join(BASE_DIR, 'history.json');
+
+function readHistory() {
+  try {
+    const value = JSON.parse(fs.readFileSync(HISTORY_PATH, 'utf8'));
+    return Array.isArray(value) ? value : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function writeHistory(entries) {
+  const tempPath = `${HISTORY_PATH}.tmp`;
+  fs.writeFileSync(tempPath, JSON.stringify(entries.slice(-HISTORY_LIMIT), null, 2) + '\n', 'utf8');
+  fs.renameSync(tempPath, HISTORY_PATH);
+}
+
+function addHistory(url) {
+  const entries = readHistory();
+  const entry = {
+    id: `${Date.now().toString(36)}-${crypto.randomBytes(3).toString('hex')}`,
+    url,
+    status: 'running',
+    startedAt: new Date().toISOString(),
+  };
+  entries.push(entry);
+  writeHistory(entries);
+  return entry.id;
+}
+
+function finishHistory(id, result) {
+  const entries = readHistory();
+  const entry = entries.find(item => item.id === id);
+  if (!entry) return;
+  entry.status = result && result.success ? 'completed' : result && result.cancelled ? 'cancelled' : 'failed';
+  entry.completedAt = new Date().toISOString();
+  if (result && result.filePath) entry.filePath = result.filePath;
+  if (result && result.error) entry.error = String(result.error).slice(0, 500);
+  writeHistory(entries);
+}
 
 // Helper to auto-load cookies.txt if available
 function getCookiesArgs() {
@@ -211,11 +313,40 @@ function renderScreen() {
       console.log('    ' + chalk.hex('#2dd4bf').bold('open') + '              ' + chalk.white('เปิดโฟลเดอร์ downloads'));
       console.log('    ' + chalk.hex('#f59e0b').bold('update') + '            ' + chalk.white('อัปเดตyt-dlpให้เป็นเวอร์ชันล่าสุด'));
       console.log('    ' + chalk.hex('#10b981').bold('upgrade') + '           ' + chalk.white('อัปเดต ZELUX-DL ตัวเต็ม'));
+      console.log('    ' + chalk.hex('#22d3ee').bold('settings') + '          ' + chalk.white('ดูการตั้งค่าปัจจุบัน'));
+      console.log('    ' + chalk.hex('#22d3ee').bold('set KEY VALUE') + '     ' + chalk.white('เปลี่ยนการตั้งค่า'));
+      console.log('    ' + chalk.hex('#fb7185').bold('history') + '           ' + chalk.white('ดูประวัติการดาวน์โหลด'));
+      console.log('    ' + chalk.hex('#fb7185').bold('retry [failed|ID]') + ' ดูรายการที่ล้มเหลวแล้วลองใหม่');
       console.log('    ' + chalk.hex('#f472b6').bold('help') + '              ' + chalk.white('แสดงคำสั่งทั้งหมด'));
       console.log('    ' + chalk.hex('#f87171').bold('exit') + '              ' + chalk.white('ออกจากโปรแกรม'));
       console.log();
       console.log(chalk.hex('#818cf8')('    [ กด Enter เพื่อกลับหน้าหลัก ]'));
       break;
+
+    case 'settings': {
+      console.log(chalk.hex('#22d3ee').bold('    ⚙ Settings'));
+      console.log();
+      for (const [key, value] of Object.entries(getConfigSnapshot())) {
+        console.log(`    ${chalk.cyan(key.padEnd(20))} ${chalk.yellow(String(value))}`);
+      }
+      console.log();
+      console.log(dim('    ใช้: set KEY VALUE'));
+      break;
+    }
+
+    case 'history': {
+      const entries = readHistory().slice(-8).reverse();
+      console.log(chalk.hex('#fb7185').bold('    Download History'));
+      console.log();
+      if (!entries.length) console.log(dim('    ยังไม่มีประวัติ'));
+      for (const entry of entries) {
+        const marker = entry.status === 'completed' ? success('✓') : entry.status === 'failed' ? error('✕') : warning('•');
+        console.log(`    ${marker} ${chalk.cyan(entry.id)} ${dim(entry.status)} ${String(entry.url).slice(0, 34)}`);
+      }
+      console.log();
+      console.log(dim('    ใช้: retry failed หรือ retry ID'));
+      break;
+    }
 
     case 'list':
       const files = fs.existsSync(DOWNLOADS_DIR) ? fs.readdirSync(DOWNLOADS_DIR).filter(f => fs.statSync(path.join(DOWNLOADS_DIR, f)).isFile()) : [];
@@ -313,6 +444,16 @@ function extractFilename(urlStr, headers) {
   return `download_${Date.now()}`;
 }
 
+function safeFilename(filename) {
+  const cleaned = sanitizeFilename(path.basename(String(filename || '')))
+    .replace(/[. ]+$/g, '')
+    .slice(0, 240);
+  const reserved = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
+  return !cleaned || cleaned === '.' || cleaned === '..' || reserved.test(cleaned)
+    ? `download_${Date.now()}`
+    : cleaned;
+}
+
 function formatBytes(b) {
   if (!b || b === 0) return '0 B';
   const u = ['B', 'KB', 'MB', 'GB', 'TB'];
@@ -372,12 +513,15 @@ function abortAllDownloads() {
 class CancelController {
   constructor() {
     this.cancelled = false;
-    this.childProcess = null;
+    this.childProcesses = new Set();
     this._onKey = null;
+    this._listenerCount = 0;
   }
 
   // Start listening for Escape/Ctrl+C during download
   startListening() {
+    this._listenerCount++;
+    if (this._listenerCount > 1) return;
     this.cancelled = false;
     const stdin = process.stdin;
     if (!stdin.isTTY || !stdin.setRawMode) return;
@@ -398,6 +542,8 @@ class CancelController {
 
   // Stop listening
   stopListening() {
+    this._listenerCount = Math.max(0, this._listenerCount - 1);
+    if (this._listenerCount > 0) return;
     const stdin = process.stdin;
     if (this._onKey) {
       stdin.removeListener('data', this._onKey);
@@ -414,18 +560,18 @@ class CancelController {
     this.cancelled = true;
 
     // Kill yt-dlp child process if active
-    if (this.childProcess) {
+    for (const childProcess of this.childProcesses) {
       try {
         if (process.platform === 'win32') {
           // On Windows, use taskkill to kill the process tree
           const { execSync } = require('child_process');
-          execSync(`taskkill /pid ${this.childProcess.pid} /T /F`, { stdio: 'ignore' });
+          execSync(`taskkill /pid ${childProcess.pid} /T /F`, { stdio: 'ignore' });
         } else {
-          this.childProcess.kill('SIGKILL');
+          childProcess.kill('SIGKILL');
         }
       } catch (e) { }
-      this.childProcess = null;
     }
+    this.childProcesses.clear();
 
     // Abort all HTTP connections
     abortAllDownloads();
@@ -437,7 +583,7 @@ const cancelCtrl = new CancelController();
 // ── HTTP request with redirect ──
 function httpRequest(rawUrl, extraHeaders = {}, redirectCount = 0) {
   return new Promise((resolve, reject) => {
-    if (redirectCount >= MAX_REDIRECTS) return reject(new Error('Redirect มากเกินไป'));
+    if (redirectCount > MAX_REDIRECTS) return reject(new Error('Redirect มากเกินไป'));
     let p;
     try { p = new URL(rawUrl); } catch (e) { return reject(new Error('URL ไม่ถูกต้อง')); }
     const client = p.protocol === 'https:' ? https : http;
@@ -449,7 +595,6 @@ function httpRequest(rawUrl, extraHeaders = {}, redirectCount = 0) {
       method: 'GET',
       headers,
       timeout: TIMEOUT_MS,
-      rejectUnauthorized: false,
     };
     const req = client.request(opts, (res) => {
       if ([301, 302, 303, 307, 308].includes(res.statusCode) && res.headers.location) {
@@ -460,6 +605,7 @@ function httpRequest(rawUrl, extraHeaders = {}, redirectCount = 0) {
         httpRequest(redir, extraHeaders, redirectCount + 1).then(resolve).catch(reject);
       } else {
         activeRequests.add(res);
+        res.once('close', () => activeRequests.delete(res));
         activeRequests.delete(req);
         resolve({ res, finalUrl: rawUrl });
       }
@@ -517,7 +663,15 @@ function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryL
     if (cancelCtrl.cancelled) return reject(new Error('CANCELLED'));
 
     const extra = {};
-    if (start !== undefined && end !== undefined) extra['Range'] = `bytes=${start}-${end}`;
+    const ranged = start !== undefined && end !== undefined;
+    let existingSize = ranged && fs.existsSync(dest) ? fs.statSync(dest).size : 0;
+    if (ranged && existingSize > end - start + 1) {
+      fs.truncateSync(dest, 0);
+      existingSize = 0;
+    }
+    const resumeStart = ranged ? start + existingSize : start;
+    if (ranged && resumeStart > end) return resolve(existingSize);
+    if (ranged) extra['Range'] = `bytes=${resumeStart}-${end}`;
 
     httpRequest(url, extra).then(({ res }) => {
       if (cancelCtrl.cancelled) return reject(new Error('CANCELLED'));
@@ -527,13 +681,26 @@ function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryL
         err.statusCode = res.statusCode;
         throw err;
       }
-      const ws = fs.createWriteStream(dest);
+      if (ranged && res.statusCode !== 206) {
+        res.resume();
+        const err = new Error('Server ignored the resume range');
+        err.statusCode = res.statusCode;
+        throw err;
+      }
+      if (ranged) {
+        const contentStart = Number((res.headers['content-range'] || '').match(/^bytes (\d+)-/i)?.[1]);
+        if (!Number.isSafeInteger(contentStart) || contentStart !== resumeStart) {
+          res.resume();
+          throw new Error('Server returned an invalid resume range');
+        }
+      }
+      const ws = fs.createWriteStream(dest, { flags: existingSize > 0 ? 'a' : 'w' });
       res.on('data', chunk => {
         if (cancelCtrl.cancelled) { ws.destroy(); res.destroy(); reject(new Error('CANCELLED')); return; }
         onData(chunk.length);
       });
       res.pipe(ws);
-      ws.on('finish', resolve);
+      ws.on('finish', () => resolve(existingSize));
       ws.on('error', reject);
       res.on('error', err => { ws.destroy(); reject(err); });
     }).catch(async (err) => {
@@ -810,6 +977,31 @@ function fetchJSON(url) {
   });
 }
 
+function fetchText(url, redirectCount = 0) {
+  return new Promise((resolve, reject) => {
+    if (redirectCount > 5) return reject(new Error('Too many redirects'));
+    const options = new URL(url);
+    options.headers = { 'User-Agent': 'ZELUX-DL/' + APP_VERSION };
+    https.get(options, (res) => {
+      if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
+        res.resume();
+        return fetchText(new URL(res.headers.location, url).href, redirectCount + 1).then(resolve, reject);
+      }
+      if (res.statusCode !== 200) {
+        res.resume();
+        return reject(new Error(`HTTP ${res.statusCode}`));
+      }
+      let data = '';
+      res.on('data', chunk => {
+        data += chunk;
+        if (data.length > 1024 * 1024) res.destroy(new Error('Response too large'));
+      });
+      res.on('end', () => resolve(data));
+      res.on('error', reject);
+    }).on('error', reject);
+  });
+}
+
 // Compare semver strings: returns 1 if a > b, -1 if a < b, 0 if equal
 function compareVersions(a, b) {
   const pa = a.replace(/^v/, '').split('.').map(Number);
@@ -823,6 +1015,12 @@ function compareVersions(a, b) {
   return 0;
 }
 
+function findChecksum(checksumText, assetName) {
+  const line = String(checksumText).split(/\r?\n/).find(item => item.trim().endsWith(assetName));
+  const hash = line && line.trim().split(/\s+/)[0].toLowerCase();
+  return hash && /^[a-f0-9]{64}$/.test(hash) ? hash : null;
+}
+
 // Check GitHub for a newer release. Returns { available, latest, downloadUrl, releaseNotes } or null
 async function checkForUpdate() {
   if (!GITHUB_REPO) return null;
@@ -831,13 +1029,16 @@ async function checkForUpdate() {
     const latestTag = release.tag_name; // e.g. "v1.1.0"
     if (compareVersions(latestTag, APP_VERSION) > 0) {
       // Find the right asset for this platform
-      const exeName = process.platform === 'win32' ? 'ZELUX-DL.exe' : 'ZELUX-DL';
+      const exeName = process.platform === 'win32' ? 'ZELUX-DL.exe' : 'ZELUX-DL-linux';
       const asset = release.assets.find(a => a.name.toLowerCase() === exeName.toLowerCase());
+      const checksumAsset = release.assets.find(a => a.name.toLowerCase() === 'sha256sums.txt');
       return {
         available: true,
         latest: latestTag,
         current: APP_VERSION,
         downloadUrl: asset ? asset.browser_download_url : null,
+        assetName: asset ? asset.name : null,
+        checksumUrl: checksumAsset ? checksumAsset.browser_download_url : null,
         releaseNotes: (release.body || '').substring(0, 200)
       };
     }
@@ -891,6 +1092,13 @@ async function selfUpdate() {
   try {
     // Download new version to temp file
     await downloadFile(update.downloadUrl, tempPath);
+
+    if (!update.checksumUrl) throw new Error('Release does not include SHA256SUMS.txt');
+    const checksumText = await fetchText(update.checksumUrl);
+    const expectedHash = findChecksum(checksumText, update.assetName);
+    if (!expectedHash) throw new Error('Invalid release checksum');
+    const actualHash = await calculateSHA256(tempPath);
+    if (actualHash.toLowerCase() !== expectedHash) throw new Error('Update checksum verification failed');
 
     if (process.platform === 'win32') {
       // On Windows, the running exe is locked. Use a .bat trampoline to:
@@ -992,7 +1200,7 @@ async function downloadYouTubeFile(url) {
   if (!ytdlpPath) {
     console.log('      ' + error('\u2715') + ' ไม่พบ yt-dlp ในระบบและไม่สามารถดาวน์โหลดได้');
     console.log();
-    return;
+    return { success: false, error: 'yt-dlp is unavailable' };
   }
 
   const ffmpegPath = await getFfmpegPath();
@@ -1002,7 +1210,7 @@ async function downloadYouTubeFile(url) {
   if (!isYouTubeUrl(url) && !isM3u8) {
     console.log('      ' + error('\u2715') + ' ลิงก์ไม่รองรับ');
     console.log();
-    return;
+    return { success: false, error: 'Unsupported URL' };
   }
 
   console.log('      ' + info('\u27F3') + ' กำลังตรวจสอบข้อมูลสื่อ...');
@@ -1015,8 +1223,9 @@ async function downloadYouTubeFile(url) {
   try {
     const getFlatMetadata = (ytdlp, targetUrl) => {
       return new Promise((resolve, reject) => {
-        const { exec } = require('child_process');
-        exec(`"${ytdlp}" --dump-json --flat-playlist --js-runtimes node${getCookiesArgs().str} "${targetUrl}"`, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+        const { execFile } = require('child_process');
+        const args = ['--dump-json', '--flat-playlist', '--js-runtimes', 'node', ...getCookiesArgs().arr, targetUrl];
+        execFile(ytdlp, args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
           if (err) return reject(err);
           resolve(stdout.trim());
         });
@@ -1031,6 +1240,12 @@ async function downloadYouTubeFile(url) {
       if (playlistTitle || lines.length > 1) {
         isPlaylist = true;
         entriesCount = firstEntry.n_entries || lines.length;
+        // จำกัดจำนวนเพลงใน playlist (ป้องกัน Mix playlist ที่มีเพลงเป็นพันๆ)
+        if (entriesCount > MAX_PLAYLIST_ITEMS) {
+          const originalCount = entriesCount;
+          entriesCount = MAX_PLAYLIST_ITEMS;
+          console.log('      ' + warning(`⚠️  Playlist มี ${originalCount} รายการ — จำกัดไว้ที่ ${MAX_PLAYLIST_ITEMS} รายการ`));
+        }
       } else {
         metadata = firstEntry;
       }
@@ -1038,7 +1253,7 @@ async function downloadYouTubeFile(url) {
   } catch (err) {
     console.log('      ' + error('\u2715') + ' ไม่สามารถตรวจสอบข้อมูลลิงก์ได้: ' + err.message);
     console.log();
-    return;
+    return { success: false, error: err.message };
   }
 
   // If it's a single video, fetch its full metadata for precise size/quality info
@@ -1046,8 +1261,9 @@ async function downloadYouTubeFile(url) {
     try {
       const getFullMetadata = (ytdlp, targetUrl) => {
         return new Promise((resolve, reject) => {
-          const { exec } = require('child_process');
-          exec(`"${ytdlp}" --dump-json --js-runtimes node --no-playlist${getCookiesArgs().str} "${targetUrl}"`, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout, stderr) => {
+          const { execFile } = require('child_process');
+          const args = ['--dump-json', '--js-runtimes', 'node', '--no-playlist', ...getCookiesArgs().arr, targetUrl];
+          execFile(ytdlp, args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
             if (err) return reject(err);
             try {
               resolve(JSON.parse(stdout));
@@ -1240,6 +1456,7 @@ async function downloadYouTubeFile(url) {
     args.push('--no-playlist');
   } else {
     args.push('-i'); // Ignore errors for individual videos in playlist
+    args.push('--playlist-end', String(MAX_PLAYLIST_ITEMS));
   }
 
   if (ffmpegPath) {
@@ -1247,7 +1464,13 @@ async function downloadYouTubeFile(url) {
   }
 
   // ทะลวงลิมิตความเร็วของ YouTube โดยใช้เทคนิคการโหลดพร้อมกันหลายท่อ (Multi-connection for DASH/HLS)
-  args.push('--concurrent-fragments', '32');
+  if (isPlaylist) {
+    // Playlist: ลดความเร็วลงเพื่อป้องกัน YouTube rate-limit
+    args.push('--concurrent-fragments', '4');
+    args.push('--sleep-interval', '2', '--max-sleep-interval', '5');
+  } else {
+    args.push('--concurrent-fragments', '32');
+  }
 
   const cookieArgs = getCookiesArgs().arr;
   if (cookieArgs.length > 0) args.push(...cookieArgs);
@@ -1261,7 +1484,7 @@ async function downloadYouTubeFile(url) {
   try {
     const warningMsg = await new Promise((resolve, reject) => {
       const child = spawn(ytdlpPath, args);
-      cancelCtrl.childProcess = child;
+      cancelCtrl.childProcesses.add(child);
       let stderrData = '';
       let currentItem = 1;
       let totalItems = entriesCount;
@@ -1312,7 +1535,7 @@ async function downloadYouTubeFile(url) {
       });
 
       child.on('close', async (code) => {
-        cancelCtrl.childProcess = null;
+        cancelCtrl.childProcesses.delete(child);
         if (cancelCtrl.cancelled) {
           return reject(new Error('CANCELLED'));
         }
@@ -1459,6 +1682,8 @@ async function downloadYouTubeFile(url) {
       }
     } catch (e) { }
 
+    return { success: true, filePath: isPlaylist ? targetDir : filePath };
+
   } catch (err) {
     cancelCtrl.stopListening();
     bar.stop();
@@ -1466,38 +1691,22 @@ async function downloadYouTubeFile(url) {
     if (err.message === 'CANCELLED') {
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + warning.bold('⚠️ ยกเลิกการดาวน์โหลดแล้ว'));
-      // Clean up incomplete files
-      if (!isPlaylist) {
-        try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) { }
-      }
-      // Clean up temp/part files
-      try {
-        const dir = isPlaylist ? targetDir : path.dirname(filePath);
-        if (fs.existsSync(dir)) {
-          const tempFiles = fs.readdirSync(dir).filter(f => f.endsWith('.part') || f.endsWith('.temp') || f.endsWith('.ytdl'));
-          for (const tf of tempFiles) {
-            try { fs.unlinkSync(path.join(dir, tf)); } catch (e) { }
-          }
-        }
-      } catch (e) { }
       console.log();
+      return { success: false, cancelled: true, error: 'Cancelled' };
     } else {
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + error('✕') + ' ดาวน์โหลดล้มเหลว: ' + err.message);
-      if (!isPlaylist) {
-        try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) { }
-      }
       console.log();
+      return { success: false, error: err.message };
     }
   }
 }
 
 // ── Download a single file ──
-async function downloadSingleFile(url) {
+async function performDownload(url) {
   const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
   if (isYouTubeUrl(url) || isM3u8) {
-    await downloadYouTubeFile(url);
-    return;
+    return downloadYouTubeFile(url);
   }
   console.log('      ' + info('\u27F3') + ' กำลังตรวจสอบลิงก์...');
 
@@ -1507,10 +1716,11 @@ async function downloadSingleFile(url) {
   } catch (err) {
     console.log('      ' + error('\u2715') + ' ไม่สามารถเชื่อมต่อได้: ' + err.message);
     console.log();
-    return;
+    return { success: false, error: err.message };
   }
 
-  const { finalUrl, acceptRanges, totalSize, filename, contentType } = fileInfo;
+  const { finalUrl, acceptRanges, totalSize, contentType } = fileInfo;
+  const filename = safeFilename(fileInfo.filename);
 
   let category = 'Others';
   const ext = path.extname(filename).toLowerCase();
@@ -1533,6 +1743,7 @@ async function downloadSingleFile(url) {
   }
 
   const filePath = getUniqueFilePath(targetDir, filename);
+  const partialPath = `${filePath}.part`;
   let useMulti = acceptRanges && totalSize > 1024 * 1024;
   let connCount = useMulti ? NUM_CONNECTIONS : 1;
 
@@ -1587,6 +1798,14 @@ async function downloadSingleFile(url) {
   });
 
   let downloadedBytes = 0;
+  if (useMulti) {
+    for (let i = 0; i < connCount; i++) {
+      const partPath = `${filePath}.part${i}`;
+      if (fs.existsSync(partPath)) downloadedBytes += fs.statSync(partPath).size;
+    }
+  } else if (acceptRanges && fs.existsSync(partialPath)) {
+    downloadedBytes = Math.min(fs.statSync(partialPath).size, totalSize);
+  }
   let lastTime = Date.now();
   let lastBytes = 0;
   let currentSpeed = 0;
@@ -1638,7 +1857,6 @@ async function downloadSingleFile(url) {
         await mergeChunks(filePath, connCount);
       } catch (multiErr) {
         if (cancelCtrl.cancelled) throw new Error('CANCELLED');
-        abortAllDownloads();
         downloadedBytes = 0;
         lastBytes = 0;
         currentSpeed = 0;
@@ -1650,10 +1868,16 @@ async function downloadSingleFile(url) {
 
         cleanPartials(filePath, connCount);
 
-        await downloadRange(finalUrl, undefined, undefined, filePath, onData, 0, true);
+        await downloadRange(finalUrl, 0, totalSize - 1, partialPath, onData, 0, true);
+        fs.renameSync(partialPath, filePath);
       }
     } else {
-      await downloadRange(finalUrl, undefined, undefined, filePath, onData, 0, true);
+      if (acceptRanges && totalSize > 0) {
+        await downloadRange(finalUrl, 0, totalSize - 1, partialPath, onData, 0, true);
+        fs.renameSync(partialPath, filePath);
+      } else {
+        await downloadRange(finalUrl, undefined, undefined, filePath, onData, 0, true);
+      }
     }
 
     if (cancelCtrl.cancelled) throw new Error('CANCELLED');
@@ -1662,7 +1886,6 @@ async function downloadSingleFile(url) {
     clearInterval(redrawTimer);
     bar.update(totalSize > 0 ? totalSize : 1, { speed: '\u2713 Done!', eta_formatted: '0:00', downloaded: formatBytes(downloadedBytes) });
     bar.stop();
-    abortAllDownloads();
 
     process.stdout.write('      ' + dim('\uD83D\uDD12 กำลังคำนวณ SHA256...'));
     const hash = await calculateSHA256(filePath);
@@ -1683,26 +1906,53 @@ async function downloadSingleFile(url) {
     console.log('      ' + dim('SHA256    : ') + accent(displayHash));
     console.log('    ' + rainbowLine('\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501', Date.now() / 5));
     console.log();
+    return { success: true, filePath };
 
   } catch (err) {
     cancelCtrl.stopListening();
     clearInterval(redrawTimer);
     bar.stop();
-    abortAllDownloads();
 
     if (err.message === 'CANCELLED') {
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + warning.bold('⚠️ ยกเลิกการดาวน์โหลดแล้ว'));
-      try { if (fs.existsSync(filePath)) fs.unlinkSync(filePath); } catch (e) { }
-      cleanPartials(filePath, connCount);
       console.log();
+      return { success: false, cancelled: true, error: 'Cancelled' };
     } else {
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + error('\u2715') + ' ดาวน์โหลดล้มเหลว: ' + err.message);
-      cleanPartials(filePath, connCount);
       console.log();
+      return { success: false, error: err.message };
     }
   }
+}
+
+async function downloadSingleFile(url) {
+  const historyId = addHistory(url);
+  let result;
+  try {
+    result = await performDownload(url);
+    if (!result) result = { success: false, error: 'Download did not complete' };
+  } catch (err) {
+    result = { success: false, error: err.message };
+  }
+  finishHistory(historyId, result);
+  return result;
+}
+
+async function runWithConcurrency(items, limit, handler) {
+  const results = new Array(items.length);
+  let nextIndex = 0;
+  const worker = async () => {
+    while (true) {
+      const index = nextIndex++;
+      if (index >= items.length) return;
+      results[index] = await handler(items[index], index);
+    }
+  };
+  const count = Math.max(1, Math.min(toBoundedInteger(limit, 1, 1, 32), items.length || 1));
+  await Promise.all(Array.from({ length: count }, worker));
+  return results;
 }
 
 // ═══════════════════════════════════════════
@@ -1710,19 +1960,19 @@ async function downloadSingleFile(url) {
 // ═══════════════════════════════════════════
 
 async function handleBatch(urls) {
-  if (urls.length === 1) { await downloadSingleFile(urls[0]); return; }
+  if (urls.length === 1) return [await downloadSingleFile(urls[0])];
   console.log();
   console.log('  ' + info('\uD83D\uDCE6') + ` Batch Download — ${chalk.yellow(urls.length)} ไฟล์`);
-  for (let i = 0; i < urls.length; i++) {
-    console.log();
-    console.log('  ' + rainbowLine(`── [ ${i + 1} / ${urls.length} ] ──`, Date.now() / 5));
-    console.log('  ' + dim(urls[i].length > 70 ? urls[i].substring(0, 67) + '...' : urls[i]));
-    await downloadSingleFile(urls[i]);
-  }
+  const concurrency = Math.min(BATCH_CONCURRENCY, urls.length);
+  const results = await runWithConcurrency(urls, concurrency, async (url, index) => {
+    console.log('  ' + info('>') + ` [${index + 1}/${urls.length}] ${dim(url.slice(0, 65))}`);
+    return downloadSingleFile(url);
+  });
   console.log('  ' + rainbowLine(' \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', Date.now() / 5));
   console.log('  ' + success.bold(`\u2713 Batch เสร็จสิ้น! ${urls.length} ไฟล์`));
   console.log('  ' + rainbowLine(' \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', Date.now() / 5));
   console.log();
+  return results;
 }
 
 // ═══════════════════════════════════════════
@@ -1730,11 +1980,12 @@ async function handleBatch(urls) {
 // ═══════════════════════════════════════════
 
 function openFolder() {
-  const { exec } = require('child_process');
+  const { spawn } = require('child_process');
   const p = os.platform();
-  if (p === 'win32') exec(`explorer "${DOWNLOADS_DIR.replace(/\//g, '\\')}"`);
-  else if (p === 'darwin') exec(`open "${DOWNLOADS_DIR}"`);
-  else exec(`xdg-open "${DOWNLOADS_DIR}"`);
+  const command = p === 'win32' ? 'explorer.exe' : p === 'darwin' ? 'open' : 'xdg-open';
+  const child = spawn(command, [DOWNLOADS_DIR], { detached: true, stdio: 'ignore', windowsHide: true });
+  child.on('error', () => { });
+  child.unref();
 }
 
 function isValidUrl(s) {
@@ -1852,6 +2103,52 @@ async function handleLineInput(line) {
       renderScreen();
       createReadline();
       break;
+
+    case 'settings': case 'config':
+      currentView = 'settings';
+      renderScreen();
+      createReadline();
+      break;
+
+    case 'history':
+      currentView = 'history';
+      renderScreen();
+      createReadline();
+      break;
+
+    case 'set': {
+      const parts = input.match(/^set\s+(\S+)\s+(.+)$/i);
+      try {
+        if (!parts) throw new Error('Usage: set KEY VALUE');
+        const value = updateSetting(parts[1], parts[2]);
+        console.log('    ' + success('✓') + ` ${parts[1].toUpperCase()} = ${value}`);
+      } catch (err) {
+        console.log('    ' + error('✕') + ' ' + err.message);
+      }
+      writePrompt();
+      break;
+    }
+
+    case 'retry': {
+      const selector = input.split(/\s+/)[1] || 'failed';
+      const entries = readHistory();
+      const selected = selector.toLowerCase() === 'failed'
+        ? entries.filter(item => item.status === 'failed' || item.status === 'cancelled')
+        : entries.filter(item => item.id === selector);
+      const urls = [...new Set(selected.map(item => item.url).filter(isValidUrl))];
+      if (!urls.length) {
+        console.log('    ' + warning('!') + ' No retryable downloads found');
+        writePrompt();
+        break;
+      }
+      if (rl) { rl.removeAllListeners('close'); rl.close(); rl = null; }
+      currentView = 'download';
+      renderScreen();
+      await handleBatch(urls);
+      currentView = 'download-done';
+      createReadline();
+      break;
+    }
 
     case 'open': case 'o':
       openFolder();
@@ -1996,4 +2293,16 @@ async function main() {
   createReadline();
 }
 
-main();
+if (require.main === module) {
+  main();
+}
+
+module.exports = {
+  compareVersions,
+  downloadRange,
+  findChecksum,
+  isValidUrl,
+  runWithConcurrency,
+  safeFilename,
+  toBoundedInteger,
+};

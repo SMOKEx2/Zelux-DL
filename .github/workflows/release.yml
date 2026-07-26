@@ -32,6 +32,13 @@ jobs:
           [IO.File]::WriteAllBytes($certificatePath, [Convert]::FromBase64String($env:WINDOWS_CERTIFICATE_BASE64))
           ./scripts/sign-windows.ps1 -CertificatePath $certificatePath -CertificatePassword $env:WINDOWS_CERTIFICATE_PASSWORD
           Remove-Item -LiteralPath $certificatePath -Force
+      - name: Smoke-test Windows executable
+        shell: pwsh
+        run: |
+          'q' | & .\dist\ZELUX-DL.exe | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            throw "ZELUX-DL.exe exited with code $LASTEXITCODE"
+          }
       - run: npm run build:linux
       - run: npm run checksums
       - uses: actions/upload-artifact@v4

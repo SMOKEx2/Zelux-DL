@@ -1,7 +1,8 @@
 node_modules/
 downloads/
 cache/
-dist/
+dist/*
+!dist/icon.ico
 *.exe
 *.log
 history.json

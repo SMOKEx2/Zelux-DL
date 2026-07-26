@@ -4,4 +4,7 @@ cache/
 dist/
 *.exe
 *.log
+history.json
+history.json.tmp
+config.json.tmp
 .env

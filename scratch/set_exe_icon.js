@@ -1,9 +1,10 @@
 const fs = require('fs');
-const resedit = require('resedit');
+const { load: loadResedit } = require('resedit/cjs');
 const path = require('path');
 
 async function main() {
   try {
+    const resedit = await loadResedit();
     const rootDir = path.join(__dirname, '..');
     const icoPath = path.join(rootDir, 'dist', 'icon.ico');
     const exePath = path.join(rootDir, 'dist', 'ZELUX-DL.exe');

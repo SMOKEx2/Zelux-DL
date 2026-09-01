@@ -1,3 +1,0 @@
-/* Geometry tokens from the ZELUX-DL Pulse Dashboard Figma frame (1440x900). */
-.side{width:240px}.top{margin-left:20px;margin-right:20px}.grid{padding-left:20px;padding-right:20px;gap:20px}.left{flex:0 0 730px;width:730px}.rail{width:390px;flex-basis:390px}.drop{width:730px;height:160px}.queue{width:730px}.panel{border-radius:16px}.perf{height:260px}.summary{height:252px}.ext{height:108px}
-@media(max-width:1200px){.left{flex-basis:auto;width:auto}.rail{width:280px;flex-basis:280px}.drop,.queue{width:auto}}

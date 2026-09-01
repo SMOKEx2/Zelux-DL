@@ -1,6 +1,6 @@
 {
   "name": "zelux-dl",
-  "version": "1.6.0",
+  "version": "1.5.3",
   "description": "ZELUX-DL — Lightning-fast terminal file downloader",
   "main": "zelux.js",
   "bin": {
@@ -8,7 +8,6 @@
   },
   "scripts": {
     "start": "node zelux.js",
-    "start:desktop": "electron desktop/main.js",
     "build": "npm run build:windows && npm run build:linux && npm run checksums",
     "build:windows": "pkg zelux.js -t node18-win-x64 -o dist/ZELUX-DL.raw.exe && node scripts/apply-windows-resources.js dist/ZELUX-DL.raw.exe dist/ZELUX-DL.exe",
     "build:linux": "pkg zelux.js -t node18-linux-x64 -o dist/ZELUX-DL-linux",
@@ -23,7 +22,6 @@
     "yauzl": "^3.4.0"
   },
   "devDependencies": {
-    "electron": "^37.10.3",
     "pkg": "^5.8.1",
     "resedit": "^3.1.0"
   }

@@ -1,11 +1,5 @@
 # Changelog
 
-## 1.6.0 - 2026-09-01
-
-- เพิ่ม Desktop Pulse UI แบบ Electron ตามดีไซน์ม่วง-ดำ glassmorphism
-- เพิ่ม Dashboard, Download Queue, progress controls, performance panel และ Extension panel
-- เพิ่มคำสั่ง `npm run start:desktop` สำหรับเปิดโหมด Desktop UI
-
 ## 1.5.3 - 2026-09-01
 
 - เพิ่มการตรวจสอบอัปเดต ZELUX-DL แบบไม่บล็อกตอนเปิดโปรแกรม

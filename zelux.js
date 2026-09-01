@@ -19,7 +19,7 @@ const { once } = require('events');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.5.3';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 

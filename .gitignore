@@ -2,7 +2,9 @@ node_modules/
 downloads/
 cache/
 dist/
+scratch/
 *.exe
+*.old
 *.log
 history.json
 history.json.tmp

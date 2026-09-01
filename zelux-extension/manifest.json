@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZELUX-DL Integrator",
-  "version": "2.0",
-  "description": "Send links directly to your local ZELUX-DL app.",
+  "version": "2.2",
+  "description": "Send one or many links directly to your local ZELUX-DL app.",
   "permissions": [
     "contextMenus",
     "scripting",

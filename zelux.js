@@ -12,12 +12,14 @@ const { URL } = require('url');
 const readline = require('readline');
 const chalk = require('chalk');
 const cliProgress = require('cli-progress');
+const yauzl = require('yauzl');
 const os = require('os');
 const crypto = require('crypto');
+const { once } = require('events');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.1.0';
+const APP_VERSION = '1.5.2';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -476,14 +478,392 @@ function formatETA(s) {
   return `${m}:${sec.toString().padStart(2, '0')}`;
 }
 
+function formatGitHubProgressLines(progress, payload, barSize = 33) {
+  const filled = Math.round(progress * barSize);
+  const rb = rainbowBar(filled, barSize - filled);
+  const pct = (progress * 100).toFixed(1) + '%';
+  const speed = String(payload.speed || '0 B/s');
+  const eta = String(payload.eta || '--:--');
+  const downloaded = String(payload.downloaded || '0 B').replace(/\s+/g, '');
+  const total = String(payload.total || '0 B').replace(/\s+/g, '');
+  return {
+    barLine: `      ${rb} ${chalk.bold.white(pct.padStart(6))}`,
+    statsLine: `      ${chalk.hex('#f472b6').bold(speed)} │ ${chalk.hex('#94a3b8')(`${downloaded}/${total}`)} │ ${chalk.hex('#34d399').bold(`ETA ${eta}`)}`,
+  };
+}
+
+const reservedOutputPaths = new Set();
+const reservedOutputDirectories = new Set();
+
 function getUniqueFilePath(dir, filename) {
   let fp = path.join(dir, filename);
-  if (!fs.existsSync(fp)) return fp;
   const ext = path.extname(filename);
   const base = path.basename(filename, ext);
   let c = 1;
-  while (fs.existsSync(fp)) { fp = path.join(dir, `${base} (${c})${ext}`); c++; }
+  while (fs.existsSync(fp) || reservedOutputPaths.has(path.resolve(fp))) {
+    fp = path.join(dir, `${base} (${c})${ext}`);
+    c++;
+  }
+  reservedOutputPaths.add(path.resolve(fp));
   return fp;
+}
+
+function getUniqueDirectoryPath(dir, dirname) {
+  const safeName = safeFilename(dirname);
+  let target = path.join(dir, safeName);
+  let counter = 1;
+  while (fs.existsSync(target) || reservedOutputDirectories.has(path.resolve(target))) {
+    target = path.join(dir, `${safeName} (${counter})`);
+    counter++;
+  }
+  reservedOutputDirectories.add(path.resolve(target));
+  return target;
+}
+
+function removeDirectoryIfEmpty(dir, allowedRoot) {
+  const root = path.resolve(allowedRoot);
+  const target = path.resolve(dir);
+  if (target === root || !target.startsWith(root + path.sep)) return false;
+  if (!fs.existsSync(target) || !fs.statSync(target).isDirectory()) return false;
+  if (fs.readdirSync(target).length !== 0) return false;
+  fs.rmdirSync(target);
+  return true;
+}
+
+function decodeHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#x2F;/gi, '/');
+}
+
+function extractGoogleFileId(parsed) {
+  const pathMatch = parsed.pathname.match(/\/(?:file\/d|document\/d|spreadsheets\/d|presentation\/d)\/([a-z0-9_-]+)/i);
+  const fileId = pathMatch?.[1] || parsed.searchParams.get('id');
+  return fileId && /^[a-z0-9_-]{10,}$/i.test(fileId) ? fileId : null;
+}
+
+async function resolveDownloadProvider(rawUrl, fetchPage = fetchText) {
+  const parsed = new URL(rawUrl);
+  const hostname = parsed.hostname.toLowerCase();
+
+  if (hostname === 'drive.google.com' || hostname === 'docs.google.com') {
+    const fileId = extractGoogleFileId(parsed);
+    if (!fileId) throw new Error('ไม่พบ File ID ในลิงก์ Google Drive');
+
+    if (/\/document\/d\//i.test(parsed.pathname)) {
+      return { provider: 'Google Docs', url: `https://docs.google.com/document/d/${fileId}/export?format=docx` };
+    }
+    if (/\/spreadsheets\/d\//i.test(parsed.pathname)) {
+      return { provider: 'Google Sheets', url: `https://docs.google.com/spreadsheets/d/${fileId}/export?format=xlsx` };
+    }
+    if (/\/presentation\/d\//i.test(parsed.pathname)) {
+      return { provider: 'Google Slides', url: `https://docs.google.com/presentation/d/${fileId}/export/pptx` };
+    }
+    return {
+      provider: 'Google Drive',
+      url: `https://drive.usercontent.google.com/download?id=${encodeURIComponent(fileId)}&export=download&confirm=t`,
+    };
+  }
+
+  if (hostname === 'drive.usercontent.google.com') {
+    return { provider: 'Google Drive', url: parsed.href };
+  }
+
+  if (hostname === 'dropbox.com' || hostname.endsWith('.dropbox.com')) {
+    parsed.searchParams.delete('raw');
+    parsed.searchParams.set('dl', '1');
+    return { provider: 'Dropbox', url: parsed.href };
+  }
+
+  if (hostname === 'pixeldrain.com' || hostname === 'www.pixeldrain.com') {
+    const match = parsed.pathname.match(/^\/(?:u|file)\/([a-z0-9_-]+)\/?$/i);
+    if (match) {
+      return { provider: 'Pixeldrain', url: `https://pixeldrain.com/api/file/${encodeURIComponent(match[1])}?download` };
+    }
+    if (parsed.pathname.startsWith('/api/file/')) return { provider: 'Pixeldrain', url: parsed.href };
+  }
+
+  if (hostname === 'huggingface.co') {
+    const segments = parsed.pathname.split('/').filter(Boolean);
+    const blobIndex = segments.indexOf('blob');
+    if (blobIndex >= 2 && blobIndex < segments.length - 1) {
+      segments[blobIndex] = 'resolve';
+      parsed.pathname = '/' + segments.map(segment => encodeURIComponent(decodeURIComponent(segment))).join('/');
+      parsed.searchParams.set('download', 'true');
+    }
+    return { provider: 'Hugging Face', url: parsed.href };
+  }
+
+  if (hostname === 'mediafire.com' || hostname.endsWith('.mediafire.com')) {
+    if (hostname.startsWith('download')) return { provider: 'MediaFire', url: parsed.href };
+    const html = await fetchPage(parsed.href);
+    const button = html.match(/<a\b[^>]*\bid=["']downloadButton["'][^>]*>/i)?.[0];
+    const direct = button?.match(/\bhref=["']([^"']+)["']/i)?.[1]
+      || html.match(/https:\/\/download[^"'\s<>]+\.mediafire\.com\/[^"'\s<>]+/i)?.[0];
+    if (!direct) throw new Error('MediaFire ไม่ส่งลิงก์ไฟล์ (ไฟล์อาจถูกล็อกหรือลบแล้ว)');
+    return { provider: 'MediaFire', url: decodeHtmlEntities(direct) };
+  }
+
+  if (hostname === '1drv.ms' || hostname === 'onedrive.live.com' || hostname.endsWith('.sharepoint.com')) {
+    parsed.searchParams.set('download', '1');
+    return { provider: hostname.endsWith('.sharepoint.com') ? 'SharePoint' : 'OneDrive', url: parsed.href };
+  }
+
+  if (hostname === 'github.com' || hostname === 'raw.githubusercontent.com' || hostname === 'codeload.github.com') {
+    return { provider: 'GitHub', url: parsed.href };
+  }
+
+  const mediaProviders = [
+    ['vimeo.com', 'Vimeo'], ['tiktok.com', 'TikTok'], ['facebook.com', 'Facebook'],
+    ['fb.watch', 'Facebook'], ['instagram.com', 'Instagram'], ['x.com', 'X/Twitter'],
+    ['twitter.com', 'X/Twitter'], ['twitch.tv', 'Twitch'], ['dailymotion.com', 'Dailymotion'],
+    ['dai.ly', 'Dailymotion'], ['soundcloud.com', 'SoundCloud'], ['bandcamp.com', 'Bandcamp'],
+  ];
+  const mediaProvider = mediaProviders.find(([domain]) => hostname === domain || hostname.endsWith(`.${domain}`));
+  if (mediaProvider) return { provider: mediaProvider[1], url: parsed.href };
+
+  return { provider: 'Direct HTTP', url: parsed.href };
+}
+
+function parseGitHubRepositoryUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const hostname = parsed.hostname.toLowerCase();
+    if (!['http:', 'https:'].includes(parsed.protocol) || !['github.com', 'codeload.github.com'].includes(hostname)) return null;
+    const segments = parsed.pathname.split('/').filter(Boolean).map(segment => decodeURIComponent(segment));
+    const owner = segments[0];
+    const repo = segments[1].replace(/\.git$/i, '');
+    const validSegment = /^[a-z0-9_.-]+$/i;
+    if (!validSegment.test(owner) || !validSegment.test(repo) || !repo) return null;
+
+    if (hostname === 'github.com' && segments.length === 2) return { owner, repo };
+
+    let ref = null;
+    if (hostname === 'github.com' && segments[2] === 'archive') {
+      if (segments[3] === 'refs' && ['heads', 'tags'].includes(segments[4]) && segments.length >= 6) {
+        ref = segments.slice(5).join('/').replace(/\.zip$/i, '');
+      } else if (segments.length === 4) {
+        ref = segments[3].replace(/\.zip$/i, '');
+      }
+    } else if (hostname === 'codeload.github.com' && segments[2] === 'zip') {
+      if (segments[3] === 'refs' && ['heads', 'tags'].includes(segments[4]) && segments.length >= 6) {
+        ref = segments.slice(5).join('/').replace(/\.zip$/i, '');
+      } else if (segments.length === 4) {
+        ref = segments[3].replace(/\.zip$/i, '');
+      }
+    }
+
+    return ref ? { owner, repo, ref } : null;
+  } catch (_) {
+    return null;
+  }
+}
+
+function decodeZeluxProtocolArg(value) {
+  const decoded = decodeZeluxProtocolArgs(value);
+  return decoded[0] || String(value || '').trim();
+}
+
+function decodeZeluxProtocolArgs(value) {
+  const raw = String(value || '').trim();
+  if (!/^zelux:/i.test(raw)) return raw ? [raw] : [];
+
+  try {
+    const protocolUrl = new URL(raw);
+    if (protocolUrl.hostname.toLowerCase() === 'download') {
+      const encodedList = protocolUrl.searchParams.get('urls');
+      if (encodedList) {
+        const parsedList = JSON.parse(encodedList);
+        if (Array.isArray(parsedList)) {
+          return parsedList.map(item => String(item || '').trim()).filter(Boolean);
+        }
+      }
+      const targetUrl = protocolUrl.searchParams.get('url');
+      if (targetUrl) return [targetUrl];
+    }
+  } catch (_) { }
+
+  // Keep links from extension versions before 2.1 working.
+  let legacy = raw.replace(/^zelux:\/\//i, '');
+  legacy = legacy.replace(/^(https?)\/\//i, '$1://');
+  try { legacy = decodeURIComponent(legacy); } catch (_) { }
+  return legacy ? [legacy] : [];
+}
+
+function extractUrlsFromText(value) {
+  const values = Array.isArray(value) ? value : [value];
+  const found = [];
+  const seen = new Set();
+
+  for (const item of values) {
+    const candidates = /^zelux:/i.test(String(item || '').trim())
+      ? decodeZeluxProtocolArgs(item)
+      : [String(item || '')];
+
+    for (const candidate of candidates) {
+      const matches = String(candidate).match(/https?:\/\/[^\s<>"']+/gi) || [];
+      for (let url of matches) {
+        // Remove punctuation commonly left behind when links are pasted from prose.
+        url = url.replace(/[),;]+$/g, '');
+        if (isValidUrl(url) && !seen.has(url)) {
+          seen.add(url);
+          found.push(url);
+        }
+      }
+    }
+  }
+
+  return found;
+}
+
+function buildGitHubArchiveUrl(repository, branch) {
+  const encodePath = value => String(value).split('/').map(encodeURIComponent).join('/');
+  return `https://codeload.github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/zip/refs/heads/${encodePath(branch)}`;
+}
+
+function buildGitHubRawUrl(repository, ref, filePath) {
+  const encodePath = value => String(value).split('/').map(encodeURIComponent).join('/');
+  return `https://raw.githubusercontent.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/${encodeURIComponent(ref)}/${encodePath(filePath)}`;
+}
+
+function summarizeGitHubTree(payload) {
+  if (!payload || !Array.isArray(payload.tree)) throw new Error('GitHub tree response is invalid');
+  if (payload.truncated) throw new Error('GitHub tree is too large and was truncated');
+  const files = payload.tree.filter(entry =>
+    entry && entry.type === 'blob' && entry.mode !== '120000' &&
+    typeof entry.path === 'string' && Number.isSafeInteger(entry.size) && entry.size >= 0
+  );
+  if (files.length === 0) throw new Error('GitHub repository has no downloadable files');
+  return { files, totalSize: files.reduce((sum, entry) => sum + entry.size, 0) };
+}
+
+function planGitHubRangeTasks(files, totalSize, maxConnections) {
+  const limit = Math.max(1, Math.min(toBoundedInteger(maxConnections, 1, 1, 32), 32));
+  const targetChunkSize = Math.max(1, Math.ceil(Math.max(1, totalSize) / limit));
+  const tasks = [];
+  const chunkCounts = new Map();
+
+  for (const entry of files) {
+    if (entry.size === 0) {
+      chunkCounts.set(entry.path, 0);
+      continue;
+    }
+    const chunkCount = entry.size > 1024 * 1024
+      ? Math.min(limit, Math.max(1, Math.ceil(entry.size / targetChunkSize)))
+      : 1;
+    const chunkSize = Math.ceil(entry.size / chunkCount);
+    chunkCounts.set(entry.path, chunkCount);
+    for (let partIndex = 0; partIndex < chunkCount; partIndex++) {
+      const start = partIndex * chunkSize;
+      const end = Math.min(entry.size - 1, start + chunkSize - 1);
+      tasks.push({ entry, partIndex, start, end, length: end - start + 1 });
+    }
+  }
+
+  return {
+    tasks,
+    chunkCounts,
+    connectionCount: Math.max(1, Math.min(limit, tasks.length || 1)),
+  };
+}
+
+async function mergeRangeParts(partPaths, destination, controller) {
+  const output = fs.createWriteStream(destination, { flags: 'wx' });
+  activeWriteStreams.add(output);
+  output.once('close', () => activeWriteStreams.delete(output));
+  try {
+    for (const partPath of partPaths) {
+      const input = fs.createReadStream(partPath);
+      for await (const chunk of input) {
+        if (controller.cancelled) throw new Error('CANCELLED');
+        if (!output.write(chunk)) await once(output, 'drain');
+      }
+    }
+    output.end();
+    await once(output, 'finish');
+    for (const partPath of partPaths) fs.unlinkSync(partPath);
+  } catch (error) {
+    output.destroy();
+    try { fs.unlinkSync(destination); } catch (_) { }
+    throw error;
+  }
+}
+
+function resolveZipEntryPath(destination, entryName) {
+  if (typeof entryName !== 'string' || entryName.includes('\0')) throw new Error('ZIP entry name ไม่ถูกต้อง');
+  const normalized = entryName.replace(/\\/g, '/');
+  const segments = normalized.split('/').filter(Boolean);
+  if (normalized.startsWith('/') || /^[a-z]:/i.test(normalized) || segments.includes('..')) {
+    throw new Error(`ZIP entry พยายามเขียนออกนอกโฟลเดอร์: ${entryName}`);
+  }
+  const root = path.resolve(destination);
+  const target = path.resolve(root, ...segments);
+  if (target !== root && !target.startsWith(root + path.sep)) {
+    throw new Error(`ZIP entry พยายามเขียนออกนอกโฟลเดอร์: ${entryName}`);
+  }
+  return target;
+}
+
+function extractZipSafely(zipPath, destination, onEntry = () => {}) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true, autoClose: true }, (openError, zipFile) => {
+      if (openError) return reject(openError);
+      let settled = false;
+      const fail = error => {
+        if (settled) return;
+        settled = true;
+        try { zipFile.close(); } catch (_) { }
+        reject(error);
+      };
+
+      zipFile.on('error', fail);
+      zipFile.on('end', () => {
+        if (settled) return;
+        settled = true;
+        resolve();
+      });
+      zipFile.on('entry', entry => {
+        let outputPath;
+        try {
+          outputPath = resolveZipEntryPath(destination, entry.fileName);
+          const unixMode = (entry.externalFileAttributes >>> 16) & 0xffff;
+          if ((unixMode & 0o170000) === 0o120000) throw new Error(`ไม่อนุญาต symlink ใน ZIP: ${entry.fileName}`);
+        } catch (error) {
+          fail(error);
+          return;
+        }
+
+        if (entry.fileName.endsWith('/')) {
+          fs.mkdirSync(outputPath, { recursive: true });
+          onEntry(entry);
+          zipFile.readEntry();
+          return;
+        }
+
+        fs.mkdirSync(path.dirname(outputPath), { recursive: true });
+        zipFile.openReadStream(entry, (streamError, readStream) => {
+          if (streamError) return fail(streamError);
+          const writeStream = fs.createWriteStream(outputPath, { flags: 'wx' });
+          const streamFail = error => {
+            try { writeStream.destroy(); } catch (_) { }
+            try { readStream.destroy(); } catch (_) { }
+            fail(error);
+          };
+          readStream.on('error', streamFail);
+          writeStream.on('error', streamFail);
+          writeStream.on('finish', () => {
+            if (settled) return;
+            onEntry(entry);
+            zipFile.readEntry();
+          });
+          readStream.pipe(writeStream);
+        });
+      });
+      zipFile.readEntry();
+    });
+  });
 }
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
@@ -499,6 +879,7 @@ function calculateSHA256(fp) {
 }
 
 const activeRequests = new Set();
+const activeWriteStreams = new Set();
 
 function abortAllDownloads() {
   for (const item of activeRequests) {
@@ -506,7 +887,53 @@ function abortAllDownloads() {
       item.destroy();
     } catch (e) { }
   }
-  activeRequests.clear();
+  for (const stream of activeWriteStreams) {
+    try { stream.destroy(new Error('CANCELLED')); } catch (_) { }
+  }
+}
+
+function removeTreeBottomUp(target) {
+  if (!fs.existsSync(target)) return;
+  const stat = fs.lstatSync(target);
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    fs.unlinkSync(target);
+    return;
+  }
+  for (const entry of fs.readdirSync(target)) {
+    removeTreeBottomUp(path.join(target, entry));
+  }
+  fs.rmdirSync(target);
+}
+
+async function removeTreeWithRetries(target, allowedRoot, attempts = 20) {
+  const root = path.resolve(allowedRoot);
+  const resolved = path.resolve(target);
+  if (resolved === root || !resolved.startsWith(root + path.sep)) {
+    throw new Error(`Refusing to clean path outside download root: ${resolved}`);
+  }
+
+  const streamDeadline = Date.now() + 3000;
+  while (activeWriteStreams.size > 0 && Date.now() < streamDeadline) {
+    await sleep(50);
+  }
+
+  let lastError = null;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (!fs.existsSync(resolved)) return true;
+    try {
+      removeTreeBottomUp(resolved);
+    } catch (err) {
+      lastError = err;
+    }
+    if (!fs.existsSync(resolved)) return true;
+    await sleep(Math.min(100 + attempt * 50, 500));
+  }
+  throw new Error(`ลบไฟล์ที่ยกเลิกไม่สำเร็จ: ${lastError?.message || resolved}`);
+}
+
+function isCancelInput(key) {
+  const input = String(key || '');
+  return input.startsWith('\x1b') || input.includes('\x03');
 }
 
 // ── Download Cancel Controller ──
@@ -514,8 +941,18 @@ class CancelController {
   constructor() {
     this.cancelled = false;
     this.childProcesses = new Set();
+    this.cancelCallbacks = new Set();
     this._onKey = null;
     this._listenerCount = 0;
+  }
+
+  onCancel(callback) {
+    if (this.cancelled) {
+      callback();
+      return () => { };
+    }
+    this.cancelCallbacks.add(callback);
+    return () => this.cancelCallbacks.delete(callback);
   }
 
   // Start listening for Escape/Ctrl+C during download
@@ -533,7 +970,8 @@ class CancelController {
     this._onKey = (key) => {
       // Escape key = \x1b (without [ following = standalone Escape)
       // Ctrl+C = \x03
-      if (key === '\x1b' || key === '\x03') {
+      if (isCancelInput(key)) {
+        process.stdout.write('\r\x1b[K\n      Cancelling active downloads...\n');
         this.cancel();
       }
     };
@@ -572,6 +1010,11 @@ class CancelController {
       } catch (e) { }
     }
     this.childProcesses.clear();
+
+    for (const callback of this.cancelCallbacks) {
+      try { callback(); } catch (_) { }
+    }
+    this.cancelCallbacks.clear();
 
     // Abort all HTTP connections
     abortAllDownloads();
@@ -658,9 +1101,9 @@ async function probeFileInfo(url, retryCount = 0) {
 }
 
 // ── Download a range to file ──
-function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryLogs = true) {
-  return new Promise((resolve, reject) => {
-    if (cancelCtrl.cancelled) return reject(new Error('CANCELLED'));
+function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryLogs = true, controller = cancelCtrl) {
+  const task = new Promise((resolve, reject) => {
+    if (controller.cancelled) return reject(new Error('CANCELLED'));
 
     const extra = {};
     const ranged = start !== undefined && end !== undefined;
@@ -674,7 +1117,7 @@ function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryL
     if (ranged) extra['Range'] = `bytes=${resumeStart}-${end}`;
 
     httpRequest(url, extra).then(({ res }) => {
-      if (cancelCtrl.cancelled) return reject(new Error('CANCELLED'));
+      if (controller.cancelled) return reject(new Error('CANCELLED'));
       if (res.statusCode >= 400) {
         res.resume();
         const err = new Error(`HTTP ${res.statusCode}`);
@@ -695,16 +1138,25 @@ function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryL
         }
       }
       const ws = fs.createWriteStream(dest, { flags: existingSize > 0 ? 'a' : 'w' });
+      activeWriteStreams.add(ws);
+      ws.once('close', () => activeWriteStreams.delete(ws));
       res.on('data', chunk => {
-        if (cancelCtrl.cancelled) { ws.destroy(); res.destroy(); reject(new Error('CANCELLED')); return; }
+        if (controller.cancelled) { ws.destroy(); res.destroy(); reject(new Error('CANCELLED')); return; }
         onData(chunk.length);
       });
       res.pipe(ws);
       ws.on('finish', () => resolve(existingSize));
       ws.on('error', reject);
+      res.on('aborted', () => { ws.destroy(); reject(controller.cancelled ? new Error('CANCELLED') : new Error('Download response was aborted')); });
+      res.on('close', () => {
+        if (!res.complete) {
+          ws.destroy();
+          reject(controller.cancelled ? new Error('CANCELLED') : new Error('Download connection closed early'));
+        }
+      });
       res.on('error', err => { ws.destroy(); reject(err); });
     }).catch(async (err) => {
-      if (cancelCtrl.cancelled) return reject(new Error('CANCELLED'));
+      if (controller.cancelled) return reject(new Error('CANCELLED'));
       const isTemporary = err.statusCode === 429 || (err.statusCode >= 500 && err.statusCode < 600) || !err.statusCode;
       if (isTemporary && retryCount < MAX_RETRIES) {
         const delay = Math.pow(2, retryCount) * 1000 + Math.random() * 500;
@@ -713,13 +1165,18 @@ function downloadRange(url, start, end, dest, onData, retryCount = 0, showRetryL
           console.log(`  ${warning('⚠')} ดาวน์โหลดขัดข้อง (${err.message}) — กำลังลองใหม่ใน ${(delay / 1000).toFixed(1)} วินาที... (${retryCount + 1}/${MAX_RETRIES})`);
         }
         await sleep(delay);
-        if (cancelCtrl.cancelled) return reject(new Error('CANCELLED'));
-        downloadRange(url, start, end, dest, onData, retryCount + 1, showRetryLogs).then(resolve).catch(reject);
+        if (controller.cancelled) return reject(new Error('CANCELLED'));
+        downloadRange(url, start, end, dest, onData, retryCount + 1, showRetryLogs, controller).then(resolve).catch(reject);
       } else {
         reject(err);
       }
     });
   });
+  let unsubscribe = () => { };
+  const cancelled = new Promise((resolve, reject) => {
+    unsubscribe = controller.onCancel(() => reject(new Error('CANCELLED')));
+  });
+  return Promise.race([task, cancelled]).finally(() => unsubscribe());
 }
 
 // ── Merge chunks for multi-connection ──
@@ -781,6 +1238,20 @@ function isYouTubeUrl(urlStr) {
     const url = new URL(urlStr);
     return ['youtube.com', 'www.youtube.com', 'youtu.be', 'music.youtube.com', 'www.music.youtube.com'].some(domain => url.hostname.endsWith(domain));
   } catch {
+    return false;
+  }
+}
+
+function isMediaExtractorUrl(urlStr) {
+  try {
+    const hostname = new URL(urlStr).hostname.toLowerCase();
+    const domains = [
+      'youtube.com', 'youtu.be', 'vimeo.com', 'tiktok.com', 'facebook.com', 'fb.watch',
+      'instagram.com', 'x.com', 'twitter.com', 'twitch.tv', 'dailymotion.com', 'dai.ly',
+      'soundcloud.com', 'bandcamp.com',
+    ];
+    return domains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch (_) {
     return false;
   }
 }
@@ -956,15 +1427,29 @@ function downloadFile(url, dest) {
 // Fetch JSON from a URL (follows redirects)
 function fetchJSON(url) {
   return new Promise((resolve, reject) => {
-    const options = new URL(url);
-    options.headers = { 'User-Agent': 'ZELUX-DL/' + APP_VERSION };
-    https.get(options, (res) => {
+    const headers = {
+      'User-Agent': 'ZELUX-DL/' + APP_VERSION,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Accept-Encoding': 'identity',
+    };
+    https.get(url, { headers }, (res) => {
       if (res.statusCode === 301 || res.statusCode === 302) {
         fetchJSON(res.headers.location).then(resolve).catch(reject);
         return;
       }
       if (res.statusCode !== 200) {
-        reject(new Error(`HTTP ${res.statusCode}`));
+        let errorBody = '';
+        res.on('data', chunk => {
+          if (errorBody.length < 2048) errorBody += chunk;
+        });
+        res.on('end', () => {
+          let detail = '';
+          try { detail = JSON.parse(errorBody).message || ''; } catch (_) { }
+          const remaining = res.headers['x-ratelimit-remaining'];
+          const rate = remaining !== undefined ? `; rate remaining ${remaining}` : '';
+          reject(new Error(`HTTP ${res.statusCode}${detail ? `: ${detail}` : ''}${rate}`));
+        });
         return;
       }
       let data = '';
@@ -980,9 +1465,8 @@ function fetchJSON(url) {
 function fetchText(url, redirectCount = 0) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 5) return reject(new Error('Too many redirects'));
-    const options = new URL(url);
-    options.headers = { 'User-Agent': 'ZELUX-DL/' + APP_VERSION };
-    https.get(options, (res) => {
+    const headers = buildHeaders(url);
+    https.get(url, { headers }, (res) => {
       if ([301, 302, 307, 308].includes(res.statusCode) && res.headers.location) {
         res.resume();
         return fetchText(new URL(res.headers.location, url).href, redirectCount + 1).then(resolve, reject);
@@ -1163,7 +1647,8 @@ async function selfUpdate() {
 
 // ── Check &amp; retrieve yt-dlp path, downloading automatically if missing ──
 const getYtDlpPath = async () => {
-  const binaryName = process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp';
+  // Keep the managed binary separate so an older running yt-dlp cannot lock updates.
+  const binaryName = process.platform === 'win32' ? 'yt-dlp-current.exe' : 'yt-dlp-current';
   const localPath = path.join(BASE_DIR, binaryName);
 
   if (fs.existsSync(localPath)) {
@@ -1193,8 +1678,29 @@ const getYtDlpPath = async () => {
   }
 };
 
+function parseYtDlpProgressLine(rawLine) {
+  const line = String(rawLine || '').replace(/\x1b\[[0-9;]*m/g, '').trim();
+  const item = line.match(/\[download\]\s+Downloading\s+item\s+(\d+)\s+of\s+(\d+)/i);
+  if (item) return { type: 'item', current: Number(item[1]), total: Number(item[2]) };
+
+  const progress = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?\s*([^\s]+)\s+at\s+(.+?)\s+ETA\s+([^\s]+)/i);
+  if (progress) {
+    return {
+      type: 'progress',
+      percent: Number(progress[1]),
+      size: progress[2],
+      speed: progress[3].trim(),
+      eta: progress[4],
+    };
+  }
+
+  if (/\[ExtractAudio\]|\[Merger\]|has already been downloaded/i.test(line)) return { type: 'completed' };
+  if (/^ERROR:/i.test(line)) return { type: 'error', message: line };
+  return null;
+}
+
 async function downloadYouTubeFile(url) {
-  console.log('      ' + info('\u27F3') + ' กำลังเตรียมระบบ YouTube...');
+  console.log('      ' + info('\u27F3') + ' กำลังเตรียมระบบดาวน์โหลดสื่อ...');
 
   const ytdlpPath = await getYtDlpPath();
   if (!ytdlpPath) {
@@ -1207,7 +1713,7 @@ async function downloadYouTubeFile(url) {
 
   const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
 
-  if (!isYouTubeUrl(url) && !isM3u8) {
+  if (!isMediaExtractorUrl(url) && !isM3u8) {
     console.log('      ' + error('\u2715') + ' ลิงก์ไม่รองรับ');
     console.log();
     return { success: false, error: 'Unsupported URL' };
@@ -1474,7 +1980,7 @@ async function downloadYouTubeFile(url) {
 
   const cookieArgs = getCookiesArgs().arr;
   if (cookieArgs.length > 0) args.push(...cookieArgs);
-  args.push('--js-runtimes', 'node', '-o', filePath, url);
+  args.push('--newline', '--progress', '--js-runtimes', 'node', '-o', filePath, url);
 
   const { spawn } = require('child_process');
 
@@ -1488,58 +1994,81 @@ async function downloadYouTubeFile(url) {
       let stderrData = '';
       let currentItem = 1;
       let totalItems = entriesCount;
+      let stdoutBuffer = '';
+      let stderrBuffer = '';
+
+      const handleProgressLine = (line) => {
+        const event = parseYtDlpProgressLine(line);
+        if (!event) return;
+
+        if (event.type === 'item') {
+          currentItem = event.current;
+          totalItems = event.total;
+          const value = isPlaylist ? Math.max(0, currentItem - 1) / totalItems : 0;
+          bar.update(value, {
+            speed: 'Preparing...',
+            downloaded: `(${currentItem}/${totalItems}) กำลังเตรียม`,
+            total: '??',
+            eta_formatted: '--:--',
+          });
+          return;
+        }
+
+        if (event.type === 'progress') {
+          const value = isPlaylist
+            ? (currentItem - 1 + event.percent / 100) / totalItems
+            : event.percent / 100;
+          bar.update(value, {
+            speed: event.speed,
+            downloaded: isPlaylist ? `(${currentItem}/${totalItems}) ${event.percent.toFixed(1)}%` : `${event.percent.toFixed(1)}%`,
+            total: event.size,
+            eta_formatted: event.eta,
+          });
+          return;
+        }
+
+        if (event.type === 'completed') {
+          bar.update(isPlaylist ? currentItem / totalItems : 1, {
+            speed: 'Processing...',
+            downloaded: isPlaylist ? `(${currentItem}/${totalItems}) 100%` : '100%',
+            total: totalSize > 0 ? formatBytes(totalSize) : '??',
+            eta_formatted: '00:00',
+          });
+        }
+      };
+
+      const consumeLines = (data, isStderr = false) => {
+        const combined = (isStderr ? stderrBuffer : stdoutBuffer) + data.toString();
+        const lines = combined.split(/\r\n|\n|\r/);
+        const remainder = lines.pop() || '';
+        if (isStderr) stderrBuffer = remainder;
+        else stdoutBuffer = remainder;
+        for (const line of lines) handleProgressLine(line);
+      };
 
       child.stdout.on('data', (data) => {
-        const line = data.toString();
-
-        // Track current item in playlist
-        const itemMatch = line.match(/\[download\]\s+Downloading\s+item\s+(\d+)\s+of\s+(\d+)/i);
-        if (itemMatch) {
-          currentItem = parseInt(itemMatch[1], 10);
-          totalItems = parseInt(itemMatch[2], 10);
-        }
-
-        const match = line.match(/\[download\]\s+(\d+(?:\.\d+)?)%\s+of\s+~?([\d.]+\w+)\s+at\s+([\d.]+\w+\/s|Unknown\s+B\/s)\s+ETA\s+([\d:]+|Unknown)/i);
-        if (match) {
-          const pct = parseFloat(match[1]);
-          const size = match[2];
-          const speed = match[3];
-          const eta = match[4];
-
-          const val = isPlaylist ? (currentItem - 1 + pct / 100) / totalItems : pct / 100;
-          bar.update(val, {
-            speed: speed,
-            downloaded: isPlaylist ? `(${currentItem}/${totalItems}) ${pct.toFixed(1)}%` : `${pct.toFixed(1)}%`,
-            total: size,
-            eta_formatted: eta
-          });
-        } else if (line.includes('[Merger]')) {
-          bar.update(isPlaylist ? currentItem / totalItems : 1.0, {
-            speed: 'Muxing...',
-            downloaded: isPlaylist ? `(${currentItem}/${totalItems}) 100%` : '100%',
-            total: totalSize > 0 ? formatBytes(totalSize) : '??',
-            eta_formatted: '00:00'
-          });
-        } else if (line.includes('[ExtractAudio]')) {
-          bar.update(isPlaylist ? currentItem / totalItems : 1.0, {
-            speed: 'Extracting...',
-            downloaded: isPlaylist ? `(${currentItem}/${totalItems}) 100%` : '100%',
-            total: totalSize > 0 ? formatBytes(totalSize) : '??',
-            eta_formatted: '00:00'
-          });
-        }
+        consumeLines(data);
       });
 
       child.stderr.on('data', (data) => {
         stderrData += data.toString();
+        consumeLines(data, true);
       });
 
       child.on('close', async (code) => {
         cancelCtrl.childProcesses.delete(child);
+        if (stdoutBuffer) handleProgressLine(stdoutBuffer);
+        if (stderrBuffer) handleProgressLine(stderrBuffer);
         if (cancelCtrl.cancelled) {
           return reject(new Error('CANCELLED'));
         }
-        if (code === 0) resolve();
+        if (code === 0) {
+          const ignoredErrors = stderrData.split(/\r?\n/)
+            .map(line => line.trim())
+            .filter(line => line.startsWith('ERROR:'))
+            .join(' | ');
+          resolve(ignoredErrors || undefined);
+        }
         else {
           // Format stderr message so it doesn't leak full trace or look ugly in terminal
           let cleanStderr = stderrData.split('\n')
@@ -1591,13 +2120,39 @@ async function downloadYouTubeFile(url) {
 
     cancelCtrl.stopListening();
 
-    bar.update(1.0, {
-      speed: '✓ Done!',
-      downloaded: isPlaylist ? `(${entriesCount}/${entriesCount}) 100%` : '100%',
+    let completedPlaylistItems = entriesCount;
+    if (isPlaylist) {
+      try {
+        completedPlaylistItems = fs.readdirSync(targetDir)
+          .filter(name => path.extname(name).toLowerCase() === extension.toLowerCase())
+          .length;
+      } catch (_) {
+        completedPlaylistItems = 0;
+      }
+    }
+
+    const finalProgress = isPlaylist && warningMsg
+      ? Math.min(1, completedPlaylistItems / entriesCount)
+      : 1;
+
+    bar.update(finalProgress, {
+      speed: warningMsg ? '⚠ Errors' : '✓ Done!',
+      downloaded: isPlaylist
+        ? `(${completedPlaylistItems}/${entriesCount}) ${(finalProgress * 100).toFixed(1)}%`
+        : '100%',
       total: totalSize > 0 ? formatBytes(totalSize) : '??',
       eta_formatted: '00:00'
     });
     bar.stop();
+
+    if (isPlaylist && warningMsg && completedPlaylistItems === 0) {
+      try {
+        for (const name of fs.readdirSync(targetDir)) {
+          if (/\.(?:webp|jpg|jpeg|png)$/i.test(name)) fs.unlinkSync(path.join(targetDir, name));
+        }
+      } catch (_) { }
+      throw new Error(`Playlist โหลดไม่สำเร็จ: ${warningMsg}`);
+    }
 
     if (!isPlaylist) {
       try {
@@ -1651,7 +2206,7 @@ async function downloadYouTubeFile(url) {
       const relativeSavedPath = path.join('downloads', subfolderName, sanitizeFilename(title));
       const displayFilePath = relativeSavedPath.length > 30 ? '...' + relativeSavedPath.substring(relativeSavedPath.length - 27) : relativeSavedPath;
       console.log('      ' + dim('โฟลเดอร์   : ') + chalk.cyan(displayFilePath));
-      console.log('      ' + dim('จำนวน     : ') + chalk.yellow(`${entriesCount} ไฟล์`));
+      console.log('      ' + dim('จำนวน     : ') + chalk.yellow(`${completedPlaylistItems}/${entriesCount} ไฟล์`));
     } else {
       const relativeSavedPath = path.join('downloads', subfolderName, filename);
       const displayFilePath = relativeSavedPath.length > 30 ? '...' + relativeSavedPath.substring(relativeSavedPath.length - 27) : relativeSavedPath;
@@ -1689,10 +2244,11 @@ async function downloadYouTubeFile(url) {
     bar.stop();
 
     if (err.message === 'CANCELLED') {
+      abortAllDownloads();
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
-      console.log('      ' + warning.bold('⚠️ ยกเลิกการดาวน์โหลดแล้ว'));
+      console.log('      ' + warning.bold('⚠️ ยกเลิกแล้ว — เก็บเพลงที่เสร็จและไฟล์ .part ไว้โหลดต่อ'));
       console.log();
-      return { success: false, cancelled: true, error: 'Cancelled' };
+      return { success: false, cancelled: true, cleanupFailed: false, error: 'Cancelled' };
     } else {
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + error('✕') + ' ดาวน์โหลดล้มเหลว: ' + err.message);
@@ -1703,9 +2259,257 @@ async function downloadYouTubeFile(url) {
 }
 
 // ── Download a single file ──
+async function downloadGitHubRepositoryArchive(url, repository) {
+  console.log('      ' + info('GitHub') + ` ${chalk.cyan(`${repository.owner}/${repository.repo}`)}`);
+  const archiveUrl = `https://github.com/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/archive/HEAD.zip`;
+  console.log('      ' + dim('GitHub จะเลือก default branch ให้อัตโนมัติ'));
+  console.log('      ' + dim('กำลังดาวน์โหลด repository archive...'));
+
+  const archiveResult = await performDownload(archiveUrl);
+  if (!archiveResult?.success || !archiveResult.filePath) return archiveResult;
+
+  const archivePath = archiveResult.filePath;
+  const stagingDir = fs.mkdtempSync(path.join(DOWNLOADS_DIR, '.zelux-github-'));
+  const targetDir = getUniqueDirectoryPath(DOWNLOADS_DIR, repository.repo);
+  let extractedEntries = 0;
+
+  try {
+    console.log('      ' + info('ZIP') + ' กำลังแตกไฟล์แบบ streaming...');
+    await extractZipSafely(archivePath, stagingDir, () => { extractedEntries++; });
+
+    const topLevel = fs.readdirSync(stagingDir, { withFileTypes: true });
+    if (topLevel.length === 1 && topLevel[0].isDirectory()) {
+      fs.renameSync(path.join(stagingDir, topLevel[0].name), targetDir);
+    } else {
+      fs.mkdirSync(targetDir, { recursive: true });
+      for (const entry of topLevel) {
+        fs.renameSync(path.join(stagingDir, entry.name), path.join(targetDir, entry.name));
+      }
+    }
+
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    fs.unlinkSync(archivePath);
+    removeDirectoryIfEmpty(path.dirname(archivePath), DOWNLOADS_DIR);
+    console.log('      ' + success('✓') + ` แตกไฟล์สำเร็จ ${chalk.yellow(extractedEntries)} รายการ`);
+    console.log('      ' + dim('บันทึกที่: ') + chalk.cyan(targetDir));
+    console.log();
+    return { success: true, filePath: targetDir, repository: `${repository.owner}/${repository.repo}` };
+  } catch (err) {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+    throw new Error(`แตกไฟล์ GitHub repository ไม่สำเร็จ: ${err.message}`);
+  }
+}
+
+async function downloadGitHubRepositoryMulti(repository, branch, files, totalSize) {
+  const targetDir = getUniqueDirectoryPath(DOWNLOADS_DIR, repository.repo);
+  fs.mkdirSync(targetDir, { recursive: true });
+
+  const rangePlan = planGitHubRangeTasks(files, totalSize, NUM_CONNECTIONS);
+  const connectionCount = rangePlan.connectionCount;
+  const activePartials = new Map();
+  const completedChunks = new Map();
+  let completedBytes = 0;
+  let completedFiles = 0;
+  let nextTaskIndex = 0;
+  let firstError = null;
+  let lastBytes = 0;
+  let lastTime = Date.now();
+  let currentSpeed = 0;
+  const startTime = Date.now();
+
+  console.log('      ' + success('✓') + ` พบ ${chalk.yellow(files.length)} ไฟล์`);
+  console.log('      ' + white('📦 ขนาดรวม: ') + chalk.yellow(formatBytes(totalSize)));
+  console.log('      ' + white('🔗 Mode: ') + chalk.green.bold(`${connectionCount}x GitHub Ranged`));
+  console.log('      ' + dim('(กด Esc เพื่อยกเลิก)'));
+  console.log();
+
+  let isFirstProgressFrame = true;
+  const barSize = 33;
+  const bar = new cliProgress.SingleBar({
+    format: (options, params, payload) => {
+      const lines = formatGitHubProgressLines(params.progress, payload, barSize);
+      if (isFirstProgressFrame) {
+        isFirstProgressFrame = false;
+        return `${lines.barLine}\n${lines.statsLine}`;
+      }
+      return `\x1b[1A\r${lines.barLine}\x1b[K\n${lines.statsLine}\x1b[K`;
+    },
+    barsize: barSize,
+    hideCursor: true,
+    clearOnComplete: false,
+    stopOnComplete: false,
+    forceRedraw: true,
+  });
+
+  bar.start(totalSize || 1, 0, {
+    speed: '0 B/s',
+    downloaded: '0 B',
+    total: formatBytes(totalSize),
+    eta: '--:--',
+    files: `0/${files.length}`,
+  });
+
+  const redrawTimer = setInterval(() => {
+    let downloadedBytes = completedBytes;
+    for (const partial of activePartials.values()) {
+      try { downloadedBytes += fs.statSync(partial).size; } catch (_) { }
+    }
+    const now = Date.now();
+    const elapsed = (now - lastTime) / 1000;
+    if (elapsed >= 0.3) {
+      currentSpeed = Math.max(0, (downloadedBytes - lastBytes) / elapsed);
+      lastBytes = downloadedBytes;
+      lastTime = now;
+    }
+    const eta = currentSpeed > 0 ? (totalSize - downloadedBytes) / currentSpeed : 0;
+    bar.update(Math.min(downloadedBytes, totalSize || 1), {
+      speed: formatSpeed(currentSpeed),
+      downloaded: formatBytes(downloadedBytes),
+      total: formatBytes(totalSize),
+      eta: formatETA(eta),
+      files: `${completedFiles}/${files.length}`,
+    });
+  }, 100);
+
+  cancelCtrl.startListening();
+
+  for (const entry of files) {
+    if (entry.size !== 0) continue;
+    const destination = resolveZipEntryPath(targetDir, entry.path);
+    fs.mkdirSync(path.dirname(destination), { recursive: true });
+    fs.writeFileSync(destination, '');
+    completedFiles++;
+  }
+
+  const worker = async () => {
+    while (!firstError && !cancelCtrl.cancelled) {
+      const taskIndex = nextTaskIndex++;
+      if (taskIndex >= rangePlan.tasks.length) return;
+      const task = rangePlan.tasks[taskIndex];
+      const entry = task.entry;
+      try {
+        const destination = resolveZipEntryPath(targetDir, entry.path);
+        const partial = `${destination}.zelux-part${task.partIndex}`;
+        fs.mkdirSync(path.dirname(destination), { recursive: true });
+        const rawUrl = buildGitHubRawUrl(repository, branch, entry.path);
+        activePartials.set(taskIndex, partial);
+        await downloadRange(rawUrl, task.start, task.end, partial, () => { }, 0, false);
+        const actualSize = fs.statSync(partial).size;
+        if (actualSize !== task.length) {
+          throw new Error(`ขนาด chunk ไม่ตรง: ${entry.path} (${actualSize}/${task.length})`);
+        }
+        activePartials.delete(taskIndex);
+        completedBytes += task.length;
+
+        const finished = (completedChunks.get(entry.path) || 0) + 1;
+        completedChunks.set(entry.path, finished);
+        const chunkCount = rangePlan.chunkCounts.get(entry.path);
+        if (finished === chunkCount) {
+          const partPaths = Array.from({ length: chunkCount }, (_, index) => `${destination}.zelux-part${index}`);
+          await mergeRangeParts(partPaths, destination, cancelCtrl);
+          const finalSize = fs.statSync(destination).size;
+          if (finalSize !== entry.size) {
+            throw new Error(`ขนาดไฟล์ไม่ตรง: ${entry.path} (${finalSize}/${entry.size})`);
+          }
+          completedFiles++;
+        }
+      } catch (err) {
+        activePartials.delete(taskIndex);
+        if (!firstError) firstError = err;
+        abortAllDownloads();
+        return;
+      }
+    }
+  };
+
+  try {
+    await Promise.all(Array.from({ length: connectionCount }, worker));
+    if (cancelCtrl.cancelled) throw new Error('CANCELLED');
+    if (firstError) throw firstError;
+
+    clearInterval(redrawTimer);
+    cancelCtrl.stopListening();
+    const elapsedSeconds = (Date.now() - startTime) / 1000;
+    bar.update(totalSize || 1, {
+      speed: '✓ Done!',
+      downloaded: formatBytes(totalSize),
+      total: formatBytes(totalSize),
+      eta: '0:00',
+      files: `${files.length}/${files.length}`,
+    });
+    bar.stop();
+    console.log();
+    console.log('      ' + success.bold('✓ GitHub repository ดาวน์โหลดเสร็จ!'));
+    console.log('      ' + dim('ขนาด      : ') + chalk.yellow(formatBytes(totalSize)));
+    console.log('      ' + dim('เวลา       : ') + chalk.yellow(formatETA(elapsedSeconds)));
+    console.log('      ' + dim('เฉลี่ย      : ') + chalk.hex('#818cf8')(formatSpeed(totalSize / Math.max(elapsedSeconds, 0.001))));
+    console.log('      ' + dim('ไฟล์       : ') + chalk.yellow(files.length));
+    console.log('      ' + dim('บันทึกที่   : ') + chalk.cyan(targetDir));
+    console.log();
+    return { success: true, filePath: targetDir, repository: `${repository.owner}/${repository.repo}` };
+  } catch (err) {
+    clearInterval(redrawTimer);
+    cancelCtrl.stopListening();
+    bar.stop();
+    abortAllDownloads();
+    let cleanupError = null;
+    try {
+      await removeTreeWithRetries(targetDir, DOWNLOADS_DIR);
+    } catch (removeError) {
+      cleanupError = removeError;
+    }
+    if (err.message === 'CANCELLED') {
+      if (cleanupError) {
+        console.log('      ' + error.bold('✕ ยกเลิกแล้ว แต่ลบไฟล์ค้างไม่สำเร็จ'));
+        console.log('      ' + dim(cleanupError.message));
+      } else {
+        console.log('      ' + warning.bold('⚠️ ยกเลิกและลบไฟล์ที่โหลดค้างแล้ว'));
+      }
+      console.log();
+      return { success: false, cancelled: true, cleanupFailed: Boolean(cleanupError), error: cleanupError?.message || 'Cancelled' };
+    }
+    if (cleanupError) throw cleanupError;
+    throw err;
+  }
+}
+
+async function downloadGitHubRepository(url, repository) {
+  console.log('      ' + info('GitHub') + ` ${chalk.cyan(`${repository.owner}/${repository.repo}`)}`);
+  console.log('      ' + dim('กำลังอ่านรายการไฟล์และขนาดรวม...'));
+  try {
+    const branch = repository.ref || 'HEAD';
+    const tree = await fetchJSON(`https://api.github.com/repos/${encodeURIComponent(repository.owner)}/${encodeURIComponent(repository.repo)}/git/trees/${encodeURIComponent(branch)}?recursive=1`);
+    const plan = summarizeGitHubTree(tree);
+    const pinnedRef = /^[a-f0-9]{40}$/i.test(tree.sha || '') ? tree.sha : branch;
+    return await downloadGitHubRepositoryMulti(repository, pinnedRef, plan.files, plan.totalSize);
+  } catch (err) {
+    if (cancelCtrl.cancelled || err.message === 'CANCELLED') {
+      return { success: false, cancelled: true, error: 'Cancelled' };
+    }
+    console.log('      ' + warning('⚠') + ` Multi-file ใช้ไม่ได้ (${err.message})`);
+    console.log('      ' + dim('สลับกลับเป็น GitHub ZIP อัตโนมัติ...'));
+    return downloadGitHubRepositoryArchive(url, repository);
+  }
+}
+
 async function performDownload(url) {
+  let provider;
+  try {
+    provider = await resolveDownloadProvider(url);
+    url = provider.url;
+  } catch (err) {
+    console.log('      ' + error('\u2715') + ' ไม่สามารถเปิดลิงก์ผู้ให้บริการได้: ' + err.message);
+    console.log();
+    return { success: false, error: err.message };
+  }
+
+  if (provider.provider !== 'Direct HTTP') {
+    console.log('      ' + info('☁') + ` Provider: ${chalk.cyan.bold(provider.provider)}`);
+  }
+  const githubRepository = parseGitHubRepositoryUrl(url);
+  if (githubRepository) return downloadGitHubRepository(url, githubRepository);
   const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
-  if (isYouTubeUrl(url) || isM3u8) {
+  if (isMediaExtractorUrl(url) || isM3u8) {
     return downloadYouTubeFile(url);
   }
   console.log('      ' + info('\u27F3') + ' กำลังตรวจสอบลิงก์...');
@@ -1720,6 +2524,12 @@ async function performDownload(url) {
   }
 
   const { finalUrl, acceptRanges, totalSize, contentType } = fileInfo;
+  if (provider.provider !== 'Direct HTTP' && /text\/html/i.test(contentType)) {
+    const message = `${provider.provider} ส่งหน้าเว็บแทนไฟล์ กรุณาตรวจสิทธิ์แชร์หรือล็อกอิน`;
+    console.log('      ' + error('\u2715') + ' ' + message);
+    console.log();
+    return { success: false, error: message };
+  }
   const filename = safeFilename(fileInfo.filename);
 
   let category = 'Others';
@@ -1754,7 +2564,12 @@ async function performDownload(url) {
   console.log('      ' + white('\uD83D\uDCE6 ขนาด: ') + (totalSize > 0 ? chalk.yellow(formatBytes(totalSize)) : dim('ไม่ทราบ')));
   console.log('      ' + white('\uD83D\uDCDD ชนิด: ') + dim(contentType));
   console.log('      ' + white('📁 หมวดหมู่: ') + chalk.yellow.bold(category));
-  console.log('      ' + white('\uD83D\uDD17 Mode: ') + (useMulti ? chalk.green.bold(`${connCount}x Multi-connection`) : dim('Single connection')));
+  const connectionMode = useMulti
+    ? chalk.green.bold(`${connCount}x Multi-connection`)
+    : acceptRanges
+      ? dim('1x Single connection')
+      : chalk.yellow(`1x active / ${NUM_CONNECTIONS}x requested (server does not support Range)`);
+  console.log('      ' + white('\uD83D\uDD17 Mode: ') + connectionMode);
   console.log();
 
   let isFirstFrame = true;
@@ -1762,13 +2577,19 @@ async function performDownload(url) {
   const barSize = 33;
   const bar = new cliProgress.SingleBar({
     format: (options, params, payload) => {
-      const filled = Math.round(params.progress * barSize);
+      const indeterminate = Boolean(payload.indeterminate);
+      const pulsePosition = Number(payload.pulsePosition || 0) % barSize;
+      const filled = indeterminate ? pulsePosition : Math.round(params.progress * barSize);
       const empty = barSize - filled;
-      const rb = rainbowBar(filled, empty);
-      const pct = (params.progress * 100).toFixed(1) + '%';
+      const rb = indeterminate
+        ? rainbowBar(filled, empty)
+        : rainbowBar(filled, empty);
+      const pct = indeterminate ? ' LIVE ' : (params.progress * 100).toFixed(1) + '%';
       const spd = chalk.hex('#f472b6').bold((payload.speed || '0 B/s').padEnd(12));
       const sizeStr = chalk.hex('#94a3b8')(`${payload.downloaded || '0 B'}/${payload.total || '??'}`);
-      const etaStr = chalk.hex('#34d399').bold(`\u23F3 ${payload.eta_formatted || '--:--'}`);
+      const etaStr = indeterminate
+        ? chalk.hex('#34d399').bold(`\u23F1 ${payload.elapsed_formatted || '0:00'} elapsed`)
+        : chalk.hex('#34d399').bold(`\u23F3 ${payload.eta_formatted || '--:--'} ETA`);
 
       const line1 = `      ${rb} ${chalk.bold.white(pct.padStart(6))}`;
       const line2 = `      ${spd} \u2502 ${sizeStr} \u2502 ${etaStr}`;
@@ -1790,11 +2611,14 @@ async function performDownload(url) {
   // Show cancel hint
   console.log('      ' + dim('(กด Esc เพื่อยกเลิก)'));
 
-  bar.start(totalSize > 0 ? totalSize : 1, 0, {
+  bar.start(totalSize > 0 ? totalSize : 100, 0, {
     speed: '0 B/s',
     downloaded: '0 B',
     total: totalSize > 0 ? formatBytes(totalSize) : '??',
     eta_formatted: '--:--',
+    elapsed_formatted: '0:00',
+    indeterminate: totalSize <= 0,
+    pulsePosition: 0,
   });
 
   let downloadedBytes = 0;
@@ -1817,11 +2641,18 @@ async function performDownload(url) {
       clearInterval(redrawTimer);
       return;
     }
+    const elapsedSeconds = (Date.now() - startTime) / 1000;
     const eta = currentSpeed > 0 && totalSize > 0 ? (totalSize - downloadedBytes) / currentSpeed : 0;
-    bar.update(Math.min(downloadedBytes, totalSize > 0 ? totalSize : 1), {
+    const progressValue = totalSize > 0
+      ? Math.min(downloadedBytes, totalSize)
+      : Math.floor(elapsedSeconds * 12) % 100;
+    bar.update(progressValue, {
       speed: formatSpeed(currentSpeed),
       downloaded: formatBytes(downloadedBytes),
       eta_formatted: formatETA(eta),
+      elapsed_formatted: formatETA(elapsedSeconds),
+      indeterminate: totalSize <= 0,
+      pulsePosition: Math.floor(elapsedSeconds * 12),
     });
   }, 60);
 
@@ -1884,7 +2715,14 @@ async function performDownload(url) {
 
     cancelCtrl.stopListening();
     clearInterval(redrawTimer);
-    bar.update(totalSize > 0 ? totalSize : 1, { speed: '\u2713 Done!', eta_formatted: '0:00', downloaded: formatBytes(downloadedBytes) });
+    bar.update(totalSize > 0 ? totalSize : 100, {
+      speed: '\u2713 Done!',
+      eta_formatted: '0:00',
+      elapsed_formatted: formatETA((Date.now() - startTime) / 1000),
+      downloaded: formatBytes(downloadedBytes),
+      total: totalSize > 0 ? formatBytes(totalSize) : formatBytes(downloadedBytes),
+      indeterminate: false,
+    });
     bar.stop();
 
     process.stdout.write('      ' + dim('\uD83D\uDD12 กำลังคำนวณ SHA256...'));
@@ -1960,6 +2798,8 @@ async function runWithConcurrency(items, limit, handler) {
 // ═══════════════════════════════════════════
 
 async function handleBatch(urls) {
+  urls = extractUrlsFromText(urls);
+  if (urls.length === 0) return [];
   if (urls.length === 1) return [await downloadSingleFile(urls[0])];
   console.log();
   console.log('  ' + info('\uD83D\uDCE6') + ` Batch Download — ${chalk.yellow(urls.length)} ไฟล์`);
@@ -1969,7 +2809,13 @@ async function handleBatch(urls) {
     return downloadSingleFile(url);
   });
   console.log('  ' + rainbowLine(' \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', Date.now() / 5));
-  console.log('  ' + success.bold(`\u2713 Batch เสร็จสิ้น! ${urls.length} ไฟล์`));
+  const succeeded = results.filter(result => result?.success).length;
+  const failed = results.filter(result => !result?.success && !result?.cancelled).length;
+  const cancelled = results.filter(result => result?.cancelled).length;
+  const summary = [`สำเร็จ ${succeeded}`];
+  if (failed) summary.push(`ล้มเหลว ${failed}`);
+  if (cancelled) summary.push(`ยกเลิก ${cancelled}`);
+  console.log('  ' + success.bold(`\u2713 Batch เสร็จสิ้น — ${summary.join(' | ')}`));
   console.log('  ' + rainbowLine(' \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', Date.now() / 5));
   console.log();
   return results;
@@ -2144,8 +2990,11 @@ async function handleLineInput(line) {
       if (rl) { rl.removeAllListeners('close'); rl.close(); rl = null; }
       currentView = 'download';
       renderScreen();
-      await handleBatch(urls);
-      currentView = 'download-done';
+      const results = await handleBatch(urls);
+      const wasCancelled = results.some(result => result?.cancelled);
+      const cleanupFailed = results.some(result => result?.cleanupFailed);
+      currentView = wasCancelled && !cleanupFailed ? 'default' : 'download-done';
+      if (wasCancelled && !cleanupFailed) renderScreen();
       createReadline();
       break;
     }
@@ -2180,32 +3029,16 @@ async function handleLineInput(line) {
       process.exit(0);
 
     default:
-      let targetUrl = input;
-
-      // Support custom URI scheme (zelux://https://...)
-      if (targetUrl && targetUrl.startsWith('zelux://')) {
-        targetUrl = targetUrl.replace(/^zelux:\/\//, '');
-
-        // In some browsers, it might encode the rest of the URL or add a trailing slash
-        if (targetUrl.endsWith('/')) {
-          targetUrl = targetUrl.slice(0, -1);
-        }
-        // Windows strips the colon from "https://" → "https//"
-        targetUrl = targetUrl.replace(/^(https?)\/\//, '$1://');
-        try { targetUrl = decodeURIComponent(targetUrl); } catch (e) { }
-      }
-
       let urls = [];
 
-      // Check if the input itself is a valid URL
-      if (isValidUrl(targetUrl)) {
-        urls = [targetUrl];
-      } else if (targetUrl.endsWith('.txt')) {
+      // Accept one URL, or many URLs separated by spaces/newlines.
+      urls = extractUrlsFromText(input);
+      if (urls.length === 0 && input.endsWith('.txt')) {
         // Check if it's a .txt batch file
-        const txtPath = path.isAbsolute(targetUrl) ? targetUrl : path.join(BASE_DIR, targetUrl);
+        const txtPath = path.isAbsolute(input) ? input : path.join(BASE_DIR, input);
         if (fs.existsSync(txtPath)) {
           const content = fs.readFileSync(txtPath, 'utf8');
-          urls = content.split(/\r?\n/).map(l => l.trim()).filter(isValidUrl);
+          urls = extractUrlsFromText(content);
           if (urls.length > 0) {
             console.log('    ' + info('📦') + ' ดึงลิงก์จากไฟล์สำเร็จ ' + chalk.yellow(urls.length) + ' ลิงก์');
           }
@@ -2222,10 +3055,13 @@ async function handleLineInput(line) {
 
         currentView = 'download';
         renderScreen();
-        await handleBatch(urls);
-        currentView = 'download-done';
+        const results = await handleBatch(urls);
+        const wasCancelled = results.some(result => result?.cancelled);
+        const cleanupFailed = results.some(result => result?.cleanupFailed);
+        currentView = wasCancelled && !cleanupFailed ? 'default' : 'download-done';
 
-        // Recreate readline after download completes
+        // Cancellation returns directly to the main screen; successful jobs keep the result view.
+        if (wasCancelled && !cleanupFailed) renderScreen();
         createReadline();
       } else {
         console.log();
@@ -2240,7 +3076,7 @@ async function handleLineInput(line) {
 async function runUpdate() {
   console.log('      ' + info('⚡') + ' กำลังตรวจสอบและอัปเดต yt-dlp และ ffmpeg...');
 
-  const ytdlpPath = path.join(BASE_DIR, process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+  const ytdlpPath = path.join(BASE_DIR, process.platform === 'win32' ? 'yt-dlp-current.exe' : 'yt-dlp-current');
   const ffmpegPath = path.join(BASE_DIR, process.platform === 'win32' ? 'ffmpeg.exe' : 'ffmpeg');
 
   try {
@@ -2268,21 +3104,7 @@ async function main() {
     fs.writeFileSync(require('path').join(BASE_DIR, 'args.log'), JSON.stringify({ argv: process.argv, cwd: process.cwd(), args: args }));
   } catch (e) { }
 
-  // Handle zelux:// protocol
-  args = args.map(arg => {
-    let match = arg.match(/^zelux:\/\/(.+)$/i);
-    if (match) {
-      let cleaned = match[1];
-      if (cleaned.endsWith('/')) cleaned = cleaned.slice(0, -1);
-      try { cleaned = decodeURIComponent(cleaned); } catch (e) { }
-      // Windows strips the colon from "https://" → "https//"
-      cleaned = cleaned.replace(/^(https?)\/\//, '$1://');
-      return cleaned;
-    }
-    return arg;
-  });
-
-  args = args.filter(isValidUrl);
+  args = extractUrlsFromText(args);
   if (args.length > 0) {
     currentView = 'download';
     renderScreen();
@@ -2298,11 +3120,28 @@ if (require.main === module) {
 }
 
 module.exports = {
+  CancelController,
+  buildGitHubArchiveUrl,
+  buildGitHubRawUrl,
   compareVersions,
+  decodeZeluxProtocolArg,
+  decodeZeluxProtocolArgs,
   downloadRange,
   findChecksum,
+  formatGitHubProgressLines,
+  extractUrlsFromText,
   isValidUrl,
+  isCancelInput,
+  mergeRangeParts,
+  parseGitHubRepositoryUrl,
+  parseYtDlpProgressLine,
+  planGitHubRangeTasks,
+  resolveDownloadProvider,
+  removeDirectoryIfEmpty,
+  removeTreeWithRetries,
+  resolveZipEntryPath,
   runWithConcurrency,
   safeFilename,
+  summarizeGitHubTree,
   toBoundedInteger,
 };

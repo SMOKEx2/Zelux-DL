@@ -5,14 +5,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Auto-fill active tab URL
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab && tab.url) {
-      if (tab.url.includes('youtube.com/watch') || tab.url.includes('youtu.be/')) {
-        input.value = tab.url;
-      }
-    }
+    if (tab?.url && /^https?:\/\//i.test(tab.url)) input.value = tab.url;
   } catch (e) {}
 
-  async function sendUrlToZelux(url, buttonEl) {
+  function extractUrls(value) {
+    const matches = String(value || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
+    return [...new Set(matches.map(url => url.replace(/[),;]+$/g, '')))];
+  }
+
+  async function sendUrlsToZelux(urls, buttonEl) {
     const originalText = buttonEl.innerText || '';
     
     if (buttonEl.tagName === 'BUTTON') {
@@ -22,19 +23,20 @@ document.addEventListener('DOMContentLoaded', async () => {
 
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      chrome.scripting.executeScript({
-        target: { tabId: tab.id },
-        func: (targetUrl) => {
-          const iframe = document.createElement("iframe");
-          iframe.style.display = "none";
-          iframe.src = "zelux://" + targetUrl;
-          document.body.appendChild(iframe);
-          setTimeout(() => iframe.remove(), 2000);
-        },
-        args: [url]
+      const result = await chrome.runtime.sendMessage({
+        type: 'launch-download',
+        urls,
+        tabId: tab?.id
       });
-    } catch(e) {}
+      if (!result?.ok) throw new Error(result?.error || 'Unable to open ZELUX-DL');
+      if (buttonEl.tagName === 'BUTTON') buttonEl.innerText = `Sent ${result.count} link${result.count === 1 ? '' : 's'}! 🚀`;
+    } catch(e) {
+      if (buttonEl.tagName === 'BUTTON') {
+        buttonEl.innerText = 'Open failed';
+        buttonEl.style.background = '#ef4444';
+      }
+      console.error('[ZELUX-DL]', e);
+    }
 
     setTimeout(() => {
       if (buttonEl.tagName === 'BUTTON') {
@@ -48,12 +50,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   btn.addEventListener('click', () => {
-    const url = input.value.trim();
-    if (!url) {
+    const urls = extractUrls(input.value);
+    if (!urls.length) {
       input.style.border = '1px solid #ef4444';
       setTimeout(() => input.style.border = '1px solid transparent', 1000);
       return;
     }
-    sendUrlToZelux(url, btn);
+    sendUrlsToZelux(urls, btn);
   });
 });

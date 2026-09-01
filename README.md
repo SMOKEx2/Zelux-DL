@@ -3,14 +3,14 @@
   <h1>🚀 ZELUX-DL</h1>
   <p><b>Lightning-fast, beautiful, and interactive terminal video downloader.</b></p>
   
-  [![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](#)
   [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
 </div>
 
 ---
 
-## ZELUX-DL 1.1
+## ZELUX-DL 1.5
 
 เวอร์ชัน 1.1 เพิ่มระบบดาวน์โหลดต่อจากไฟล์ `.part`, ประวัติและ Retry, คิว Batch แบบพร้อมกัน,
 หน้า Settings และการตรวจ SHA-256 ก่อนติดตั้งอัปเดต
@@ -36,7 +36,12 @@
 - 🎨 **Beautiful UI** - หน้าจอ Terminal ที่ถูกออกแบบใหม่ทั้งหมด พร้อม Animation และสีสันที่สบายตา
 - ⚡ **Lightning Fast** - ใช้ระบบ Multi-connection โหลดวิดีโอแรงเต็มสปีดเน็ต
 - 🔄 **Auto Update** - ระบบอัปเดตตัวเองอัตโนมัติ (พิมพ์ `upgrade`) และอัปเดต core `yt-dlp` / `ffmpeg` อัตโนมัติ
-- 📦 **Batch Download** - วางหลายๆ ลิงก์พร้อมกัน หรือโหลดจากไฟล์ `.txt` ได้เลย
+- 📦 **Batch Download** - วางหลายลิงก์คั่นด้วยเว้นวรรค/ขึ้นบรรทัดใหม่ หรือโหลดจากไฟล์ `.txt` ได้ พร้อมตัดลิงก์ซ้ำอัตโนมัติ
+- ☁️ **Multi-provider** - รองรับลิงก์แชร์สาธารณะจาก Google Drive/Docs, Dropbox, OneDrive, SharePoint, MediaFire, Pixeldrain, Hugging Face, GitHub และลิงก์ไฟล์ตรง
+- 🎬 **Media sites** - รองรับ YouTube, Vimeo, TikTok, Facebook, Instagram, X/Twitter, Twitch, Dailymotion, SoundCloud และ Bandcamp ผ่าน yt-dlp
+- 🐙 **GitHub Repository** - วางลิงก์ `https://github.com/owner/repo` เพื่อดาวน์โหลดและแตกไฟล์ทั้ง repo อัตโนมัติ
+- 📊 **Honest Progress** - ไฟล์ที่ไม่แจ้งขนาดจะแสดง LIVE, bytes, speed และ elapsed time พร้อมจำนวน connections ที่ใช้จริง
+- 🚀 **GitHub Ranged Download** - อ่าน Git tree แล้วแบ่งทั้งหลายไฟล์และไฟล์ใหญ่เป็น byte ranges สูงสุด 16 connections พร้อม `%` และ ETA; หาก API ใช้ไม่ได้จะ fallback เป็น ZIP
 - 🛠 **Zero Setup** - โหลดเสร็จเปิดใช้ได้เลย โปรแกรมจัดการดาวน์โหลดไฟล์ที่จำเป็น (`ffmpeg`, `yt-dlp`) ให้เองทั้งหมด
 
 ## 📥 วิธีติดตั้งและใช้งาน (Installation)
@@ -76,6 +81,7 @@ chmod +x register-linux.sh
 | คำสั่ง | คีย์ลัด | คำอธิบาย |
 | :--- | :--- | :--- |
 | `<URL>` | - | วางลิงก์ที่ต้องการดาวน์โหลด |
+| `https://github.com/owner/repo` | - | ดาวน์โหลด default branch และแตกเป็นโฟลเดอร์ชื่อ repo |
 | `list` | `ls`, `l` | ดูประวัติ/รายชื่อไฟล์ที่เคยดาวน์โหลดมาแล้ว |
 | `open` | `o` | เปิดโฟลเดอร์ที่เก็บไฟล์ดาวน์โหลด |
 | `clear` | `cls` | ล้างหน้าจอ Terminal |

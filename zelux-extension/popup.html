@@ -123,7 +123,7 @@
       opacity: 1;
     }
 
-    input {
+    textarea {
       position: relative;
       width: 100%;
       box-sizing: border-box;
@@ -137,13 +137,15 @@
       z-index: 1;
       outline: none;
       transition: background 0.3s ease;
+      resize: vertical;
+      min-height: 92px;
     }
 
-    input::placeholder {
+    textarea::placeholder {
       color: #475569;
     }
 
-    input:focus {
+    textarea:focus {
       background: #0b0f19;
     }
 
@@ -201,13 +203,13 @@
       <h2>ZELUX-DL</h2>
     </div>
     
-    <p>Paste a link below or right-click any element to send it to ZELUX-DL.</p>
+    <p>Paste one or many links below. Put each link on a new line.</p>
     
     <div class="input-wrapper">
-      <input type="text" id="urlInput" placeholder="https://..." autocomplete="off" spellcheck="false">
+      <textarea id="urlInput" rows="5" placeholder="https://example.com/file-1.zip&#10;https://example.com/file-2.zip" autocomplete="off" spellcheck="false"></textarea>
     </div>
     
-    <button id="downloadBtn">Download Now</button>
+    <button id="downloadBtn">Download Batch</button>
   </div>
   
   <script src="popup.js"></script>

@@ -19,7 +19,7 @@ const { once } = require('events');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.5.2';
+const APP_VERSION = '1.5.3';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -315,6 +315,7 @@ function renderScreen() {
       console.log('    ' + chalk.hex('#2dd4bf').bold('open') + '              ' + chalk.white('เปิดโฟลเดอร์ downloads'));
       console.log('    ' + chalk.hex('#f59e0b').bold('update') + '            ' + chalk.white('อัปเดตyt-dlpให้เป็นเวอร์ชันล่าสุด'));
       console.log('    ' + chalk.hex('#10b981').bold('upgrade') + '           ' + chalk.white('อัปเดต ZELUX-DL ตัวเต็ม'));
+      console.log('    ' + chalk.hex('#14b8a6').bold('check-update') + '      ' + chalk.white('ตรวจสอบเวอร์ชัน ZELUX-DL โดยไม่ติดตั้ง'));
       console.log('    ' + chalk.hex('#22d3ee').bold('settings') + '          ' + chalk.white('ดูการตั้งค่าปัจจุบัน'));
       console.log('    ' + chalk.hex('#22d3ee').bold('set KEY VALUE') + '     ' + chalk.white('เปลี่ยนการตั้งค่า'));
       console.log('    ' + chalk.hex('#fb7185').bold('history') + '           ' + chalk.white('ดูประวัติการดาวน์โหลด'));
@@ -1699,6 +1700,28 @@ function parseYtDlpProgressLine(rawLine) {
   return null;
 }
 
+// Keep startup responsive when GitHub is slow or offline. A notification is
+// useful, but it must never block the downloader for more than two seconds.
+async function checkForUpdateQuickly(timeoutMs = 2000) {
+  return Promise.race([
+    checkForUpdate(),
+    sleep(timeoutMs).then(() => null),
+  ]);
+}
+
+function printUpdateStatus(update) {
+  if (!update) {
+    console.log('    ' + dim('ℹ ไม่สามารถตรวจสอบอัปเดตได้ในขณะนี้'));
+    return;
+  }
+  if (update.available) {
+    console.log('    ' + chalk.hex('#fbbf24')('🎉') + chalk.yellow.bold(` มีเวอร์ชันใหม่ ${update.latest} (ปัจจุบัน v${update.current})`));
+    console.log('    ' + dim('พิมพ์ upgrade เพื่อดาวน์โหลดและติดตั้งอัตโนมัติ'));
+  } else {
+    console.log('    ' + success('✓') + chalk.green(` ใช้เวอร์ชันล่าสุดแล้ว (v${update.current})`));
+  }
+}
+
 async function downloadYouTubeFile(url) {
   console.log('      ' + info('\u27F3') + ' กำลังเตรียมระบบดาวน์โหลดสื่อ...');
 
@@ -3024,6 +3047,15 @@ async function handleLineInput(line) {
       createReadline();
       break;
 
+    case 'check-update': case 'checkupdate':
+      if (rl) { rl.removeAllListeners('close'); rl.close(); rl = null; }
+      currentView = 'upgrade';
+      renderScreen();
+      printUpdateStatus(await checkForUpdate());
+      currentView = 'download-done';
+      createReadline();
+      break;
+
     case 'exit': case 'quit': case 'q':
       console.log(); console.log('    ' + rainbowLine('\uD83D\uDC4B ขอบคุณที่ใช้ ZELUX-DL!', Date.now() / 5)); console.log();
       process.exit(0);
@@ -3098,6 +3130,13 @@ async function main() {
   await animatedIntro();
   currentView = 'default';
   renderScreen();
+
+  // Non-blocking update notification. Network failures are intentionally quiet.
+  const startupUpdate = await checkForUpdateQuickly();
+  if (startupUpdate?.available) {
+    printUpdateStatus(startupUpdate);
+    console.log();
+  }
 
   let args = process.argv.slice(2);
   try {

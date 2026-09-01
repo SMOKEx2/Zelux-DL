@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.5.3 - 2026-09-01
+
+- เพิ่มการตรวจสอบอัปเดต ZELUX-DL แบบไม่บล็อกตอนเปิดโปรแกรม
+- เพิ่มคำสั่ง `check-update` สำหรับตรวจเวอร์ชันโดยไม่ติดตั้ง
+- ปรับข้อความแนะนำการอัปเดตและการตรวจสอบ SHA256
+
 ## 1.5.2 - 2026-09-01
 
 - Use an independently managed current yt-dlp binary so active legacy downloads cannot block core updates.

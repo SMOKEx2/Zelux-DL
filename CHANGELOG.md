@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.5.4 - 2026-09-16
 - เพิ่มการรู้จำลิงก์ 1Filez, Vik1ngFile, Rootz, BuzzHeavier, DataNodes, FileMirage, FileKeeper และ FileDitchFiles
 
 ## 1.5.3 - 2026-09-01

@@ -89,6 +89,20 @@ test('resolveDownloadProvider converts public cloud share links', async () => {
     await resolveDownloadProvider('https://www.tiktok.com/@creator/video/123'),
     { provider: 'TikTok', url: 'https://www.tiktok.com/@creator/video/123' },
   );
+
+  const fileHosts = [
+    ['https://1filez.com/file/abc', '1Filez'],
+    ['https://vik1ngfile.site/f/abc', 'Vik1ngFile'],
+    ['https://www.rootz.so/file/abc', 'Rootz'],
+    ['https://buzzheavier.com/d/abc', 'BuzzHeavier'],
+    ['https://datanodes.to/files/abc', 'DataNodes'],
+    ['https://filemirage.com/file/abc', 'FileMirage'],
+    ['https://filekeeper.net/file/abc', 'FileKeeper'],
+    ['https://fileditchfiles.st/file/abc', 'FileDitchFiles'],
+  ];
+  for (const [url, provider] of fileHosts) {
+    assert.deepEqual(await resolveDownloadProvider(url), { provider, url });
+  }
 });
 
 test('resolveDownloadProvider extracts MediaFire download button safely', async () => {

@@ -37,7 +37,7 @@
 - ⚡ **Lightning Fast** - ใช้ระบบ Multi-connection โหลดวิดีโอแรงเต็มสปีดเน็ต
 - 🔄 **Auto Update** - ระบบอัปเดตตัวเองอัตโนมัติ (พิมพ์ `upgrade`) และอัปเดต core `yt-dlp` / `ffmpeg` อัตโนมัติ
 - 📦 **Batch Download** - วางหลายลิงก์คั่นด้วยเว้นวรรค/ขึ้นบรรทัดใหม่ หรือโหลดจากไฟล์ `.txt` ได้ พร้อมตัดลิงก์ซ้ำอัตโนมัติ
-- ☁️ **Multi-provider** - รองรับลิงก์แชร์สาธารณะจาก Google Drive/Docs, Dropbox, OneDrive, SharePoint, MediaFire, Pixeldrain, Hugging Face, GitHub และลิงก์ไฟล์ตรง
+- ☁️ **Multi-provider** - รองรับลิงก์แชร์สาธารณะจาก Google Drive/Docs, Dropbox, OneDrive, SharePoint, MediaFire, Pixeldrain, 1Filez, Vik1ngFile, Rootz, BuzzHeavier, DataNodes, FileMirage, FileKeeper, FileDitchFiles, Hugging Face, GitHub และลิงก์ไฟล์ตรง
 - 🎬 **Media sites** - รองรับ YouTube, Vimeo, TikTok, Facebook, Instagram, X/Twitter, Twitch, Dailymotion, SoundCloud และ Bandcamp ผ่าน yt-dlp
 - 🐙 **GitHub Repository** - วางลิงก์ `https://github.com/owner/repo` เพื่อดาวน์โหลดและแตกไฟล์ทั้ง repo อัตโนมัติ
 - 📊 **Honest Progress** - ไฟล์ที่ไม่แจ้งขนาดจะแสดง LIVE, bytes, speed และ elapsed time พร้อมจำนวน connections ที่ใช้จริง

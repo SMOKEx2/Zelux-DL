@@ -586,6 +586,24 @@ async function resolveDownloadProvider(rawUrl, fetchPage = fetchText) {
     if (parsed.pathname.startsWith('/api/file/')) return { provider: 'Pixeldrain', url: parsed.href };
   }
 
+  // File hosts that expose a downloadable URL from their public share page.
+  // Keep the original URL so redirects, cookies, and range support are handled
+  // by the existing HTTP downloader instead of guessing a fragile API path.
+  const directFileHosts = [
+    ['1filez.com', '1Filez'],
+    ['vik1ngfile.site', 'Vik1ngFile'],
+    ['rootz.so', 'Rootz'],
+    ['buzzheavier.com', 'BuzzHeavier'],
+    ['buzzheavier.net', 'BuzzHeavier'],
+    ['datanodes.to', 'DataNodes'],
+    ['filemirage.com', 'FileMirage'],
+    ['filemirage.net', 'FileMirage'],
+    ['filekeeper.net', 'FileKeeper'],
+    ['fileditchfiles.st', 'FileDitchFiles'],
+  ];
+  const directFileHost = directFileHosts.find(([domain]) => hostname === domain || hostname.endsWith(`.${domain}`));
+  if (directFileHost) return { provider: directFileHost[1], url: parsed.href };
+
   if (hostname === 'huggingface.co') {
     const segments = parsed.pathname.split('/').filter(Boolean);
     const blobIndex = segments.indexOf('blob');

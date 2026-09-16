@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- เพิ่มการรู้จำลิงก์ 1Filez, Vik1ngFile, Rootz, BuzzHeavier, DataNodes, FileMirage, FileKeeper และ FileDitchFiles
+
 ## 1.5.3 - 2026-09-01
 
 - เพิ่มการตรวจสอบอัปเดต ZELUX-DL แบบไม่บล็อกตอนเปิดโปรแกรม

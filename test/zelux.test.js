@@ -92,7 +92,7 @@ test('resolveDownloadProvider converts public cloud share links', async () => {
 
   const fileHosts = [
     ['https://1filez.com/file/abc', '1Filez'],
-    ['https://vik1ngfile.site/f/abc', 'Vik1ngFile'],
+    ['https://vik1ngfile.site/f/abc', 'VikingFile'],
     ['https://www.rootz.so/file/abc', 'Rootz'],
     ['https://buzzheavier.com/d/abc', 'BuzzHeavier'],
     ['https://datanodes.to/files/abc', 'DataNodes'],
@@ -101,7 +101,9 @@ test('resolveDownloadProvider converts public cloud share links', async () => {
     ['https://fileditchfiles.st/file/abc', 'FileDitchFiles'],
   ];
   for (const [url, provider] of fileHosts) {
-    assert.deepEqual(await resolveDownloadProvider(url), { provider, url });
+    const resolved = await resolveDownloadProvider(url);
+    assert.equal(resolved.provider, provider);
+    assert.equal(resolved.url, url === 'https://vik1ngfile.site/f/abc' ? 'https://vikingfile.com/f/abc' : url);
   }
 });
 

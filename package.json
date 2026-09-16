@@ -1,6 +1,6 @@
 {
   "name": "zelux-dl",
-  "version": "1.5.5",
+  "version": "1.5.6",
   "description": "ZELUX-DL — Lightning-fast terminal file downloader",
   "main": "zelux.js",
   "bin": {

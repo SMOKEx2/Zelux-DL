@@ -19,7 +19,7 @@ const { once } = require('events');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.5.5';
+const APP_VERSION = '1.5.6';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -584,6 +584,13 @@ async function resolveDownloadProvider(rawUrl, fetchPage = fetchText) {
       return { provider: 'Pixeldrain', url: `https://pixeldrain.com/api/file/${encodeURIComponent(match[1])}?download` };
     }
     if (parsed.pathname.startsWith('/api/file/')) return { provider: 'Pixeldrain', url: parsed.href };
+  }
+
+  // vik1ngfile.site embeds its files on the canonical vikingfile.com host.
+  // Normalize it before probing so the downloader follows the real file route.
+  if (hostname === 'vik1ngfile.site' || hostname === 'www.vik1ngfile.site') {
+    parsed.hostname = 'vikingfile.com';
+    return { provider: 'VikingFile', url: parsed.href };
   }
 
   // File hosts that expose a downloadable URL from their public share page.
@@ -1222,6 +1229,15 @@ function cleanPartials(fp, n) {
   for (let i = 0; i < n; i++) {
     const p = `${fp}.part${i}`;
     try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) { }
+  }
+}
+
+async function cleanupDownloadArtifacts(filePath, connectionCount = 1) {
+  const targets = [filePath, `${filePath}.part`, ...Array.from({ length: connectionCount }, (_, i) => `${filePath}.part${i}`)];
+  const deadline = Date.now() + 5000;
+  while (activeWriteStreams.size > 0 && Date.now() < deadline) await sleep(50);
+  for (const target of targets) {
+    try { if (fs.existsSync(target)) await removeTreeWithRetries(target, DOWNLOADS_DIR, 8); } catch (_) { /* best effort; caller reports the download error */ }
   }
 }
 
@@ -2795,13 +2811,17 @@ async function performDownload(url) {
     cancelCtrl.stopListening();
     clearInterval(redrawTimer);
     bar.stop();
+    abortAllDownloads();
 
     if (err.message === 'CANCELLED') {
+      await cleanupDownloadArtifacts(filePath, connCount);
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + warning.bold('⚠️ ยกเลิกการดาวน์โหลดแล้ว'));
+      console.log('      ' + dim('ลบไฟล์ชั่วคราวและข้อมูลที่โหลดไม่เสร็จแล้ว'));
       console.log();
       return { success: false, cancelled: true, error: 'Cancelled' };
     } else {
+      await cleanupDownloadArtifacts(filePath, connCount);
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + error('\u2715') + ' ดาวน์โหลดล้มเหลว: ' + err.message);
       console.log();
@@ -3199,6 +3219,7 @@ module.exports = {
   planGitHubRangeTasks,
   resolveDownloadProvider,
   removeDirectoryIfEmpty,
+  cleanupDownloadArtifacts,
   removeTreeWithRetries,
   resolveZipEntryPath,
   runWithConcurrency,

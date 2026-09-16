@@ -1,5 +1,8 @@
 # Changelog
 
+## 1.5.5 - 2026-09-16
+- ปรับปรุงคำสั่ง `upgrade` ให้เปิดโปรแกรมเวอร์ชันใหม่อัตโนมัติหลังติดตั้งบน Windows
+
 ## 1.5.4 - 2026-09-16
 - เพิ่มการรู้จำลิงก์ 1Filez, Vik1ngFile, Rootz, BuzzHeavier, DataNodes, FileMirage, FileKeeper และ FileDitchFiles
 

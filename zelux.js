@@ -19,7 +19,7 @@ const { once } = require('events');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.5.4';
+const APP_VERSION = '1.5.5';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -1609,19 +1609,23 @@ async function selfUpdate() {
       // 2. Replace the exe
       // 3. Restart
       const batPath = path.join(BASE_DIR, '_update.bat');
+      const escapedExePath = exePath.replace(/'/g, "''");
+      const escapedBaseDir = BASE_DIR.replace(/'/g, "''");
       const batContent = [
         '@echo off',
         'echo.',
         'echo  [ZELUX-DL] กำลังอัปเดต...',
-        'ping 127.0.0.1 -n 2 > nul',  // Wait ~1 second
-        `if exist "${backupPath}" del /f "${backupPath}"`,
-        `move /y "${exePath}" "${backupPath}"`,
-        `move /y "${tempPath}" "${exePath}"`,
+        'timeout /t 2 /nobreak > nul',
+        `if exist "${backupPath}" del /f /q "${backupPath}"`,
+        `move /y "${exePath}" "${backupPath}" > nul`,
+        `move /y "${tempPath}" "${exePath}" > nul`,
+        `if not exist "${exePath}" (echo  [ZELUX-DL] อัปเดตไม่สำเร็จ & pause & exit /b 1)`,
         'echo  [ZELUX-DL] อัปเดตสำเร็จ! กำลังเปิดโปรแกรมใหม่...',
-        'ping 127.0.0.1 -n 2 > nul',
-        `start "" "${exePath}"`,
-        `del /f "${backupPath}" 2>nul`,
-        `del /f "%~f0"`,  // Delete this bat file
+        'timeout /t 1 /nobreak > nul',
+        `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '${escapedExePath}' -WorkingDirectory '${escapedBaseDir}'"`,
+        `timeout /t 2 /nobreak > nul`,
+        `del /f /q "${backupPath}" 2>nul`,
+        `del /f /q "%~f0"`,
       ].join('\r\n');
 
       fs.writeFileSync(batPath, batContent, 'utf8');

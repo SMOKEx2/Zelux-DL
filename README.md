@@ -3,7 +3,7 @@
   <h1>🚀 ZELUX-DL</h1>
   <p><b>Lightning-fast, beautiful, and interactive terminal video downloader.</b></p>
   
-  [![Version](https://img.shields.io/badge/version-1.7.0-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-1.7.5-blue.svg)](#)
   [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
 </div>
@@ -73,6 +73,8 @@
 
 ดาวน์โหลด `zelux-extension-v*.zip` จาก Release แล้วแตกไฟล์ไว้ในโฟลเดอร์ถาวร จากนั้นเปิด `brave://extensions` หรือ `chrome://extensions`, เปิด **Developer mode**, เลือก **Load unpacked** และเลือกโฟลเดอร์ `zelux-extension` ที่แตกไว้ เมื่อมีรุ่นใหม่ให้ Reload extension หรือเลือกโฟลเดอร์ใหม่อีกครั้ง
 
+ก่อนส่งลิงก์ครั้งแรก เปิด ZELUX-DL Extension แล้วกดไอคอนตั้งค่ามุมซ้ายบน วางพาธเต็มของ `ZELUX-DL.exe` (เช่น `D:\Zelux-DL\ZELUX-DL.exe`) แล้วกด **บันทึกพาธ** หากใช้ **Copy as path** จาก Windows Explorer ให้คงหรือเอาเครื่องหมายคำพูดรอบพาธออกก็ได้ Extension จะยอมรับเฉพาะไฟล์ชื่อ `ZELUX-DL.exe` และแอปจะตรวจข้อมูลไฟล์ก่อนเปิด
+
 ### 🐧 สำหรับ Linux
 1. ไปที่หน้า [Releases](../../releases/latest)
 2. ดาวน์โหลดไฟล์ `ZELUX-DL-linux`
@@ -100,7 +102,7 @@ chmod +x register-linux.sh
 #### Facebook session ผ่าน ZELUX-DL Extension (ไม่บังคับ)
 
 ในหน้า Facebook ให้เปิด extension ของ ZELUX-DL วางลิงก์ Facebook แล้วเลือก **Use my Facebook session for this download** ก่อนส่ง
-extension จะขอสิทธิ์ cookies/เว็บไซต์เฉพาะเมื่อเลือกตัวเลือกนี้ อ่านเฉพาะ cookies ของ Facebook ในแท็บที่เปิดอยู่
+extension จะขอสิทธิ์ cookies/เว็บไซต์เฉพาะเมื่อเลือกตัวเลือกนี้ เมื่ออนุญาตแล้วให้กด **Send to ZELUX-DL** เพื่อเปิดแอปโดยตรง อ่านเฉพาะ cookies ของ Facebook ในแท็บที่เปิดอยู่
 แล้วส่งไปยัง ZELUX-DL บนเครื่องเดียวกันผ่าน localhost ด้วยโทเคนใช้ครั้งเดียว ตัว extension ไม่ส่ง cookies ไป cloud หรือบริการภายนอก
 ZELUX-DL สร้างไฟล์ชั่วคราวเพื่อให้ `yt-dlp` ใช้ และลบไฟล์หลังงานจบ รวมถึงเมื่อยกเลิกหรือล้มเหลว; หากโปรแกรมถูกปิดแบบ force-kill
 ไฟล์ตกค้างจะถูกเก็บกวาดในการเปิดโปรแกรมครั้งถัดไปเมื่อเก่ากว่า 24 ชั่วโมง การลบเป็นการ unlink ตามปกติ ไม่ใช่ secure erase

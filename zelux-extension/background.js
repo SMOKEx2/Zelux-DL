@@ -14,11 +14,18 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
   if (info.menuItemId !== MENU_ID) return;
   const url = info.linkUrl || info.srcUrl;
   triggerZeluxProtocol([url], tab?.id).catch((error) => {
+    if (/set the ZELUX-DL executable path/i.test(error.message || '')) {
+      chrome.action.setBadgeText({ text: 'SET' });
+      chrome.action.setBadgeBackgroundColor({ color: '#8655e8' });
+      chrome.action.setTitle({ title: 'Open ZELUX-DL Link Capture to configure its executable path.' });
+      return;
+    }
     console.error('[ZELUX-DL] Unable to open protocol:', error);
   });
 });
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === 'download-progress') return false;
   if (message?.type === 'scan-page') {
     scanPageLinks(message.tabId)
       .then((urls) => sendResponse({ ok: true, urls }))
@@ -75,9 +82,24 @@ function normalizeUrls(values) {
   return urls;
 }
 
-function buildProtocolUrl(urls, cookieToken = '') {
+function normalizeZeluxExePath(value) {
+  const candidate = String(value || '').trim().replace(/^"(.*)"$/, '$1').replaceAll('/', '\\');
+  return /^[a-z]:\\(?:[^<>:"|?*\u0000-\u001f\\]+\\)*zelux-dl\.exe$/i.test(candidate)
+    ? candidate
+    : '';
+}
+
+async function getConfiguredZeluxExePath() {
+  const stored = await chrome.storage.local.get('zeluxExePath');
+  const exePath = normalizeZeluxExePath(stored?.zeluxExePath);
+  if (!exePath) throw new Error('Set the ZELUX-DL executable path in extension settings before using link capture.');
+  return exePath;
+}
+
+function buildProtocolUrl(urls, cookieToken = '', exePath = '') {
   const query = new URLSearchParams({ urls: JSON.stringify(urls) });
   if (cookieToken) query.set('cookieToken', cookieToken);
+  if (exePath) query.set('exePath', exePath);
   return `zelux://download?${query.toString()}`;
 }
 
@@ -110,21 +132,45 @@ function selectCookieFields(cookies) {
 
 async function sendCookiesToLocalApp(token, cookies) {
   let lastError = 'ZELUX-DL did not accept the temporary session.';
-  for (let attempt = 0; attempt < 60; attempt += 1) {
+  const startedAt = Date.now();
+  const deadline = startedAt + 30000;
+  let attempt = 0;
+  let lastProgressSecond = -5;
+  let postStarted = false;
+  while (Date.now() < deadline) {
     try {
+      const seconds = Math.floor((Date.now() - startedAt) / 1000);
+      if (attempt === 0 || seconds >= lastProgressSecond + 5) {
+        lastProgressSecond = seconds;
+        reportDownloadProgress(attempt === 0
+          ? 'ZELUX-DL opened. Waiting for its local bridge before sending anything…'
+          : `Still waiting for the ZELUX-DL local bridge (${seconds}s / 30s)…`);
+      }
       const nonceBytes = crypto.getRandomValues(new Uint8Array(32));
       const nonce = [...nonceBytes].map(value => value.toString(16).padStart(2, '0')).join('');
       const tokenBytes = new Uint8Array(token.match(/.{2}/g).map(value => parseInt(value, 16)));
       const key = await crypto.subtle.importKey('raw', tokenBytes, { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
       const expectedProofBytes = new Uint8Array(await crypto.subtle.sign('HMAC', key, nonceBytes));
       const expectedProof = [...expectedProofBytes].map(value => value.toString(16).padStart(2, '0')).join('');
-      const challenge = await fetch(`http://127.0.0.1:47821/challenge?nonce=${nonce}`, { cache: 'no-store' });
+      const challenge = await fetchLocalBridge(
+        `http://127.0.0.1:47821/challenge?nonce=${nonce}`,
+        { cache: 'no-store' },
+        Math.min(3000, deadline - Date.now()),
+      );
       if (!challenge.ok) {
         if (challenge.status === 404) {
           throw new Error('The app at 127.0.0.1:47821 has no cookie relay (HTTP 404). Restart ZELUX-DL 1.7.0 or newer. No cookies were sent.');
         }
         if (challenge.status === 403) {
-          throw new Error('The local cookie bridge rejected this extension (HTTP 403). Reload the ZELUX-DL 2.4.0 extension and grant its local-app permission. No cookies were sent.');
+          let bridgeError = null;
+          try { bridgeError = await challenge.json(); } catch (_) { /* Older bridge builds may return an empty response. */ }
+          const extensionVersion = chrome.runtime.getManifest().version;
+          if (bridgeError?.code === 'extension_origin_not_allowed') {
+            const appVersion = bridgeError.appVersion ? ` by ZELUX-DL ${bridgeError.appVersion}` : '';
+            const origin = bridgeError.origin ? ` (browser origin: ${bridgeError.origin})` : '';
+            throw new Error(`ZELUX-DL extension ${extensionVersion} was rejected${appVersion} because its browser origin is not allowed${origin}. Update/restart the app and reload the extension from the same release. No cookies were sent.`);
+          }
+          throw new Error(`The local cookie bridge returned HTTP 403 to ZELUX-DL extension ${extensionVersion}. This usually means the installed app is older than 1.7.1 and does not recognize this browser's extension origin. Update the app to 1.7.1 or newer, then reload this extension. No cookies were sent.`);
         }
         throw new Error(`The local ZELUX-DL identity check returned HTTP ${challenge.status}. No cookies were sent.`);
       }
@@ -133,7 +179,9 @@ async function sendCookiesToLocalApp(token, cookies) {
         throw new Error('Another or outdated service answered on the local cookie port. ZELUX-DL identity verification failed; no cookies were sent.');
       }
 
-      const response = await fetch('http://127.0.0.1:47821/cookies', {
+      reportDownloadProgress('ZELUX-DL identity verified. Sending the opted-in session locally…');
+      postStarted = true;
+      const response = await fetchLocalBridge('http://127.0.0.1:47821/cookies', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -141,17 +189,41 @@ async function sendCookiesToLocalApp(token, cookies) {
         },
         body: JSON.stringify({ cookies }),
         cache: 'no-store',
-      });
+      }, Math.min(3000, deadline - Date.now()));
       if (response.ok) return;
       lastError = `Local cookie bridge rejected the request (${response.status}).`;
-      if (response.status === 400 || response.status === 403 || response.status === 413) throw new Error(lastError);
+      postStarted = false;
+      throw new Error(`${lastError} No session was accepted.`);
     } catch (error) {
       if (/no cookies were sent|rejected the request/i.test(error.message)) throw error;
-      lastError = 'Could not connect to the local ZELUX-DL bridge.';
+      if (postStarted) {
+        throw new Error('ZELUX-DL verified its local identity, but the session-transfer response was interrupted. The session may have reached ZELUX-DL on this PC; check the app before retrying.');
+      }
+      lastError = error.name === 'AbortError'
+        ? 'The local ZELUX-DL bridge did not respond in time.'
+        : 'Could not connect to the local ZELUX-DL bridge.';
     }
-    await new Promise(resolve => setTimeout(resolve, 500));
+    attempt += 1;
+    await new Promise(resolve => setTimeout(resolve, Math.min(500, Math.max(0, deadline - Date.now()))));
   }
-  throw new Error(`${lastError} Make sure ZELUX-DL opened, then try again.`);
+  throw new Error(`${lastError} No response after 30 seconds. Check that the configured ZELUX-DL.exe is version 1.7.0 or newer, that it opened, and that Brave allowed local-app access. No cookies were sent; try again after correcting this.`);
+}
+
+async function fetchLocalBridge(url, options = {}, timeoutMs = 3000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function reportDownloadProgress(message) {
+  try {
+    const pending = chrome.runtime.sendMessage?.({ type: 'download-progress', message });
+    if (pending?.catch) pending.catch(() => {});
+  } catch (_) { /* The popup may have closed; the download must continue. */ }
 }
 
 async function launchDownload(message) {
@@ -160,20 +232,38 @@ async function launchDownload(message) {
   let cookieToken = '';
   let cookies = [];
   const includeCookies = message.includeFacebookCookies === true;
+  const protocolAlreadyLaunched = message.protocolAlreadyLaunched === true;
   try {
+    const exePath = await getConfiguredZeluxExePath();
     const tab = includeCookies && Number.isInteger(tabId) ? await chrome.tabs.get(tabId) : null;
 
     if (includeCookies) {
+      reportDownloadProgress('Reading the Facebook session you opted to share, locally in Brave…');
       const urls = normalizeUrls(values);
       if (!tab?.url || !isFacebookHost(tab.url) || !urls.length || urls.some(url => !isFacebookHost(url))) {
         throw new Error('Temporary login cookies are available only for Facebook links opened from a Facebook tab.');
       }
       cookies = selectCookieFields(await chrome.cookies.getAll({ url: tab.url }));
       if (!cookies.length) throw new Error('No Facebook cookies found in this browser tab. Sign in to Facebook and retry.');
-      cookieToken = createCookieToken();
+      if (protocolAlreadyLaunched) {
+        cookieToken = String(message.cookieToken || '');
+        if (!/^[a-f0-9]{64}$/i.test(cookieToken)) throw new Error('The direct ZELUX-DL launch token is invalid. No cookies were sent.');
+      } else {
+        cookieToken = createCookieToken();
+      }
     }
 
-    const count = await triggerZeluxProtocol(values, tabId, cookieToken);
+    let count;
+    if (protocolAlreadyLaunched) {
+      count = normalizeUrls(values).length;
+      if (!includeCookies || !cookieToken || !count || count > 200 || !Number.isInteger(tabId)) {
+        throw new Error('The direct ZELUX-DL launch request is invalid. No cookies were sent.');
+      }
+      reportDownloadProgress('The ZELUX-DL launch was requested. Waiting for its identity-verified local bridge…');
+    } else {
+      if (cookieToken) reportDownloadProgress('Opening ZELUX-DL and connecting to its local bridge…');
+      count = await triggerZeluxProtocol(values, tabId, cookieToken, exePath);
+    }
     if (cookieToken) await sendCookiesToLocalApp(cookieToken, cookies);
     return { count, usedTemporaryCookies: Boolean(cookieToken) };
   } finally {
@@ -189,13 +279,14 @@ async function launchDownload(message) {
   }
 }
 
-async function triggerZeluxProtocol(values, tabId, cookieToken = '') {
+async function triggerZeluxProtocol(values, tabId, cookieToken = '', configuredExePath = '') {
   const urls = normalizeUrls(values);
   if (!urls.length) throw new Error('No valid HTTP or HTTPS URLs');
   if (urls.length > 200) throw new Error('A batch can contain up to 200 URLs');
   if (!Number.isInteger(tabId)) throw new Error('No active browser tab');
 
-  const protocolUrl = buildProtocolUrl(urls, cookieToken);
+  const exePath = configuredExePath || await getConfiguredZeluxExePath();
+  const protocolUrl = buildProtocolUrl(urls, cookieToken, exePath);
   if (protocolUrl.length > 30000) throw new Error('The URL list is too long; use a .txt batch file instead');
   await chrome.scripting.executeScript({
     target: { tabId },
@@ -208,5 +299,7 @@ async function triggerZeluxProtocol(values, tabId, cookieToken = '') {
     },
     args: [protocolUrl]
   });
+  chrome.action.setBadgeText({ text: '' });
+  chrome.action.setTitle({ title: 'ZELUX-DL Link Capture' });
   return urls.length;
 }

@@ -64,4 +64,9 @@ jobs:
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release create "${{ github.ref_name }}" dist/ZELUX-DL.exe dist/ZELUX-DL-linux dist/zelux-extension-v2.4.1.zip dist/SHA256SUMS.txt --generate-notes --verify-tag
+        run: |
+          $manifest = Get-Content 'zelux-extension/manifest.json' -Raw | ConvertFrom-Json
+          $extensionAsset = "dist/zelux-extension-v$($manifest.version).zip"
+          if (-not (Test-Path -LiteralPath $extensionAsset)) { throw "Browser extension package was not built: $extensionAsset" }
+          gh release create "${{ github.ref_name }}" dist/ZELUX-DL.exe dist/ZELUX-DL-linux $extensionAsset dist/SHA256SUMS.txt --generate-notes --verify-tag
+          if ($LASTEXITCODE -ne 0) { throw "GitHub release creation failed with code $LASTEXITCODE" }

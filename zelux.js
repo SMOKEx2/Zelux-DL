@@ -16,7 +16,7 @@ const yauzl = require('yauzl');
 const os = require('os');
 const crypto = require('crypto');
 const { once } = require('events');
-const { execSync } = require('child_process');
+const { execSync, execFileSync, spawn } = require('child_process');
 const { TerminalUI, clean: cleanTerminalText } = require('./lib/terminal-ui');
 let terminalUI = null;
 
@@ -40,7 +40,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.5';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -298,6 +298,15 @@ function removeTemporaryFacebookCookies(filePath) {
   } catch (_) { return false; }
 }
 
+function isAllowedCookieRelayOrigin(origin) {
+  const value = String(origin || '');
+  // Chromium-based browsers normally use a 32-character a-p extension ID.
+  // Accept valid extension-scheme host identifiers from Chromium forks too,
+  // while never allowing ordinary web pages to access the cookie relay.
+  return /^(?:chrome|brave|edge)-extension:\/\/[a-z0-9._-]{1,128}$/i.test(value)
+    || /^moz-extension:\/\/[a-f0-9-]{36}$/i.test(value);
+}
+
 function cleanupStaleTemporaryFacebookCookies(directory = os.tmpdir(), now = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000) {
   let removed = 0;
   try {
@@ -320,15 +329,27 @@ function receiveTemporaryFacebookCookies(token, { port = COOKIE_RELAY_PORT, time
     let body = '';
     const server = http.createServer((request, response) => {
       const origin = String(request.headers.origin || '');
-      const allowedOrigin = /^chrome-extension:\/\/[a-p]{32}$/.test(origin);
-      if (!allowedOrigin) {
-        response.writeHead(403).end();
+      const allowedOrigin = isAllowedCookieRelayOrigin(origin);
+      // Some Chromium-based extension service workers omit Origin for loopback
+      // requests. In that case the one-time token below remains mandatory for
+      // POST /cookies; any present, non-extension Origin is still rejected.
+      if (origin && !allowedOrigin) {
+        response.writeHead(403, {
+          'Content-Type': 'application/json',
+          'Cache-Control': 'no-store',
+        }).end(JSON.stringify({
+          code: 'extension_origin_not_allowed',
+          appVersion: APP_VERSION,
+          origin: origin.slice(0, 256),
+        }));
         return;
       }
-      response.setHeader('Access-Control-Allow-Origin', origin);
-      response.setHeader('Vary', 'Origin');
-      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Zelux-Token');
+      if (origin) {
+        response.setHeader('Access-Control-Allow-Origin', origin);
+        response.setHeader('Vary', 'Origin');
+        response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Zelux-Token');
+      }
       response.setHeader('Cache-Control', 'no-store');
       if (request.method === 'OPTIONS') {
         response.writeHead(204).end();
@@ -1173,7 +1194,7 @@ function decodeZeluxProtocolArg(value) {
 
 function decodeZeluxProtocolRequest(value) {
   const raw = String(value || '').trim();
-  if (!/^zelux:/i.test(raw)) return { urls: raw ? [raw] : [], cookieToken: '' };
+  if (!/^zelux:/i.test(raw)) return { urls: raw ? [raw] : [], cookieToken: '', exePath: '' };
 
   try {
     const protocolUrl = new URL(raw);
@@ -1188,7 +1209,11 @@ function decodeZeluxProtocolRequest(value) {
         if (targetUrl && isValidUrl(targetUrl)) urls = [targetUrl];
       }
       const token = String(protocolUrl.searchParams.get('cookieToken') || '');
-      return { urls, cookieToken: /^[a-f0-9]{64}$/i.test(token) ? token : '' };
+      return {
+        urls,
+        cookieToken: /^[a-f0-9]{64}$/i.test(token) ? token : '',
+        exePath: String(protocolUrl.searchParams.get('exePath') || ''),
+      };
     }
   } catch (_) { }
 
@@ -1196,7 +1221,82 @@ function decodeZeluxProtocolRequest(value) {
   let legacy = raw.replace(/^zelux:\/\//i, '');
   legacy = legacy.replace(/^(https?)\/\//i, '$1://');
   try { legacy = decodeURIComponent(legacy); } catch (_) { }
-  return { urls: (legacy.match(/https?:\/\/[^\s<>"']+/gi) || []).filter(isValidUrl), cookieToken: '' };
+  return { urls: (legacy.match(/https?:\/\/[^\s<>"']+/gi) || []).filter(isValidUrl), cookieToken: '', exePath: '' };
+}
+
+function normalizeZeluxExePath(value) {
+  const candidate = String(value || '').trim().replace(/^"(.*)"$/, '$1').replace(/\//g, '\\');
+  if (!/^[a-z]:\\(?:[^<>:"|?*\u0000-\u001f\\]+\\)*zelux-dl\.exe$/i.test(candidate)) return '';
+  return path.win32.normalize(candidate);
+}
+
+function verifyZeluxExeIdentity(exePath) {
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const powershell = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const script = "$i=[Diagnostics.FileVersionInfo]::GetVersionInfo($env:ZELUX_EXE_PATH); [Console]::WriteLine($i.ProductName + '|' + $i.OriginalFilename + '|' + $i.FileVersion)";
+  let identity;
+  try {
+    identity = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+      encoding: 'utf8',
+      timeout: 15000,
+      windowsHide: true,
+      env: { ...process.env, ZELUX_EXE_PATH: exePath },
+    }).trim().split('|');
+  } catch (_) {
+    throw new Error('Could not verify this EXE. Choose the ZELUX-DL.exe distributed by the ZELUX-DL release.');
+  }
+  if (identity.length !== 3 || identity[0] !== 'ZELUX-DL' || identity[1] !== 'ZELUX-DL.exe' || !/^\d+\.\d+\.\d+(?:\.\d+)?(?:[-+][\w.-]+)?$/.test(identity[2])) {
+    throw new Error('This file is not a verified ZELUX-DL.exe. Choose the executable distributed by the ZELUX-DL release.');
+  }
+  return identity[2];
+}
+
+function startConfiguredZeluxProcess(exePath, protocolArg) {
+  const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+  const powershell = path.win32.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const script = [
+    '$exe = $env:ZELUX_TARGET_EXE',
+    '$arg = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($env:ZELUX_PROTOCOL_ARG_BASE64))',
+    `$quotedArg = '"' + $arg.Replace('"', '\\"') + '"'`,
+    '$child = Start-Process -FilePath $exe -ArgumentList $quotedArg -WorkingDirectory ([IO.Path]::GetDirectoryName($exe)) -PassThru -WindowStyle Normal',
+    `if (-not $child -or $child.Id -le 0) { throw 'Windows did not start the configured ZELUX-DL process.' }`,
+    '[Console]::WriteLine($child.Id)',
+  ].join('; ');
+  const output = execFileSync(powershell, ['-NoLogo', '-NoProfile', '-NonInteractive', '-Command', script], {
+    encoding: 'utf8',
+    timeout: 15000,
+    windowsHide: true,
+    env: {
+      ...process.env,
+      ZELUX_TARGET_EXE: exePath,
+      ZELUX_PROTOCOL_ARG_BASE64: Buffer.from(String(protocolArg || ''), 'utf8').toString('base64'),
+    },
+  });
+  const childPid = Number(String(output || '').trim());
+  if (!Number.isSafeInteger(childPid) || childPid <= 0) {
+    throw new Error('Windows did not confirm that the configured ZELUX-DL process started.');
+  }
+  return childPid;
+}
+
+async function handoffToConfiguredZeluxExe(exePathValue, protocolArg, dependencies = {}) {
+  const exePath = normalizeZeluxExePath(exePathValue);
+  if (!exePath) throw new Error('Invalid app path. Configure an absolute Windows path ending in ZELUX-DL.exe.');
+  const platform = dependencies.platform || process.platform;
+  if (platform !== 'win32') throw new Error('The configured ZELUX-DL.exe path can only be used on Windows.');
+
+  let fileInfo;
+  try { fileInfo = (dependencies.statFile || fs.statSync)(exePath); }
+  catch (_) { throw new Error(`ZELUX-DL.exe was not found at ${exePath}. Update the extension settings with its current location.`); }
+  if (!fileInfo.isFile()) throw new Error('The configured ZELUX-DL.exe path is not a file.');
+
+  const currentPath = path.win32.resolve(dependencies.currentExePath || process.execPath).toLowerCase();
+  if (path.win32.resolve(exePath).toLowerCase() === currentPath) return false;
+  (dependencies.verifyIdentity || verifyZeluxExeIdentity)(exePath);
+
+  const startProcess = dependencies.startProcess || startConfiguredZeluxProcess;
+  await startProcess(exePath, protocolArg);
+  return true;
 }
 
 function decodeZeluxProtocolArgs(value) {
@@ -4055,6 +4155,7 @@ async function main() {
   const rawArgs = process.argv.slice(2);
   const protocolArg = rawArgs.find(value => /^zelux:/i.test(String(value || '').trim()));
   const protocolRequest = protocolArg ? decodeZeluxProtocolRequest(protocolArg) : null;
+  if (protocolRequest?.exePath && await handoffToConfiguredZeluxExe(protocolRequest.exePath, protocolArg)) return;
   const initialUrls = protocolRequest?.urls?.length ? protocolRequest.urls : extractUrlsFromText(rawArgs);
   let initialCookieFile = '';
   try {
@@ -4114,6 +4215,9 @@ if (require.main === module) {
   main().catch(err => {
     terminalUI?.close();
     console.error(err.stack || String(err));
+    try {
+      fs.writeFileSync(path.join(BASE_DIR, 'error.log'), err.stack || String(err), 'utf8');
+    } catch (_) { /* Preserve the console error if the app folder is read-only. */ }
     process.exitCode = 1;
   });
 }
@@ -4130,6 +4234,7 @@ module.exports = {
   decodeZeluxProtocolRequest,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
+  handoffToConfiguredZeluxExe,
   diagnoseHttpResponse,
   downloadRange,
   findChecksum,
@@ -4141,6 +4246,8 @@ module.exports = {
   removeTemporaryFacebookCookies,
   writeTemporaryFacebookCookies,
   isValidUrl,
+  isAllowedCookieRelayOrigin,
+  normalizeZeluxExePath,
   isMediaExtractorUrl,
   openFolder,
   isCancelInput,
@@ -4161,5 +4268,6 @@ module.exports = {
   summarizeGitHubTree,
   toBoundedInteger,
   verifyDownloadIntegrity,
+  verifyZeluxExeIdentity,
   waitForUpdateHelperReady,
 };

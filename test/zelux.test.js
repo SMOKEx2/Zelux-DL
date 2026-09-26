@@ -28,11 +28,14 @@ const {
   findChecksum,
   getMediaProviderName,
   formatGitHubProgressLines,
+  handoffToConfiguredZeluxExe,
   isValidUrl,
+  isAllowedCookieRelayOrigin,
   isMediaExtractorUrl,
   openFolder,
   isCancelInput,
   mergeRangeParts,
+  normalizeZeluxExePath,
   parseGitHubRepositoryUrl,
   parseYtDlpProgressLine,
   parseSha256Metadata,
@@ -86,6 +89,15 @@ test('media cookie args prefer an explicitly selected browser and otherwise use 
   assert.deepEqual(buildMediaCookieArgs('none', ''), []);
 });
 
+test('cookie relay accepts Chromium extension origins but rejects normal web origins', () => {
+  assert.equal(isAllowedCookieRelayOrigin(`chrome-extension://${'a'.repeat(32)}`), true);
+  assert.equal(isAllowedCookieRelayOrigin('brave-extension://zelux-local'), true);
+  assert.equal(isAllowedCookieRelayOrigin('edge-extension://extension_id'), true);
+  assert.equal(isAllowedCookieRelayOrigin('moz-extension://12345678-1234-1234-1234-123456789abc'), true);
+  assert.equal(isAllowedCookieRelayOrigin('https://www.facebook.com'), false);
+  assert.equal(isAllowedCookieRelayOrigin('null'), false);
+});
+
 test('temporary Facebook cookie relay accepts one extension-origin request and scopes cookies to Facebook', async () => {
   const token = crypto.randomBytes(32).toString('hex');
   let port = 0;
@@ -95,6 +107,22 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
     onListening: value => { port = value; },
   });
   while (!port) await new Promise(resolve => setTimeout(resolve, 1));
+
+  const rejectedOrigin = await new Promise((resolve, reject) => {
+    http.get({
+      host: '127.0.0.1', port, path: '/challenge?nonce=' + 'a'.repeat(64),
+      headers: { Origin: 'https://www.facebook.com' },
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) }));
+    }).on('error', reject);
+  });
+  assert.equal(rejectedOrigin.status, 403);
+  assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
+  assert.equal(rejectedOrigin.body.appVersion, '1.7.5');
+  assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
   const challenge = await new Promise((resolve, reject) => {
@@ -111,11 +139,25 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   assert.equal(challenge.status, 200);
   assert.equal(challenge.body.proof, crypto.createHmac('sha256', Buffer.from(token, 'hex')).update(nonce, 'hex').digest('hex'));
 
-  async function post(headers, payload) {
+  const noOriginNonce = crypto.randomBytes(32).toString('hex');
+  const noOriginChallenge = await new Promise((resolve, reject) => {
+    http.get({ host: '127.0.0.1', port, path: `/challenge?nonce=${noOriginNonce}` }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) }));
+    }).on('error', reject);
+  });
+  assert.equal(noOriginChallenge.status, 200);
+  assert.equal(noOriginChallenge.body.proof, crypto.createHmac('sha256', Buffer.from(token, 'hex')).update(noOriginNonce, 'hex').digest('hex'));
+
+  async function post(headers, payload, origin = `chrome-extension://${'a'.repeat(32)}`) {
     return new Promise((resolve, reject) => {
+      const requestHeaders = { 'Content-Type': 'application/json', ...headers };
+      if (origin) requestHeaders.Origin = origin;
       const request = http.request({
         host: '127.0.0.1', port, path: '/cookies', method: 'POST',
-        headers: { 'Content-Type': 'application/json', Origin: `chrome-extension://${'a'.repeat(32)}`, ...headers },
+        headers: requestHeaders,
       }, response => {
         response.resume();
         response.on('end', () => resolve(response.statusCode));
@@ -129,7 +171,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   assert.equal(await post({ 'X-Zelux-Token': token }, { cookies: [
     { domain: '.facebook.com', name: 'session', value: 'test-session', path: '/', secure: true, httpOnly: true },
     { domain: '.evil.example', name: 'steal', value: 'no', path: '/' },
-  ] }), 200);
+  ] }, null), 200);
   const jar = await received;
   assert.match(jar, /#HttpOnly_\.facebook\.com\tTRUE\t\/\tTRUE\t0\tsession\ttest-session/);
   assert.doesNotMatch(jar, /evil|steal/);
@@ -164,11 +206,59 @@ test('temporary Facebook cookie files are constrained, private, and removed', ()
 
 test('ZELUX protocol keeps the one-time cookie token separate from download URLs', () => {
   const token = 'a'.repeat(64);
-  const request = decodeZeluxProtocolRequest(`zelux://download?urls=${encodeURIComponent(JSON.stringify(['https://www.facebook.com/reel/123']))}&cookieToken=${token}`);
-  assert.deepEqual(request, { urls: ['https://www.facebook.com/reel/123'], cookieToken: token });
+  const exePath = 'D:\\Zelux-DL\\ZELUX-DL.exe';
+  const request = decodeZeluxProtocolRequest(`zelux://download?urls=${encodeURIComponent(JSON.stringify(['https://www.facebook.com/reel/123']))}&cookieToken=${token}&exePath=${encodeURIComponent(exePath)}`);
+  assert.deepEqual(request, { urls: ['https://www.facebook.com/reel/123'], cookieToken: token, exePath });
   assert.deepEqual(decodeZeluxProtocolRequest('zelux://download?url=https%3A%2F%2Fexample.com%2Ffile.zip&cookieToken=invalid'), {
-    urls: ['https://example.com/file.zip'], cookieToken: '',
+    urls: ['https://example.com/file.zip'], cookieToken: '', exePath: '',
   });
+});
+
+test('configured executable path accepts only an absolute Windows ZELUX-DL.exe path', () => {
+  assert.equal(normalizeZeluxExePath('D:\\Zelux-DL\\ZELUX-DL.exe'), 'D:\\Zelux-DL\\ZELUX-DL.exe');
+  assert.equal(normalizeZeluxExePath('"D:\\Zelux-DL\\ZELUX-DL.exe"'), 'D:\\Zelux-DL\\ZELUX-DL.exe');
+  assert.equal(normalizeZeluxExePath('C:/Apps/ZELUX-DL.exe'), 'C:\\Apps\\ZELUX-DL.exe');
+  assert.equal(normalizeZeluxExePath('ZELUX-DL.exe'), '');
+  assert.equal(normalizeZeluxExePath('C:\\Apps\\another.exe'), '');
+  assert.equal(normalizeZeluxExePath('\\\\server\\share\\ZELUX-DL.exe'), '');
+});
+
+test('protocol handoff validates the configured app and opens that exact executable with the original request', async () => {
+  let launch = null;
+  let verifiedPath = '';
+  const protocolArg = 'zelux://download?urls=%5B%5D&exePath=D%3A%5CZelux-DL%5CZELUX-DL.exe';
+  const didHandoff = await handoffToConfiguredZeluxExe('D:\\Zelux-DL\\ZELUX-DL.exe', protocolArg, {
+    platform: 'win32',
+    currentExePath: 'C:\\Registered\\ZELUX-DL.exe',
+    statFile: () => ({ isFile: () => true }),
+    verifyIdentity: exePath => { verifiedPath = exePath; },
+    startProcess: async (...args) => {
+      launch = args;
+      return 1234;
+    },
+  });
+  assert.equal(didHandoff, true);
+  assert.equal(verifiedPath, 'D:\\Zelux-DL\\ZELUX-DL.exe');
+  assert.deepEqual(launch, ['D:\\Zelux-DL\\ZELUX-DL.exe', protocolArg]);
+});
+
+test('protocol handoff does not respawn itself or accept a missing executable', async () => {
+  const sameExecutable = await handoffToConfiguredZeluxExe('D:\\Zelux-DL\\ZELUX-DL.exe', 'zelux://download', {
+    platform: 'win32',
+    currentExePath: 'd:\\zelux-dl\\zelux-dl.exe',
+    statFile: () => ({ isFile: () => true }),
+    verifyIdentity: () => assert.fail('The running ZELUX-DL app should not need to verify itself again.'),
+    startProcess: () => assert.fail('The running app must not relaunch itself.'),
+  });
+  assert.equal(sameExecutable, false);
+  await assert.rejects(
+    handoffToConfiguredZeluxExe('D:\\Missing\\ZELUX-DL.exe', 'zelux://download', {
+      platform: 'win32',
+      currentExePath: 'C:\\Registered\\ZELUX-DL.exe',
+      statFile: () => { throw new Error('ENOENT'); },
+    }),
+    /ZELUX-DL.exe was not found/,
+  );
 });
 
 test('smart library classifies files, links download sources and hashes duplicate content', async () => {
@@ -437,6 +527,8 @@ test('extension scans page links and sends reviewed batches through the protocol
       removeAll: callback => callback(),
       onClicked: { addListener: listener => { listeners.clicked = listener; } },
     },
+    storage: { local: { get: async () => ({ zeluxExePath: 'D:\\Zelux-DL\\ZELUX-DL.exe' }) } },
+    action: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {}, setTitle: () => {} },
     scripting: {
       executeScript: async options => {
         execution = options;
@@ -495,11 +587,15 @@ test('extension scans page links and sends reviewed batches through the protocol
   assert.equal(response.ok, true, response.error);
   assert.equal(response.count, 2);
   assert.equal(execution.target.tabId, 42);
-  assert.equal(execution.args[0], `zelux://download?urls=${encodeURIComponent(JSON.stringify(urls))}`);
+  const protocol = new URL(execution.args[0]);
+  assert.equal(protocol.searchParams.get('urls'), JSON.stringify(urls));
+  assert.equal(protocol.searchParams.get('exePath'), 'D:\\Zelux-DL\\ZELUX-DL.exe');
   const popupSource = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'popup.js'), 'utf8');
   assert.match(popupSource, /type: 'scan-page'/);
   assert.match(popupSource, /type: 'launch-download'/);
   assert.match(popupSource, /message\.urls|urls,/);
+  assert.match(popupSource, /launchProtocolFromPopup\(protocolUrl\)/);
+  assert.match(popupSource, /Approve Brave’s one-time Facebook and local-app permission prompt/);
 });
 
 test('extension reads only Facebook cookies after explicit opt-in and sends them only to loopback', async () => {
@@ -508,6 +604,7 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
   let permissionRemoval = null;
   let posted = null;
   let protocolUrl = '';
+  let expectedToken = '0a'.repeat(32);
   let forgeChallenge = false;
   const relayCalls = [];
   const chrome = {
@@ -516,6 +613,8 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
       onMessage: { addListener: listener => { listeners.message = listener; } },
     },
     contextMenus: { create: () => {}, removeAll: callback => callback(), onClicked: { addListener: () => {} } },
+    storage: { local: { get: async () => ({ zeluxExePath: 'D:\\Zelux-DL\\ZELUX-DL.exe' }) } },
+    action: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {}, setTitle: () => {} },
     tabs: { get: async tabId => ({ id: tabId, url: 'https://www.facebook.com/reel/123' }) },
     cookies: { getAll: async query => {
       cookieQuery = query;
@@ -529,7 +628,7 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
   };
   const source = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'background.js'), 'utf8');
   vm.runInNewContext(source, {
-    chrome, console, encodeURIComponent, URL, URLSearchParams, Uint8Array, setTimeout,
+    chrome, console, encodeURIComponent, URL, URLSearchParams, Uint8Array, AbortController, setTimeout, clearTimeout,
     crypto: { getRandomValues: bytes => { bytes.fill(10); return bytes; }, subtle: crypto.webcrypto.subtle },
     fetch: async (url, options = {}) => {
       relayCalls.push(url);
@@ -537,7 +636,7 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
         const nonce = new URL(url).searchParams.get('nonce');
         const proof = forgeChallenge
           ? 'f'.repeat(64)
-          : crypto.createHmac('sha256', Buffer.from('0a'.repeat(32), 'hex')).update(nonce, 'hex').digest('hex');
+          : crypto.createHmac('sha256', Buffer.from(expectedToken, 'hex')).update(nonce, 'hex').digest('hex');
         return { ok: true, status: 200, json: async () => ({ proof }) };
       }
       posted = { url, options };
@@ -563,9 +662,28 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
   assert.doesNotMatch(posted.options.body, /must-not-send/);
   const protocol = new URL(protocolUrl);
   assert.equal(protocol.searchParams.get('cookieToken'), posted.options.headers['X-Zelux-Token']);
+  assert.equal(protocol.searchParams.get('exePath'), 'D:\\Zelux-DL\\ZELUX-DL.exe');
   assert.doesNotMatch(protocolUrl, /sensitive-test-value/);
   assert.deepEqual(Array.from(permissionRemoval.permissions), ['cookies']);
   assert.equal(result.usedTemporaryCookies, true);
+
+  // Facebook downloads launched directly by the popup must send the same
+  // one-time token without trying to trigger the protocol a second time.
+  protocolUrl = '';
+  expectedToken = 'b'.repeat(64);
+  posted = null;
+  const directResult = await new Promise(resolve => listeners.message({
+    type: 'launch-download',
+    urls: ['https://www.facebook.com/reel/123'],
+    tabId: 17,
+    includeFacebookCookies: true,
+    cookieToken: expectedToken,
+    protocolAlreadyLaunched: true,
+  }, {}, resolve));
+  assert.equal(directResult.ok, true, directResult.error);
+  assert.equal(directResult.count, 1);
+  assert.equal(protocolUrl, '');
+  assert.equal(posted.options.headers['X-Zelux-Token'], expectedToken);
 
   forgeChallenge = true;
   posted = null;
@@ -582,6 +700,51 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
   assert.match(blocked.error, /identity verification failed/i);
   assert.equal(relayCalls.length, 1);
   assert.equal(posted, null);
+});
+
+test('extension blocks capture before reading cookies when the configured path is not a ZELUX-DL executable', async () => {
+  const listeners = {};
+  let cookieReads = 0;
+  let protocolLaunches = 0;
+  const chrome = {
+    runtime: {
+      onInstalled: { addListener: () => {} },
+      onMessage: { addListener: listener => { listeners.message = listener; } },
+    },
+    contextMenus: { create: () => {}, removeAll: callback => callback(), onClicked: { addListener: () => {} } },
+    storage: { local: { get: async () => ({ zeluxExePath: 'C:\\Apps\\not-zelux.exe' }) } },
+    action: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {}, setTitle: () => {} },
+    tabs: { get: async () => ({ id: 9, url: 'https://www.facebook.com/reel/123' }) },
+    cookies: { getAll: async () => { cookieReads += 1; return [{ domain: '.facebook.com', name: 'session', value: 'secret' }]; } },
+    permissions: { remove: async () => true },
+    scripting: { executeScript: async () => { protocolLaunches += 1; } },
+  };
+  const source = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'background.js'), 'utf8');
+  vm.runInNewContext(source, { chrome, console, encodeURIComponent, URL, URLSearchParams, Uint8Array, setTimeout });
+  const response = await new Promise(resolve => listeners.message({
+    type: 'launch-download',
+    urls: ['https://www.facebook.com/reel/123'],
+    tabId: 9,
+    includeFacebookCookies: true,
+  }, {}, resolve));
+  assert.equal(response.ok, false);
+  assert.match(response.error, /set the ZELUX-DL executable path/i);
+  assert.equal(cookieReads, 0);
+  assert.equal(protocolLaunches, 0);
+});
+
+test('extension settings require an explicit local ZELUX-DL executable path', () => {
+  const root = path.join(__dirname, '..', 'zelux-extension');
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'manifest.json'), 'utf8'));
+  const markup = fs.readFileSync(path.join(root, 'popup.html'), 'utf8');
+  const script = fs.readFileSync(path.join(root, 'popup.js'), 'utf8');
+  assert.ok(manifest.permissions.includes('storage'));
+  assert.match(markup, /id="settingsToggle"/);
+  assert.match(markup, /id="exePathInput"/);
+  assert.match(markup, /id="saveExePathBtn"/);
+  assert.match(markup, /id="setupNotice"/);
+  assert.match(script, /sendButton\.disabled = count === 0 \|\| !configuredExePath/);
+  assert.match(script, /chrome\.storage\.local\.set\(\{ zeluxExePath: exePath \}/);
 });
 
 test('parseGitHubRepositoryUrl recognizes repository roots only', () => {

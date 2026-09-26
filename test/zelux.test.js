@@ -12,6 +12,7 @@ const {
   cleanupDownloadArtifacts,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
+  buildWindowsUpdateScript,
   compareVersions,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
@@ -536,6 +537,17 @@ test('findChecksum selects and validates the requested release asset', () => {
   const hash = 'a'.repeat(64);
   assert.equal(findChecksum(`${hash}  ZELUX-DL.exe\n`, 'ZELUX-DL.exe'), hash);
   assert.equal(findChecksum('invalid  ZELUX-DL.exe\n', 'ZELUX-DL.exe'), null);
+});
+
+test('Windows update handoff waits, verifies the replacement, relaunches, and logs rollback errors', () => {
+  const script = buildWindowsUpdateScript();
+  assert.match(script, /Get-Process -Id \$ParentPid/);
+  assert.match(script, /for \(\$Attempt = 1; \$Attempt -le 20/);
+  assert.match(script, /\$ActualVersion -ne \$ExpectedVersion/);
+  assert.match(script, /Start-Process -FilePath \$ExePath -WorkingDirectory \$WorkDir -PassThru/);
+  assert.match(script, /Restored the previous executable and reopening it/);
+  assert.match(script, /\[string\]\$LogPath/);
+  assert.match(script, /Write-UpdateLog "Update\/relaunch failed:/);
 });
 
 test('runWithConcurrency respects its worker limit and preserves order', async () => {

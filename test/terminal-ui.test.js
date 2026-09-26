@@ -123,6 +123,45 @@ test('home download destination sits immediately below the menu frame', () => {
   }
 });
 
+test('home screen shows the startup version-check result without replacing download status', () => {
+  const input = new PassThrough();
+  input.isTTY = true;
+  input.setRawMode = value => { input.isRaw = value; };
+  const output = new PassThrough();
+  output.columns = 90; output.rows = 32;
+  const ui = new TerminalUI({
+    version: '1.6.7', input, output, motion: false,
+    snapshot: () => ({ completed: 3, failed: 1, connections: 4, directory: 'D:\\Downloads', versionStatus: { text: 'Up to date: v1.6.7', color: 'green' } }),
+  });
+  ui.home();
+  const frame = ui.buildFrame(90, 32);
+  const plain = frame.lines.flatMap(parts => parts.map(part => stripVTControlCharacters(part.text))).join(' ');
+  assert.match(plain, /Up to date: v1\.6\.7/);
+  assert.match(plain, /3 completed\s+·\s+1 failed\s+·\s+4 connections configured/);
+  assert.ok(JSON.stringify(frame).includes('38;2;74;222;128'), 'latest version status uses success color');
+  ui.finish(null);
+  ui.close();
+});
+
+test('startup update offer defaults to not now and requires deliberate selection to install', async () => {
+  const { ui, key } = fixture();
+  const postponed = ui.choose([
+    { label: 'NOT NOW, CONTINUE', value: false },
+    { label: 'UPDATE NOW', value: true },
+  ], 'UPDATE AVAILABLE');
+  await new Promise(resolve => setImmediate(resolve));
+  key('return');
+  assert.equal(await postponed, false);
+
+  const confirmed = ui.choose([
+    { label: 'NOT NOW, CONTINUE', value: false },
+    { label: 'UPDATE NOW', value: true },
+  ], 'UPDATE AVAILABLE');
+  await new Promise(resolve => setImmediate(resolve));
+  key('down'); key('return');
+  assert.equal(await confirmed, true);
+});
+
 test('command help renders colored labels in a stable column with readable descriptions', async () => {
   const { ui } = fixture();
   const displayed = ui.page('COMMANDS', [

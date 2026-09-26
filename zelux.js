@@ -40,7 +40,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.6.6';
+const APP_VERSION = '1.6.7';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -1850,46 +1850,38 @@ async function selfUpdate() {
     if (actualHash.toLowerCase() !== expectedHash) throw new Error('Update checksum verification failed');
 
     if (process.platform === 'win32') {
-      // On Windows, the running exe is locked. Use a .bat trampoline to:
-      // 1. Wait for the current process to exit
-      // 2. Replace the exe
-      // 3. Restart
-      const batPath = path.join(BASE_DIR, '_update.bat');
-      const escapedExePath = exePath.replace(/'/g, "''");
-      const escapedBaseDir = BASE_DIR.replace(/'/g, "''");
-      const batContent = [
-        '@echo off',
-        'echo.',
-        'echo  [ZELUX-DL] กำลังอัปเดต...',
-        'timeout /t 2 /nobreak > nul',
-        `if exist "${backupPath}" del /f /q "${backupPath}"`,
-        `move /y "${exePath}" "${backupPath}" > nul`,
-        `move /y "${tempPath}" "${exePath}" > nul`,
-        `if not exist "${exePath}" (echo  [ZELUX-DL] อัปเดตไม่สำเร็จ & pause & exit /b 1)`,
-        'echo  [ZELUX-DL] อัปเดตสำเร็จ! กำลังเปิดโปรแกรมใหม่...',
-        'timeout /t 1 /nobreak > nul',
-        `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath '${escapedExePath}' -WorkingDirectory '${escapedBaseDir}'"`,
-        `timeout /t 2 /nobreak > nul`,
-        `del /f /q "${backupPath}" 2>nul`,
-        `del /f /q "%~f0"`,
-      ].join('\r\n');
-
-      fs.writeFileSync(batPath, batContent, 'utf8');
+      // Windows locks the running EXE. The detached helper waits for this PID,
+      // retries replacement, verifies the installed version, then relaunches.
+      const helperDir = path.join(process.env.LOCALAPPDATA || BASE_DIR, 'ZELUX-DL');
+      fs.mkdirSync(helperDir, { recursive: true });
+      const scriptPath = path.join(helperDir, '_update.ps1');
+      const logPath = path.join(helperDir, '_update.log');
+      fs.writeFileSync(scriptPath, buildWindowsUpdateScript(), 'utf8');
 
       print();
       print('    ' + success('✓') + chalk.green.bold(' ดาวน์โหลดสำเร็จ! กำลังอัปเดต...'));
-      print('    ' + dim('    โปรแกรมจะปิดและเปิดใหม่อัตโนมัติ'));
+      print('    ' + dim('    โปรแกรมจะรอปิดตัวเดิม ตรวจ EXE ใหม่ แล้วเปิดขึ้นอีกครั้ง'));
+      print('    ' + dim('    หากเปิดไม่สำเร็จ ตรวจ log ใน %LOCALAPPDATA%\\ZELUX-DL\\_update.log'));
       print();
 
-      // Launch the bat and exit
       const { spawn } = require('child_process');
-      spawn('cmd.exe', ['/c', batPath], {
-        detached: true,
-        stdio: 'ignore',
-        windowsHide: true
-      }).unref();
+      await new Promise((resolve, reject) => {
+        const child = spawn('powershell.exe', [
+          '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+          '-File', scriptPath,
+          '-ParentPid', String(process.pid),
+          '-ExePath', exePath,
+          '-TempPath', tempPath,
+          '-BackupPath', backupPath,
+          '-WorkDir', BASE_DIR,
+          '-LogPath', logPath,
+          '-ExpectedVersion', update.latest.replace(/^v/i, ''),
+        ], { cwd: BASE_DIR, detached: true, stdio: 'ignore', windowsHide: true });
+        child.once('error', reject);
+        child.once('spawn', () => { child.unref(); resolve(); });
+      });
 
-      await sleep(500);
+      // Releasing our PID is what allows PowerShell to replace the EXE safely.
       process.exit(0);
     } else {
       // On Linux/macOS, we can replace the file directly
@@ -1897,13 +1889,28 @@ async function selfUpdate() {
       fs.renameSync(exePath, backupPath);
       fs.renameSync(tempPath, exePath);
       fs.chmodSync(exePath, '755');
-      fs.unlinkSync(backupPath);
+
+      const { spawn } = require('child_process');
+      try {
+        await new Promise((resolve, reject) => {
+          const child = spawn(exePath, [], { cwd: BASE_DIR, detached: true, stdio: 'ignore' });
+          child.once('error', reject);
+          child.once('spawn', () => { child.unref(); resolve(); });
+        });
+      } catch (launchError) {
+        try {
+          fs.unlinkSync(exePath);
+          fs.renameSync(backupPath, exePath);
+        } catch (_) { }
+        throw new Error(`อัปเดตแล้วแต่เปิดโปรแกรมใหม่ไม่สำเร็จ: ${launchError.message}`);
+      }
+      try { fs.unlinkSync(backupPath); } catch (_) { }
 
       print();
-      print('    ' + success('✓') + chalk.green.bold(' อัปเดตสำเร็จ!'));
-      print('    ' + dim('    กรุณาเปิดโปรแกรมใหม่เพื่อใช้เวอร์ชันล่าสุด'));
+      print('    ' + success('✓') + chalk.green.bold(' อัปเดตสำเร็จ! กำลังเปิดโปรแกรมใหม่...'));
       print();
-      return true;
+      await sleep(500);
+      process.exit(0);
     }
   } catch (e) {
     print('    ' + error('✕') + ' อัปเดตล้มเหลว: ' + e.message);
@@ -1988,6 +1995,72 @@ function printUpdateStatus(update) {
   } else {
     print('    ' + success('✓') + chalk.green(` ใช้เวอร์ชันล่าสุดแล้ว (v${update.current})`));
   }
+}
+
+function buildWindowsUpdateScript() {
+  return String.raw`param(
+  [Parameter(Mandatory = $true)][int]$ParentPid,
+  [Parameter(Mandatory = $true)][string]$ExePath,
+  [Parameter(Mandatory = $true)][string]$TempPath,
+  [Parameter(Mandatory = $true)][string]$BackupPath,
+  [Parameter(Mandatory = $true)][string]$WorkDir,
+  [Parameter(Mandatory = $true)][string]$LogPath,
+  [Parameter(Mandatory = $true)][string]$ExpectedVersion
+)
+$ErrorActionPreference = 'Stop'
+function Write-UpdateLog([string]$Message) {
+  Add-Content -LiteralPath $LogPath -Value "[$(Get-Date -Format s)] $Message"
+}
+try {
+  Write-UpdateLog "Waiting for process $ParentPid to exit."
+  $Deadline = (Get-Date).AddSeconds(45)
+  while (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
+    if ((Get-Date) -gt $Deadline) { throw 'Timed out waiting for the old program to exit.' }
+    Start-Sleep -Milliseconds 250
+  }
+  if (-not (Test-Path -LiteralPath $TempPath -PathType Leaf)) { throw 'The verified update file is missing.' }
+  if (Test-Path -LiteralPath $BackupPath) { Remove-Item -LiteralPath $BackupPath -Force }
+  $Replaced = $false
+  for ($Attempt = 1; $Attempt -le 20; $Attempt++) {
+    try {
+      if (Test-Path -LiteralPath $ExePath) { Move-Item -LiteralPath $ExePath -Destination $BackupPath -Force }
+      Move-Item -LiteralPath $TempPath -Destination $ExePath -Force
+      $Replaced = $true
+      break
+    } catch {
+      if (-not (Test-Path -LiteralPath $ExePath) -and (Test-Path -LiteralPath $BackupPath)) {
+        Move-Item -LiteralPath $BackupPath -Destination $ExePath -Force
+      }
+      if ($Attempt -eq 20) { throw }
+      Start-Sleep -Milliseconds 500
+    }
+  }
+  if (-not $Replaced) { throw 'Could not replace the executable.' }
+  $ActualVersion = (& $ExePath --version 2>&1 | Out-String).Trim()
+  if ($LASTEXITCODE -ne 0 -or $ActualVersion -ne $ExpectedVersion) {
+    throw "Installed executable version check failed. Expected $ExpectedVersion, got $ActualVersion."
+  }
+  Write-UpdateLog "Installed and verified version $ActualVersion. Launching."
+  $NewProcess = Start-Process -FilePath $ExePath -WorkingDirectory $WorkDir -PassThru
+  Start-Sleep -Seconds 2
+  if (-not (Get-Process -Id $NewProcess.Id -ErrorAction SilentlyContinue)) {
+    throw 'The updated program exited shortly after launch.'
+  }
+  if (Test-Path -LiteralPath $BackupPath) {
+    try { Remove-Item -LiteralPath $BackupPath -Force } catch { Write-UpdateLog "Could not remove backup: $($_.Exception.Message)" }
+  }
+  Write-UpdateLog "Version $ActualVersion is running."
+} catch {
+  Write-UpdateLog "Update/relaunch failed: $($_.Exception.Message)"
+  if (Test-Path -LiteralPath $BackupPath) {
+    try {
+      if (Test-Path -LiteralPath $ExePath) { Remove-Item -LiteralPath $ExePath -Force }
+      Move-Item -LiteralPath $BackupPath -Destination $ExePath -Force
+      Write-UpdateLog 'Restored the previous executable and reopening it.'
+      Start-Process -FilePath $ExePath -WorkingDirectory $WorkDir
+    } catch { Write-UpdateLog "Rollback/relaunch failed: $($_.Exception.Message)" }
+  }
+}`;
 }
 
 async function downloadYouTubeFile(url) {
@@ -3437,6 +3510,7 @@ async function runUpdate() {
 }
 
 async function runTerminalApp(initialUrls = []) {
+  let versionStatus = { text: 'Checking for updates...', color: 'cyan' };
   terminalUI = new TerminalUI({
     version: APP_VERSION,
     motion: !process.argv.includes('--no-animation') && process.env.ZELUX_REDUCED_MOTION !== '1',
@@ -3446,6 +3520,7 @@ async function runTerminalApp(initialUrls = []) {
         directory: DOWNLOADS_DIR, connections: NUM_CONNECTIONS,
         completed: entries.filter(entry => entry.status === 'completed').length,
         failed: entries.filter(entry => entry.status === 'failed').length,
+        versionStatus,
       };
     },
     onCancel: () => cancelCtrl.cancel(),
@@ -3473,10 +3548,36 @@ async function runTerminalApp(initialUrls = []) {
   };
   ui.start();
   try {
+    const startupUpdatePromise = checkForUpdateQuickly();
     let startupInput = null;
     if (ui.introPromise) {
       await ui.introPromise;
-      if (ui.state.type === 'input') startupInput = ui.state.text;
+    }
+    const startupUpdate = await startupUpdatePromise;
+    if (ui.state.type === 'input') startupInput = ui.state.text;
+    if (startupUpdate?.available) {
+      versionStatus = { text: `Update available: ${startupUpdate.latest}`, color: 'yellow' };
+      ui.dirty = true;
+      ui.render();
+      if (!initialUrls.length) {
+        try {
+          const shouldUpgrade = await ui.choose([
+            { label: 'NOT NOW, CONTINUE', value: false },
+            { label: `UPDATE TO ${startupUpdate.latest} NOW`, value: true },
+          ], 'UPDATE AVAILABLE');
+          if (shouldUpgrade) await run('UPDATE', selfUpdate, false);
+        } catch (err) {
+          if (err.message !== 'CANCELLED') throw err;
+        }
+      }
+    } else if (startupUpdate) {
+      versionStatus = { text: `Up to date: v${startupUpdate.current}`, color: 'green' };
+      ui.dirty = true;
+      ui.render();
+    } else {
+      versionStatus = { text: 'Update check unavailable', color: 'dim' };
+      ui.dirty = true;
+      ui.render();
     }
     if (initialUrls.length) await run('DOWNLOAD', () => handleBatch(initialUrls));
     while (true) {
@@ -3632,6 +3733,7 @@ module.exports = {
   CancelController,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
+  buildWindowsUpdateScript,
   compareVersions,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,

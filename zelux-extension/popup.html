@@ -14,7 +14,7 @@
         <strong>ZELUX-DL</strong>
         <span>LINK CAPTURE</span>
       </div>
-      <span class="version">2.3</span>
+      <span class="version"></span>
     </header>
 
     <section class="page-context" aria-labelledby="page-title">
@@ -36,6 +36,13 @@
       </div>
       <textarea id="urlInput" rows="5" placeholder="Paste one or more URLs&#10;One link per line" autocomplete="off" spellcheck="false"></textarea>
       <div class="input-hint">Paste a link list, or scan this page to collect links.</div>
+      <label id="facebookSessionControl" class="session-control" hidden>
+        <input id="includeFacebookCookies" type="checkbox">
+        <span class="session-copy">
+          <strong>Use my Facebook session for this download</strong>
+          <small>Only after you opt in. A temporary copy is sent to ZELUX-DL on this PC and deleted when the job ends; your browser login stays unchanged.</small>
+        </span>
+      </label>
     </section>
 
     <div id="status" class="status" role="status" aria-live="polite">

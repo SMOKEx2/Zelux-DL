@@ -9,4 +9,6 @@ scratch/
 history.json
 history.json.tmp
 config.json.tmp
+cookies.txt
+*.cookies.txt
 .env

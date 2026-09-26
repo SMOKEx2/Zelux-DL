@@ -7,7 +7,15 @@ document.addEventListener('DOMContentLoaded', async () => {
   const statusText = document.getElementById('statusText');
   const pageTitle = document.getElementById('page-title');
   const pageHost = document.getElementById('page-host');
+  const sessionControl = document.getElementById('facebookSessionControl');
+  const includeFacebookCookies = document.getElementById('includeFacebookCookies');
+  document.querySelector('.version').textContent = `v${chrome.runtime.getManifest().version}`;
   let activeTab = null;
+
+  const facebookPermission = {
+    permissions: ['cookies'],
+    origins: ['https://facebook.com/*', 'https://*.facebook.com/*', 'http://127.0.0.1/*'],
+  };
 
   function extractUrls(value) {
     const matches = String(value || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
@@ -17,6 +25,21 @@ document.addEventListener('DOMContentLoaded', async () => {
   function isHttpUrl(value) {
     try { return ['http:', 'https:'].includes(new URL(value).protocol); }
     catch (_) { return false; }
+  }
+
+  function isFacebookUrl(value) {
+    try {
+      const host = new URL(value).hostname.toLowerCase();
+      return host === 'facebook.com' || host.endsWith('.facebook.com');
+    } catch (_) { return false; }
+  }
+
+  function updateSessionOption() {
+    const urls = extractUrls(input.value);
+    const onFacebook = isFacebookUrl(activeTab?.url || '');
+    const onlyFacebookLinks = urls.length > 0 && urls.every(isFacebookUrl);
+    sessionControl.hidden = !(onFacebook && onlyFacebookLinks);
+    if (sessionControl.hidden) includeFacebookCookies.checked = false;
   }
 
   function renderCount() {
@@ -47,8 +70,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     scanButton.disabled = true;
   }
   renderCount();
+  updateSessionOption();
 
-  input.addEventListener('input', renderCount);
+  input.addEventListener('input', () => {
+    renderCount();
+    updateSessionOption();
+  });
   input.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !sendButton.disabled) sendLinks();
   });
@@ -79,17 +106,33 @@ document.addEventListener('DOMContentLoaded', async () => {
     }
     sendButton.disabled = true;
     scanButton.disabled = true;
-    setStatus(`Handing ${urls.length} link${urls.length === 1 ? '' : 's'} to Windows…`, 'busy');
+    const useCookies = includeFacebookCookies.checked;
+    setStatus(useCookies
+      ? 'Requesting one-time Facebook and local-app permissions…'
+      : `Handing ${urls.length} link${urls.length === 1 ? '' : 's'} to Windows…`, 'busy');
     try {
+      if (useCookies) {
+        if (!urls.every(isFacebookUrl) || !isFacebookUrl(activeTab?.url || '')) {
+          throw new Error('Open Facebook and use only Facebook links for temporary session mode.');
+        }
+        const granted = await chrome.permissions.request(facebookPermission);
+        if (!granted) throw new Error('Permission was not granted. No Facebook cookies were read.');
+      }
       const result = await chrome.runtime.sendMessage({
         type: 'launch-download',
         urls,
         tabId: activeTab?.id,
+        includeFacebookCookies: useCookies,
       });
       if (!result?.ok) throw new Error(result?.error || 'Could not hand links to ZELUX-DL.');
-      setStatus(`Requested Windows to open ${result.count} link${result.count === 1 ? '' : 's'} with ZELUX-DL. If nothing opens, check protocol registration.`, 'success');
+      setStatus(result.usedTemporaryCookies
+        ? `Sent a temporary Facebook session locally for ${result.count} link${result.count === 1 ? '' : 's'}. ZELUX-DL removes its temporary file after the job.`
+        : `Requested Windows to open ${result.count} link${result.count === 1 ? '' : 's'} with ZELUX-DL. If nothing opens, check protocol registration.`, 'success');
     } catch (error) {
-      setStatus(`${error.message} Check that ZELUX-DL is installed and its zelux:// handler is registered.`, 'error');
+      const detail = error.message || 'Could not send the link to ZELUX-DL.';
+      setStatus(/no cookies were sent|cookie bridge|identity verification|local ZELUX-DL/i.test(detail)
+        ? detail
+        : `${detail} Check that ZELUX-DL is installed and its zelux:// handler is registered.`, 'error');
     } finally {
       scanButton.disabled = false;
       renderCount();

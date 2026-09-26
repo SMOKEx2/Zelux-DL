@@ -4,6 +4,9 @@ const path = require('path');
 
 const distDir = path.join(__dirname, '..', 'dist');
 const names = ['ZELUX-DL.exe', 'ZELUX-DL-linux'];
+const extensionVersion = require('../zelux-extension/manifest.json').version;
+const extensionAsset = `zelux-extension-v${extensionVersion}.zip`;
+if (fs.existsSync(path.join(distDir, extensionAsset))) names.push(extensionAsset);
 const lines = names.map(name => {
   const filePath = path.join(distDir, name);
   if (!fs.existsSync(filePath)) throw new Error(`Missing build artifact: ${name}`);

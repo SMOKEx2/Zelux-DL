@@ -1,12 +1,18 @@
 {
   "manifest_version": 3,
   "name": "ZELUX-DL Integrator",
-  "version": "2.3",
-  "description": "Capture links from the current page and send a reviewed batch to ZELUX-DL.",
+  "version": "2.4.1",
+  "description": "Capture links and optionally use a temporary, local Facebook session for ZELUX-DL downloads.",
   "permissions": [
     "contextMenus",
     "scripting",
     "activeTab"
+  ],
+  "optional_permissions": ["cookies"],
+  "optional_host_permissions": [
+    "https://facebook.com/*",
+    "https://*.facebook.com/*",
+    "http://127.0.0.1/*"
   ],
   "background": {
     "service_worker": "background.js"

@@ -17,11 +17,14 @@ const {
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
   compareVersions,
+  cleanupStaleTemporaryFacebookCookies,
+  decodeZeluxProtocolRequest,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
   diagnoseHttpResponse,
   downloadRange,
   extractUrlsFromText,
+  formatFacebookCookies,
   findChecksum,
   getMediaProviderName,
   formatGitHubProgressLines,
@@ -36,6 +39,8 @@ const {
   planGitHubRangeTasks,
   removeDirectoryIfEmpty,
   removeTreeWithRetries,
+  receiveTemporaryFacebookCookies,
+  removeTemporaryFacebookCookies,
   resolveDownloadProvider,
   probeFileInfo,
   resolveZipEntryPath,
@@ -46,6 +51,7 @@ const {
   toBoundedInteger,
   verifyDownloadIntegrity,
   waitForUpdateHelperReady,
+  writeTemporaryFacebookCookies,
 } = require('../zelux');
 
 test('media extraction covers known providers, short links and generic video pages', () => {
@@ -78,6 +84,91 @@ test('media cookie args prefer an explicitly selected browser and otherwise use 
   assert.deepEqual(buildMediaCookieArgs('none', 'cookies.txt'), ['--cookies', 'cookies.txt']);
   assert.deepEqual(buildMediaCookieArgs('invalid-browser', 'cookies.txt'), ['--cookies', 'cookies.txt']);
   assert.deepEqual(buildMediaCookieArgs('none', ''), []);
+});
+
+test('temporary Facebook cookie relay accepts one extension-origin request and scopes cookies to Facebook', async () => {
+  const token = crypto.randomBytes(32).toString('hex');
+  let port = 0;
+  const received = receiveTemporaryFacebookCookies(token, {
+    port: 0,
+    timeoutMs: 3000,
+    onListening: value => { port = value; },
+  });
+  while (!port) await new Promise(resolve => setTimeout(resolve, 1));
+
+  const nonce = crypto.randomBytes(32).toString('hex');
+  const challenge = await new Promise((resolve, reject) => {
+    http.get({
+      host: '127.0.0.1', port, path: `/challenge?nonce=${nonce}`,
+      headers: { Origin: `chrome-extension://${'a'.repeat(32)}` },
+    }, response => {
+      let body = '';
+      response.setEncoding('utf8');
+      response.on('data', chunk => { body += chunk; });
+      response.on('end', () => resolve({ status: response.statusCode, body: JSON.parse(body) }));
+    }).on('error', reject);
+  });
+  assert.equal(challenge.status, 200);
+  assert.equal(challenge.body.proof, crypto.createHmac('sha256', Buffer.from(token, 'hex')).update(nonce, 'hex').digest('hex'));
+
+  async function post(headers, payload) {
+    return new Promise((resolve, reject) => {
+      const request = http.request({
+        host: '127.0.0.1', port, path: '/cookies', method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: `chrome-extension://${'a'.repeat(32)}`, ...headers },
+      }, response => {
+        response.resume();
+        response.on('end', () => resolve(response.statusCode));
+      });
+      request.on('error', reject);
+      request.end(JSON.stringify(payload));
+    });
+  }
+
+  assert.equal(await post({ 'X-Zelux-Token': '0'.repeat(64) }, { cookies: [] }), 403);
+  assert.equal(await post({ 'X-Zelux-Token': token }, { cookies: [
+    { domain: '.facebook.com', name: 'session', value: 'test-session', path: '/', secure: true, httpOnly: true },
+    { domain: '.evil.example', name: 'steal', value: 'no', path: '/' },
+  ] }), 200);
+  const jar = await received;
+  assert.match(jar, /#HttpOnly_\.facebook\.com\tTRUE\t\/\tTRUE\t0\tsession\ttest-session/);
+  assert.doesNotMatch(jar, /evil|steal/);
+});
+
+test('temporary Facebook cookie files are constrained, private, and removed', () => {
+  const cookies = [
+    { domain: '.facebook.com', name: 'session', value: 'private-value', path: '/', secure: true, httpOnly: true },
+    { domain: 'facebook.com.attacker.example', name: 'bad', value: 'ignored', path: '/' },
+    { domain: 'facebook.com', name: 'bad\tname', value: 'ignored', path: '/' },
+  ];
+  const jar = formatFacebookCookies(cookies);
+  assert.match(jar, /session\tprivate-value/);
+  assert.doesNotMatch(jar, /attacker|bad/);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-cookie-test-'));
+  try {
+    const filePath = writeTemporaryFacebookCookies(cookies, directory);
+    assert.match(path.basename(filePath), /^zelux-facebook-[a-f0-9]{32}\.txt$/);
+    assert.match(fs.readFileSync(filePath, 'utf8'), /private-value/);
+    assert.equal(removeTemporaryFacebookCookies(filePath), true);
+    assert.equal(fs.existsSync(filePath), false);
+    assert.equal(removeTemporaryFacebookCookies(path.join(directory, 'unrelated.txt')), false);
+    const stalePath = path.join(directory, `zelux-facebook-${'a'.repeat(32)}.txt`);
+    fs.writeFileSync(stalePath, 'stale');
+    fs.utimesSync(stalePath, new Date(0), new Date(0));
+    assert.equal(cleanupStaleTemporaryFacebookCookies(directory, Date.now(), 1000), 1);
+    assert.equal(fs.existsSync(stalePath), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('ZELUX protocol keeps the one-time cookie token separate from download URLs', () => {
+  const token = 'a'.repeat(64);
+  const request = decodeZeluxProtocolRequest(`zelux://download?urls=${encodeURIComponent(JSON.stringify(['https://www.facebook.com/reel/123']))}&cookieToken=${token}`);
+  assert.deepEqual(request, { urls: ['https://www.facebook.com/reel/123'], cookieToken: token });
+  assert.deepEqual(decodeZeluxProtocolRequest('zelux://download?url=https%3A%2F%2Fexample.com%2Ffile.zip&cookieToken=invalid'), {
+    urls: ['https://example.com/file.zip'], cookieToken: '',
+  });
 });
 
 test('smart library classifies files, links download sources and hashes duplicate content', async () => {
@@ -372,7 +463,7 @@ test('extension scans page links and sends reviewed batches through the protocol
   };
 
   const source = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'background.js'), 'utf8');
-  vm.runInNewContext(source, { chrome, console, encodeURIComponent, setTimeout });
+  vm.runInNewContext(source, { chrome, console, encodeURIComponent, URLSearchParams, setTimeout });
   const urls = [
     'https://github.com/owner/project/releases/download/v1.0/app.zip?raw=1#asset',
     'https://example.com/second.zip?download=1',
@@ -409,6 +500,88 @@ test('extension scans page links and sends reviewed batches through the protocol
   assert.match(popupSource, /type: 'scan-page'/);
   assert.match(popupSource, /type: 'launch-download'/);
   assert.match(popupSource, /message\.urls|urls,/);
+});
+
+test('extension reads only Facebook cookies after explicit opt-in and sends them only to loopback', async () => {
+  const listeners = {};
+  let cookieQuery = null;
+  let permissionRemoval = null;
+  let posted = null;
+  let protocolUrl = '';
+  let forgeChallenge = false;
+  const relayCalls = [];
+  const chrome = {
+    runtime: {
+      onInstalled: { addListener: () => {} },
+      onMessage: { addListener: listener => { listeners.message = listener; } },
+    },
+    contextMenus: { create: () => {}, removeAll: callback => callback(), onClicked: { addListener: () => {} } },
+    tabs: { get: async tabId => ({ id: tabId, url: 'https://www.facebook.com/reel/123' }) },
+    cookies: { getAll: async query => {
+      cookieQuery = query;
+      return [
+        { domain: '.facebook.com', name: 'session', value: 'sensitive-test-value', path: '/', secure: true, httpOnly: true },
+        { domain: '.other.example', name: 'unrelated', value: 'must-not-send', path: '/' },
+      ];
+    } },
+    permissions: { remove: async value => { permissionRemoval = value; return true; } },
+    scripting: { executeScript: async options => { protocolUrl = options.args?.[0] || ''; } },
+  };
+  const source = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'background.js'), 'utf8');
+  vm.runInNewContext(source, {
+    chrome, console, encodeURIComponent, URL, URLSearchParams, Uint8Array, setTimeout,
+    crypto: { getRandomValues: bytes => { bytes.fill(10); return bytes; }, subtle: crypto.webcrypto.subtle },
+    fetch: async (url, options = {}) => {
+      relayCalls.push(url);
+      if (url.includes('/challenge?')) {
+        const nonce = new URL(url).searchParams.get('nonce');
+        const proof = forgeChallenge
+          ? 'f'.repeat(64)
+          : crypto.createHmac('sha256', Buffer.from('0a'.repeat(32), 'hex')).update(nonce, 'hex').digest('hex');
+        return { ok: true, status: 200, json: async () => ({ proof }) };
+      }
+      posted = { url, options };
+      return { ok: true, status: 200 };
+    },
+  });
+
+  const result = await new Promise(resolve => {
+    listeners.message({
+      type: 'launch-download',
+      urls: ['https://www.facebook.com/reel/123'],
+      tabId: 17,
+      includeFacebookCookies: true,
+    }, {}, resolve);
+  });
+  assert.equal(result.ok, true, result.error);
+  assert.equal(cookieQuery.url, 'https://www.facebook.com/reel/123');
+  assert.equal(posted.url, 'http://127.0.0.1:47821/cookies');
+  assert.match(relayCalls[0], /^http:\/\/127\.0\.0\.1:47821\/challenge\?nonce=/);
+  assert.equal(relayCalls[1], posted.url);
+  assert.match(posted.options.headers['X-Zelux-Token'], /^[a-f0-9]{64}$/);
+  assert.match(posted.options.body, /sensitive-test-value/);
+  assert.doesNotMatch(posted.options.body, /must-not-send/);
+  const protocol = new URL(protocolUrl);
+  assert.equal(protocol.searchParams.get('cookieToken'), posted.options.headers['X-Zelux-Token']);
+  assert.doesNotMatch(protocolUrl, /sensitive-test-value/);
+  assert.deepEqual(Array.from(permissionRemoval.permissions), ['cookies']);
+  assert.equal(result.usedTemporaryCookies, true);
+
+  forgeChallenge = true;
+  posted = null;
+  relayCalls.length = 0;
+  const blocked = await new Promise(resolve => {
+    listeners.message({
+      type: 'launch-download',
+      urls: ['https://www.facebook.com/reel/123'],
+      tabId: 17,
+      includeFacebookCookies: true,
+    }, {}, resolve);
+  });
+  assert.equal(blocked.ok, false);
+  assert.match(blocked.error, /identity verification failed/i);
+  assert.equal(relayCalls.length, 1);
+  assert.equal(posted, null);
 });
 
 test('parseGitHubRepositoryUrl recognizes repository roots only', () => {

@@ -40,8 +40,10 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.6.9';
+const APP_VERSION = '1.7.0';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
+const COOKIE_RELAY_PORT = 47821;
+const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
 
 
 // Determine the base directory where config, downloads, and binaries should live.
@@ -67,6 +69,7 @@ let MAX_PLAYLIST_ITEMS = 200;
 let BATCH_CONCURRENCY = 2;
 let HISTORY_LIMIT = 200;
 let MEDIA_COOKIES_BROWSER = 'none';
+let TEMP_MEDIA_COOKIES_FILE = '';
 const MEDIA_COOKIE_BROWSERS = new Set(['none', 'chrome', 'edge', 'firefox', 'brave', 'opera', 'safari', 'vivaldi', 'whale', 'chromium']);
 const MEDIA_PROVIDERS = [
   ['youtube.com', 'YouTube'], ['youtu.be', 'YouTube'],
@@ -242,9 +245,173 @@ function finishHistory(id, result) {
 
 // Helper to auto-load cookies.txt if available
 function getCookiesArgs() {
+  if (TEMP_MEDIA_COOKIES_FILE && fs.existsSync(TEMP_MEDIA_COOKIES_FILE)) {
+    return { str: ` --cookies "${TEMP_MEDIA_COOKIES_FILE}"`, arr: ['--cookies', TEMP_MEDIA_COOKIES_FILE] };
+  }
   const cookiesPath = path.join(BASE_DIR, 'cookies.txt');
   const arr = buildMediaCookieArgs(MEDIA_COOKIES_BROWSER, fs.existsSync(cookiesPath) ? cookiesPath : '');
   return { str: arr.length ? ` ${arr.map(value => `"${value}"`).join(' ')}` : '', arr };
+}
+
+function formatFacebookCookies(cookies) {
+  if (!Array.isArray(cookies) || cookies.length === 0) throw new Error('No Facebook cookies were provided.');
+  const lines = ['# Netscape HTTP Cookie File', '# Temporary ZELUX-DL Facebook session'];
+  let accepted = 0;
+  for (const cookie of cookies) {
+    const domain = String(cookie?.domain || '').toLowerCase();
+    const name = String(cookie?.name || '');
+    const value = String(cookie?.value || '');
+    const cookiePath = String(cookie?.path || '/');
+    if (!/^\.?([a-z0-9-]+\.)*facebook\.com$/.test(domain) || !name || !cookiePath.startsWith('/') || /[\t\r\n]/.test(domain + name + value + cookiePath)) continue;
+    const expires = Number.isFinite(Number(cookie.expirationDate)) ? Math.floor(Number(cookie.expirationDate)) : 0;
+    const secure = cookie.secure ? 'TRUE' : 'FALSE';
+    const includeSubdomains = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+    const cookieDomain = cookie.httpOnly ? `#HttpOnly_${domain}` : domain;
+    lines.push(`${cookieDomain}\t${includeSubdomains}\t${cookiePath}\t${secure}\t${expires}\t${name}\t${value}`);
+    accepted += 1;
+  }
+  if (!accepted) throw new Error('No cookies for facebook.com were provided.');
+  return `${lines.join('\n')}\n`;
+}
+
+function writeTemporaryFacebookCookies(cookies, directory = os.tmpdir()) {
+  const contents = formatFacebookCookies(cookies);
+  return writeTemporaryFacebookCookiesFromNetscape(contents, directory);
+}
+
+function writeTemporaryFacebookCookiesFromNetscape(contents, directory = os.tmpdir()) {
+  const text = String(contents || '');
+  if (!/^# Netscape HTTP Cookie File(?:\r?\n)/.test(text) || !/\n(?:#HttpOnly_)?\.?[\w.-]*facebook\.com\t/m.test(text)) {
+    throw new Error('Temporary Facebook cookies are not in the expected Netscape format.');
+  }
+  const filePath = path.join(directory, `zelux-facebook-${crypto.randomBytes(16).toString('hex')}.txt`);
+  fs.writeFileSync(filePath, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  try { fs.chmodSync(filePath, 0o600); } catch (_) { /* Windows ACLs inherit from the per-user temp directory. */ }
+  return filePath;
+}
+
+function removeTemporaryFacebookCookies(filePath) {
+  if (!filePath || !/^zelux-facebook-[a-f0-9]{32}\.txt$/i.test(path.basename(filePath))) return false;
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return true;
+  } catch (_) { return false; }
+}
+
+function cleanupStaleTemporaryFacebookCookies(directory = os.tmpdir(), now = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000) {
+  let removed = 0;
+  try {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !/^zelux-facebook-[a-f0-9]{32}\.txt$/i.test(entry.name)) continue;
+      const filePath = path.join(directory, entry.name);
+      try {
+        if (now - fs.statSync(filePath).mtimeMs > maxAgeMs && removeTemporaryFacebookCookies(filePath)) removed += 1;
+      } catch (_) { /* Ignore files in use or already removed. */ }
+    }
+  } catch (_) { /* Temp cleanup is best effort. */ }
+  return removed;
+}
+
+function receiveTemporaryFacebookCookies(token, { port = COOKIE_RELAY_PORT, timeoutMs = 30000, onListening = () => {} } = {}) {
+  if (!/^[a-f0-9]{64}$/i.test(String(token || ''))) return Promise.reject(new Error('Invalid temporary cookie request token.'));
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let receivedBytes = 0;
+    let body = '';
+    const server = http.createServer((request, response) => {
+      const origin = String(request.headers.origin || '');
+      const allowedOrigin = /^chrome-extension:\/\/[a-p]{32}$/.test(origin);
+      if (!allowedOrigin) {
+        response.writeHead(403).end();
+        return;
+      }
+      response.setHeader('Access-Control-Allow-Origin', origin);
+      response.setHeader('Vary', 'Origin');
+      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+      response.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Zelux-Token');
+      response.setHeader('Cache-Control', 'no-store');
+      if (request.method === 'OPTIONS') {
+        response.writeHead(204).end();
+        return;
+      }
+      if (request.method === 'GET' && request.url.startsWith('/challenge?')) {
+        const nonce = new URL(request.url, 'http://127.0.0.1').searchParams.get('nonce') || '';
+        if (!/^[a-f0-9]{64}$/i.test(nonce)) {
+          response.writeHead(400).end();
+          return;
+        }
+        const proof = crypto.createHmac('sha256', Buffer.from(String(token), 'hex')).update(nonce, 'hex').digest('hex');
+        response.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ proof }));
+        return;
+      }
+      if (request.method !== 'POST' || request.url !== '/cookies') {
+        response.writeHead(404).end();
+        return;
+      }
+      const suppliedToken = String(request.headers['x-zelux-token'] || '');
+      const suppliedBuffer = Buffer.from(suppliedToken);
+      const expectedBuffer = Buffer.from(String(token));
+      if (suppliedBuffer.length !== expectedBuffer.length || !crypto.timingSafeEqual(suppliedBuffer, expectedBuffer)) {
+        response.writeHead(403).end();
+        return;
+      }
+      const declaredSize = Number(request.headers['content-length'] || 0);
+      if (declaredSize > COOKIE_RELAY_MAX_BYTES) {
+        response.writeHead(413).end();
+        settle(new Error('Temporary cookie payload is too large.'));
+        request.resume();
+        return;
+      }
+      request.setEncoding('utf8');
+      request.on('data', chunk => {
+        receivedBytes += Buffer.byteLength(chunk);
+        if (receivedBytes > COOKIE_RELAY_MAX_BYTES) {
+          response.writeHead(413).end();
+          settle(new Error('Temporary cookie payload is too large.'));
+          request.destroy();
+          return;
+        }
+        body += chunk;
+      });
+      request.on('end', () => {
+        if (settled) return;
+        try {
+          const payload = JSON.parse(body);
+          const netscapeCookies = formatFacebookCookies(payload?.cookies);
+          response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"accepted":true}');
+          settle(null, netscapeCookies);
+        } catch (error) {
+          response.writeHead(400, { 'Content-Type': 'application/json' }).end('{"accepted":false}');
+          settle(new Error(error.message || 'Invalid temporary cookie payload.'));
+        }
+      });
+      request.on('error', error => settle(error));
+    });
+
+    const finish = (error, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      server.close(() => {});
+      error ? reject(error) : resolve(value);
+    };
+    const settle = finish;
+    const timer = setTimeout(() => finish(new Error('Timed out waiting for the browser extension to send temporary cookies.')), timeoutMs);
+    server.once('error', error => finish(new Error(`Could not start the local cookie bridge: ${error.message}`)));
+    server.once('listening', () => onListening(server.address().port));
+    server.listen(port, '127.0.0.1');
+  });
+}
+
+async function withTemporaryFacebookCookies(filePath, action) {
+  const previous = TEMP_MEDIA_COOKIES_FILE;
+  TEMP_MEDIA_COOKIES_FILE = filePath;
+  try {
+    return await action();
+  } finally {
+    TEMP_MEDIA_COOKIES_FILE = previous;
+    removeTemporaryFacebookCookies(filePath);
+  }
 }
 
 // ── Chalk Helpers ──
@@ -1004,22 +1171,24 @@ function decodeZeluxProtocolArg(value) {
   return decoded[0] || String(value || '').trim();
 }
 
-function decodeZeluxProtocolArgs(value) {
+function decodeZeluxProtocolRequest(value) {
   const raw = String(value || '').trim();
-  if (!/^zelux:/i.test(raw)) return raw ? [raw] : [];
+  if (!/^zelux:/i.test(raw)) return { urls: raw ? [raw] : [], cookieToken: '' };
 
   try {
     const protocolUrl = new URL(raw);
     if (protocolUrl.hostname.toLowerCase() === 'download') {
       const encodedList = protocolUrl.searchParams.get('urls');
+      let urls = [];
       if (encodedList) {
         const parsedList = JSON.parse(encodedList);
-        if (Array.isArray(parsedList)) {
-          return parsedList.map(item => String(item || '').trim()).filter(Boolean);
-        }
+        if (Array.isArray(parsedList)) urls = parsedList.map(item => String(item || '').trim()).filter(isValidUrl);
+      } else {
+        const targetUrl = protocolUrl.searchParams.get('url');
+        if (targetUrl && isValidUrl(targetUrl)) urls = [targetUrl];
       }
-      const targetUrl = protocolUrl.searchParams.get('url');
-      if (targetUrl) return [targetUrl];
+      const token = String(protocolUrl.searchParams.get('cookieToken') || '');
+      return { urls, cookieToken: /^[a-f0-9]{64}$/i.test(token) ? token : '' };
     }
   } catch (_) { }
 
@@ -1027,7 +1196,13 @@ function decodeZeluxProtocolArgs(value) {
   let legacy = raw.replace(/^zelux:\/\//i, '');
   legacy = legacy.replace(/^(https?)\/\//i, '$1://');
   try { legacy = decodeURIComponent(legacy); } catch (_) { }
-  return legacy ? [legacy] : [];
+  return { urls: (legacy.match(/https?:\/\/[^\s<>"']+/gi) || []).filter(isValidUrl), cookieToken: '' };
+}
+
+function decodeZeluxProtocolArgs(value) {
+  const raw = String(value || '').trim();
+  if (!/^zelux:/i.test(raw)) return raw ? [raw] : [];
+  return decodeZeluxProtocolRequest(raw).urls;
 }
 
 function extractUrlsFromText(value) {
@@ -3676,7 +3851,7 @@ async function runUpdate() {
   print('      ' + success.bold('✓ อัปเดตเสร็จสิ้น!'));
 }
 
-async function runTerminalApp(initialUrls = []) {
+async function runTerminalApp(initialUrls = [], initialCookieFile = '') {
   terminalUI = new TerminalUI({
     version: APP_VERSION,
     motion: !process.argv.includes('--no-animation') && process.env.ZELUX_REDUCED_MOTION !== '1',
@@ -3733,7 +3908,12 @@ async function runTerminalApp(initialUrls = []) {
         }
       }
     }
-    if (initialUrls.length) await run('DOWNLOAD', () => handleBatch(initialUrls));
+    if (initialUrls.length) {
+      const action = () => handleBatch(initialUrls);
+      await run('DOWNLOAD', () => initialCookieFile
+        ? withTemporaryFacebookCookies(initialCookieFile, action)
+        : action());
+    }
     while (true) {
       let input = startupInput === null ? await ui.home() : await ui.ask('ADD DOWNLOADS', undefined, startupInput);
       startupInput = null;
@@ -3861,6 +4041,7 @@ async function runTerminalApp(initialUrls = []) {
 }
 
 async function main() {
+  cleanupStaleTemporaryFacebookCookies();
   if (process.argv.includes('--version')) { console.log(APP_VERSION); return; }
   if (process.argv.includes('--check-ui')) {
     const probe = new TerminalUI({ version: APP_VERSION, snapshot: () => ({ completed: 0, failed: 0, connections: 0, directory: 'renderer-check' }) });
@@ -3871,11 +4052,26 @@ async function main() {
     console.log('Terminal renderer OK');
     return;
   }
-  if (process.stdin.isTTY && process.stdout.isTTY && (process.platform === 'win32' || process.env.TERM !== 'dumb') && !process.argv.includes('--plain')) {
-    if (process.stdout.columns < 60 || process.stdout.rows < 26) resizeTerminal(90, 32);
-    await runTerminalApp(extractUrlsFromText(process.argv.slice(2)));
-    return;
-  }
+  const rawArgs = process.argv.slice(2);
+  const protocolArg = rawArgs.find(value => /^zelux:/i.test(String(value || '').trim()));
+  const protocolRequest = protocolArg ? decodeZeluxProtocolRequest(protocolArg) : null;
+  const initialUrls = protocolRequest?.urls?.length ? protocolRequest.urls : extractUrlsFromText(rawArgs);
+  let initialCookieFile = '';
+  try {
+    if (protocolRequest?.cookieToken) {
+      if (!initialUrls.length || initialUrls.some(url => getMediaProviderName(url) !== 'Facebook')) {
+        throw new Error('Temporary Facebook cookies can only be used with Facebook links.');
+      }
+      console.log('Waiting for the ZELUX-DL extension to send a temporary Facebook session…');
+      const cookies = await receiveTemporaryFacebookCookies(protocolRequest.cookieToken);
+      initialCookieFile = writeTemporaryFacebookCookiesFromNetscape(cookies);
+    }
+
+    if (process.stdin.isTTY && process.stdout.isTTY && (process.platform === 'win32' || process.env.TERM !== 'dumb') && !process.argv.includes('--plain')) {
+      if (process.stdout.columns < 60 || process.stdout.rows < 26) resizeTerminal(90, 32);
+      await runTerminalApp(initialUrls, initialCookieFile);
+      return;
+    }
   if (process.stdout.isTTY) {
   resizeTerminal(47, 22);
   await animatedIntro();
@@ -3890,20 +4086,28 @@ async function main() {
     print();
   }
 
-  let args = process.argv.slice(2);
+  let args = rawArgs;
   try {
-    fs.writeFileSync(require('path').join(BASE_DIR, 'args.log'), JSON.stringify({ argv: process.argv, cwd: process.cwd(), args: args }));
+    const redactedArgs = args.map(value => /^zelux:/i.test(String(value || '').trim())
+      ? 'zelux://download?<redacted>'
+      : value);
+    fs.writeFileSync(require('path').join(BASE_DIR, 'args.log'), JSON.stringify({ argv: [process.argv[0], ...redactedArgs], cwd: process.cwd(), args: redactedArgs }));
   } catch (e) { }
 
-  args = extractUrlsFromText(args);
+  args = initialUrls;
   if (args.length > 0) {
     currentView = 'download';
     renderScreen();
-    await handleBatch(args);
+    const action = () => handleBatch(args);
+    if (initialCookieFile) await withTemporaryFacebookCookies(initialCookieFile, action);
+    else await action();
     currentView = 'download-done';
   }
 
   createReadline();
+  } finally {
+    if (initialCookieFile) removeTemporaryFacebookCookies(initialCookieFile);
+  }
 }
 
 if (require.main === module) {
@@ -3922,6 +4126,8 @@ module.exports = {
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
   compareVersions,
+  cleanupStaleTemporaryFacebookCookies,
+  decodeZeluxProtocolRequest,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
   diagnoseHttpResponse,
@@ -3930,6 +4136,10 @@ module.exports = {
   getMediaProviderName,
   formatGitHubProgressLines,
   extractUrlsFromText,
+  formatFacebookCookies,
+  receiveTemporaryFacebookCookies,
+  removeTemporaryFacebookCookies,
+  writeTemporaryFacebookCookies,
   isValidUrl,
   isMediaExtractorUrl,
   openFolder,

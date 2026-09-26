@@ -8,6 +8,7 @@ const vm = require('node:vm');
 
 const {
   CancelController,
+  cleanupDownloadArtifacts,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
   compareVersions,
@@ -97,14 +98,56 @@ test('resolveDownloadProvider converts public cloud share links', async () => {
     ['https://buzzheavier.com/d/abc', 'BuzzHeavier'],
     ['https://datanodes.to/files/abc', 'DataNodes'],
     ['https://filemirage.com/file/abc', 'FileMirage'],
-    ['https://filekeeper.net/file/abc', 'FileKeeper'],
-    ['https://fileditchfiles.st/file/abc', 'FileDitchFiles'],
   ];
   for (const [url, provider] of fileHosts) {
-    const resolved = await resolveDownloadProvider(url);
+    const host = new URL(url).hostname.replace(/^www\./, '');
+    const fetchPage = async pageUrl => ({
+      body: '<a class="download-button" href="/files/archive.zip">Download</a>',
+      headers: {},
+      finalUrl: pageUrl,
+    });
+    const resolved = await resolveDownloadProvider(url, fetchPage);
     assert.equal(resolved.provider, provider);
-    assert.equal(resolved.url, url === 'https://vik1ngfile.site/f/abc' ? 'https://vikingfile.com/f/abc' : url);
+    assert.equal(new URL(resolved.url).hostname, host === 'vik1ngfile.site' ? 'vikingfile.com' : new URL(url).hostname);
+    assert.equal(new URL(resolved.url).pathname, '/files/archive.zip');
   }
+
+  const fileKeeper = 'https://filekeeper.net/abc123/file.pdf';
+  assert.deepEqual(await resolveDownloadProvider(fileKeeper), { provider: 'FileKeeper', url: fileKeeper });
+  const fileDitch = 'https://fileditchfiles.st/alpha/id/archive.rar';
+  assert.deepEqual(await resolveDownloadProvider(fileDitch), { provider: 'FileDitchFiles', url: fileDitch });
+});
+
+test('resolveDownloadProvider follows BuzzHeavier HTMX download redirects', async () => {
+  const calls = [];
+  const resolved = await resolveDownloadProvider('https://buzzheavier.com/d/abc', async (url, headers = {}) => {
+    calls.push({ url, headers });
+    if (calls.length === 1) {
+      return { body: '<button hx-get="/api/download/abc">Download</button>', headers: {}, finalUrl: url };
+    }
+    return { body: '', headers: { 'hx-redirect': 'https://cdn.buzzheavier.com/file/archive.zip' }, finalUrl: url };
+  });
+  assert.deepEqual(resolved, { provider: 'BuzzHeavier', url: 'https://cdn.buzzheavier.com/file/archive.zip' });
+  assert.equal(calls[1].headers['HX-Request'], 'true');
+});
+
+test('resolveDownloadProvider reports host pages that require browser verification', async () => {
+  await assert.rejects(
+    resolveDownloadProvider('https://datanodes.to/files/abc', async url => ({
+      body: '<html>Checking your browser. Complete the CAPTCHA to continue.</html>', headers: {}, finalUrl: url,
+    })),
+    /ต้องยืนยันผ่านเว็บ/,
+  );
+});
+
+test('resolveDownloadProvider ignores download links inside HTML comments', async () => {
+  await assert.rejects(
+    resolveDownloadProvider('https://vik1ngfile.site/f/example', async url => ({
+      body: '<!-- <a class="button" href="/fast-download/ad-redirect">Download</a> --><a id="download-link" class="hidden">Generating link</a>',
+      headers: {}, finalUrl: url,
+    })),
+    /ไม่พบปุ่มหรือลิงก์ดาวน์โหลด/,
+  );
 });
 
 test('resolveDownloadProvider extracts MediaFire download button safely', async () => {
@@ -324,6 +367,19 @@ test('removeTreeWithRetries deletes nested partial directories bottom-up', async
   assert.equal(fs.existsSync(target), false);
   await assert.rejects(removeTreeWithRetries(root, root, 1), /outside download root/);
 
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('cleanupDownloadArtifacts removes the incomplete file and every configured chunk', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-cancel-cleanup-'));
+  const filePath = path.join(root, 'archive.rar');
+  for (const suffix of ['', '.part', '.part0', '.part1', '.part2', '.part3', '.part15']) {
+    fs.writeFileSync(`${filePath}${suffix}`, 'partial');
+  }
+  assert.equal(await cleanupDownloadArtifacts(filePath, 4, root), true);
+  for (const suffix of ['', '.part', '.part0', '.part1', '.part2', '.part3', '.part15']) {
+    assert.equal(fs.existsSync(`${filePath}${suffix}`), false, `${suffix || 'final partial'} should be removed`);
+  }
   fs.rmSync(root, { recursive: true, force: true });
 });
 

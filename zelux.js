@@ -19,7 +19,7 @@ const { once } = require('events');
 const { execSync } = require('child_process');
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.5.6';
+const APP_VERSION = '1.5.7';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -545,7 +545,86 @@ function extractGoogleFileId(parsed) {
   return fileId && /^[a-z0-9_-]{10,}$/i.test(fileId) ? fileId : null;
 }
 
-async function resolveDownloadProvider(rawUrl, fetchPage = fetchText) {
+async function requestProviderPage(rawUrl, extraHeaders = {}) {
+  const { res, finalUrl } = await httpRequest(rawUrl, extraHeaders);
+  return new Promise((resolve, reject) => {
+    let body = '';
+    res.on('data', chunk => {
+      body += chunk;
+      if (body.length > 2 * 1024 * 1024) {
+        res.destroy();
+        reject(new Error('หน้าแชร์มีขนาดใหญ่เกินไป'));
+      }
+    });
+    res.on('end', () => resolve({ body, headers: res.headers, finalUrl }));
+    res.on('error', reject);
+  });
+}
+
+function getHtmlAttribute(tag, name) {
+  const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return tag.match(new RegExp(`\\b${escaped}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s>]+))`, 'i'))?.slice(1).find(Boolean) || null;
+}
+
+function findProviderDownloadUrl(html, pageUrl) {
+  const visibleHtml = String(html).replace(/<!--[\s\S]*?-->/g, '');
+  const tags = [...visibleHtml.matchAll(/<(a|button|form)\b([^>]*)>([\s\S]{0,512}?)(?:<\/\1>|$)/gi)];
+  const candidates = [];
+  for (const match of tags) {
+    const tag = `<${match[1]}${match[2]}>`;
+    const attrs = ['data-download-url', 'data-url', 'data-href', 'href', 'formaction', 'hx-get', 'onclick'];
+    const values = attrs.map(name => getHtmlAttribute(tag, name)).filter(Boolean).map(decodeHtmlEntities);
+    const downloadAttr = getHtmlAttribute(tag, 'download') !== null;
+    const label = `${getHtmlAttribute(tag, 'id') || ''} ${getHtmlAttribute(tag, 'class') || ''} ${match[3]}`;
+    const markedDownload = /download|direct|file[_-]?link/i.test(label) || downloadAttr;
+    for (let value of values) {
+      const jsTarget = value.match(/(?:location(?:\.href)?\s*=|open\()\s*['"]([^'"]+)['"]/i)?.[1];
+      value = jsTarget || value;
+      if (!/^https?:\/\//i.test(value) && !value.startsWith('/')) continue;
+      const candidate = new URL(value, pageUrl).href;
+      const parsed = new URL(candidate);
+      const page = new URL(pageUrl);
+      const likelyFilePath = /\/(?:download|file|d)\b|\.(?:zip|rar|7z|iso|mp4|mkv|pdf)(?:$|\?)/i.test(parsed.pathname + parsed.search);
+      const sameSite = parsed.hostname === page.hostname || parsed.hostname.endsWith(`.${page.hostname}`);
+      if ((markedDownload && (sameSite || downloadAttr || /data-download-url|data-url/i.test(tag))) || (sameSite && likelyFilePath)) {
+        candidates.push({ url: candidate, score: (downloadAttr ? 8 : 0) + (markedDownload ? 4 : 0) + (likelyFilePath ? 2 : 0) });
+      }
+    }
+  }
+  candidates.sort((a, b) => b.score - a.score);
+  return candidates[0]?.url || null;
+}
+
+async function resolveProviderPage(rawUrl, provider, fetchPage = requestProviderPage) {
+  let response = await fetchPage(rawUrl);
+  if (typeof response === 'string') response = { body: response, headers: {}, finalUrl: rawUrl };
+  const pageUrl = response.finalUrl || rawUrl;
+  const hxGet = String(response.body).match(/\bhx-get\s*=\s*['"]([^'"]+)['"]/i)?.[1];
+  if (hxGet) {
+    const actionUrl = new URL(hxGet, pageUrl).href;
+    const action = await fetchPage(actionUrl, { 'HX-Request': 'true', 'HX-Current-URL': pageUrl });
+    if (action?.headers?.['hx-redirect']) {
+      return { provider, url: new URL(action.headers['hx-redirect'], pageUrl).href };
+    }
+    if (action?.headers?.['HX-Redirect']) {
+      return { provider, url: new URL(action.headers['HX-Redirect'], pageUrl).href };
+    }
+    if (typeof action === 'string') response = { ...response, body: action };
+    else if (action?.body) response = action;
+  }
+  const directUrl = findProviderDownloadUrl(response.body, pageUrl);
+  if (directUrl) return { provider, url: directUrl };
+  const visibleText = String(response.body).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ');
+  const challenge = /captcha|verify (?:that )?you are human|checking your browser|just a moment|turnstile/i.test(visibleText);
+  throw new Error(challenge
+    ? `${provider} ต้องยืนยันผ่านเว็บก่อน จึงยังดึงลิงก์อัตโนมัติไม่ได้`
+    : `${provider} ไม่พบปุ่มหรือลิงก์ดาวน์โหลดในหน้าแชร์ ลิงก์อาจหมดอายุหรือต้องใช้ session จากเบราว์เซอร์`);
+}
+
+async function resolveDownloadProvider(rawUrl, fetchPage = requestProviderPage) {
   const parsed = new URL(rawUrl);
   const hostname = parsed.hostname.toLowerCase();
 
@@ -590,26 +669,28 @@ async function resolveDownloadProvider(rawUrl, fetchPage = fetchText) {
   // Normalize it before probing so the downloader follows the real file route.
   if (hostname === 'vik1ngfile.site' || hostname === 'www.vik1ngfile.site') {
     parsed.hostname = 'vikingfile.com';
-    return { provider: 'VikingFile', url: parsed.href };
+    return resolveProviderPage(parsed.href, 'VikingFile', fetchPage);
   }
 
-  // File hosts that expose a downloadable URL from their public share page.
-  // Keep the original URL so redirects, cookies, and range support are handled
-  // by the existing HTTP downloader instead of guessing a fragile API path.
+  // Resolve downloadable links exposed by public hoster pages.
   const directFileHosts = [
     ['1filez.com', '1Filez'],
-    ['vik1ngfile.site', 'Vik1ngFile'],
     ['rootz.so', 'Rootz'],
     ['buzzheavier.com', 'BuzzHeavier'],
     ['buzzheavier.net', 'BuzzHeavier'],
     ['datanodes.to', 'DataNodes'],
     ['filemirage.com', 'FileMirage'],
     ['filemirage.net', 'FileMirage'],
-    ['filekeeper.net', 'FileKeeper'],
-    ['fileditchfiles.st', 'FileDitchFiles'],
   ];
   const directFileHost = directFileHosts.find(([domain]) => hostname === domain || hostname.endsWith(`.${domain}`));
-  if (directFileHost) return { provider: directFileHost[1], url: parsed.href };
+  if (directFileHost) return resolveProviderPage(parsed.href, directFileHost[1], fetchPage);
+
+  if (hostname === 'filekeeper.net' || hostname.endsWith('.filekeeper.net')) {
+    return { provider: 'FileKeeper', url: parsed.href };
+  }
+  if (hostname === 'fileditchfiles.st' || hostname.endsWith('.fileditchfiles.st')) {
+    return { provider: 'FileDitchFiles', url: parsed.href };
+  }
 
   if (hostname === 'huggingface.co') {
     const segments = parsed.pathname.split('/').filter(Boolean);
@@ -1232,13 +1313,27 @@ function cleanPartials(fp, n) {
   }
 }
 
-async function cleanupDownloadArtifacts(filePath, connectionCount = 1) {
-  const targets = [filePath, `${filePath}.part`, ...Array.from({ length: connectionCount }, (_, i) => `${filePath}.part${i}`)];
+async function cleanupDownloadArtifacts(filePath, connectionCount = 1, allowedRoot = DOWNLOADS_DIR) {
+  const targets = new Set([filePath, `${filePath}.part`, ...Array.from({ length: connectionCount }, (_, i) => `${filePath}.part${i}`)]);
+  const directory = path.dirname(filePath);
+  const escapedName = path.basename(filePath).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const chunkPattern = new RegExp(`^${escapedName}\\.part\\d+$`, 'i');
+  try {
+    for (const name of fs.readdirSync(directory)) {
+      if (chunkPattern.test(name)) targets.add(path.join(directory, name));
+    }
+  } catch (_) { /* directory may already be gone */ }
   const deadline = Date.now() + 5000;
   while (activeWriteStreams.size > 0 && Date.now() < deadline) await sleep(50);
   for (const target of targets) {
-    try { if (fs.existsSync(target)) await removeTreeWithRetries(target, DOWNLOADS_DIR, 8); } catch (_) { /* best effort; caller reports the download error */ }
+    if (!fs.existsSync(target)) continue;
+    try {
+      await removeTreeWithRetries(target, allowedRoot, 8);
+    } catch (err) {
+      throw new Error(`ลบไฟล์ดาวน์โหลดที่ค้างไม่สำเร็จ (${path.basename(target)}): ${err.message}`);
+    }
   }
+  return [...targets].every(target => !fs.existsSync(target));
 }
 
 // ═══════════════════════════════════════════
@@ -2814,14 +2909,21 @@ async function performDownload(url) {
     abortAllDownloads();
 
     if (err.message === 'CANCELLED') {
-      await cleanupDownloadArtifacts(filePath, connCount);
+      let cleanupError = null;
+      try { await cleanupDownloadArtifacts(filePath, connCount); } catch (removeError) { cleanupError = removeError; }
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + warning.bold('⚠️ ยกเลิกการดาวน์โหลดแล้ว'));
-      console.log('      ' + dim('ลบไฟล์ชั่วคราวและข้อมูลที่โหลดไม่เสร็จแล้ว'));
+      if (cleanupError) {
+        console.log('      ' + error('ลบไฟล์ชั่วคราวไม่สำเร็จ: ') + cleanupError.message);
+      } else {
+        console.log('      ' + dim('ลบไฟล์ชั่วคราวและข้อมูลที่โหลดไม่เสร็จแล้ว'));
+      }
       console.log();
-      return { success: false, cancelled: true, error: 'Cancelled' };
+      return { success: false, cancelled: true, cleanupFailed: Boolean(cleanupError), error: cleanupError?.message || 'Cancelled' };
     } else {
-      await cleanupDownloadArtifacts(filePath, connCount);
+      try { await cleanupDownloadArtifacts(filePath, connCount); } catch (cleanupError) {
+        console.log('      ' + warning('⚠ ลบไฟล์ชั่วคราวไม่สำเร็จ: ') + cleanupError.message);
+      }
       process.stdout.write('\r\x1b[K\x1b[1A\r\x1b[K\x1b[1A\r\x1b[K');
       console.log('      ' + error('\u2715') + ' ดาวน์โหลดล้มเหลว: ' + err.message);
       console.log();

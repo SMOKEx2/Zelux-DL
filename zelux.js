@@ -40,7 +40,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.6.7';
+const APP_VERSION = '1.6.8';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 

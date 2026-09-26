@@ -9,6 +9,7 @@ const vm = require('node:vm');
 
 const {
   CancelController,
+  buildMediaCookieArgs,
   buildSmartLibrary,
   cleanupDownloadArtifacts,
   buildGitHubArchiveUrl,
@@ -21,8 +22,10 @@ const {
   downloadRange,
   extractUrlsFromText,
   findChecksum,
+  getMediaProviderName,
   formatGitHubProgressLines,
   isValidUrl,
+  isMediaExtractorUrl,
   openFolder,
   isCancelInput,
   mergeRangeParts,
@@ -37,10 +40,43 @@ const {
   resolveZipEntryPath,
   runWithConcurrency,
   safeFilename,
+  shouldUseMediaExtractor,
   summarizeGitHubTree,
   toBoundedInteger,
   verifyDownloadIntegrity,
 } = require('../zelux');
+
+test('media extraction covers known providers, short links and generic video pages', () => {
+  const knownSites = [
+    ['https://youtu.be/abc123', 'YouTube'],
+    ['https://vimeo.com/12345', 'Vimeo'],
+    ['https://vm.tiktok.com/abc/', 'TikTok'],
+    ['https://www.facebook.com/reel/123', 'Facebook'],
+    ['https://fb.watch/abc/', 'Facebook'],
+    ['https://www.instagram.com/reel/abc/', 'Instagram'],
+    ['https://x.com/user/status/123', 'X/Twitter'],
+    ['https://www.twitch.tv/videos/123', 'Twitch'],
+    ['https://www.dailymotion.com/video/abc', 'Dailymotion'],
+    ['https://soundcloud.com/artist/track', 'SoundCloud'],
+  ];
+  for (const [url, provider] of knownSites) {
+    assert.equal(getMediaProviderName(url), provider, url);
+    assert.equal(isMediaExtractorUrl(url), true, url);
+  }
+
+  assert.equal(getMediaProviderName('https://unlisted-video-site.example/watch/1'), null);
+  assert.equal(shouldUseMediaExtractor('https://unlisted-video-site.example/watch/1', 'text/html; charset=utf-8'), true);
+  assert.equal(shouldUseMediaExtractor('https://unlisted-video-site.example/archive.zip', 'application/zip'), false);
+  assert.equal(shouldUseMediaExtractor('https://cdn.example/stream.m3u8', 'application/vnd.apple.mpegurl'), true);
+  assert.equal(shouldUseMediaExtractor('https://example.com/page', 'application/xhtml+xml'), true);
+});
+
+test('media cookie args prefer an explicitly selected browser and otherwise use cookies.txt', () => {
+  assert.deepEqual(buildMediaCookieArgs('edge', 'cookies.txt'), ['--cookies-from-browser', 'edge']);
+  assert.deepEqual(buildMediaCookieArgs('none', 'cookies.txt'), ['--cookies', 'cookies.txt']);
+  assert.deepEqual(buildMediaCookieArgs('invalid-browser', 'cookies.txt'), ['--cookies', 'cookies.txt']);
+  assert.deepEqual(buildMediaCookieArgs('none', ''), []);
+});
 
 test('smart library classifies files, links download sources and hashes duplicate content', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-library-'));

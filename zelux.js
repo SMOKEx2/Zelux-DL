@@ -66,6 +66,31 @@ let NUM_CONNECTIONS = 4;
 let MAX_PLAYLIST_ITEMS = 200;
 let BATCH_CONCURRENCY = 2;
 let HISTORY_LIMIT = 200;
+let MEDIA_COOKIES_BROWSER = 'none';
+const MEDIA_COOKIE_BROWSERS = new Set(['none', 'chrome', 'edge', 'firefox', 'brave', 'opera', 'safari', 'vivaldi', 'whale', 'chromium']);
+const MEDIA_PROVIDERS = [
+  ['youtube.com', 'YouTube'], ['youtu.be', 'YouTube'],
+  ['vimeo.com', 'Vimeo'], ['tiktok.com', 'TikTok'], ['vm.tiktok.com', 'TikTok'], ['vt.tiktok.com', 'TikTok'],
+  ['facebook.com', 'Facebook'], ['fb.watch', 'Facebook'],
+  ['instagram.com', 'Instagram'], ['x.com', 'X/Twitter'], ['twitter.com', 'X/Twitter'],
+  ['twitch.tv', 'Twitch'], ['dailymotion.com', 'Dailymotion'], ['dai.ly', 'Dailymotion'],
+  ['soundcloud.com', 'SoundCloud'], ['bandcamp.com', 'Bandcamp'],
+];
+
+function getMediaProviderName(rawUrl) {
+  try {
+    const hostname = new URL(rawUrl).hostname.toLowerCase();
+    return MEDIA_PROVIDERS.find(([domain]) => hostname === domain || hostname.endsWith(`.${domain}`))?.[1] || null;
+  } catch (_) { return null; }
+}
+
+function buildMediaCookieArgs(browser, cookieFile) {
+  const selectedBrowser = String(browser || 'none').toLowerCase();
+  if (selectedBrowser !== 'none' && MEDIA_COOKIE_BROWSERS.has(selectedBrowser)) {
+    return ['--cookies-from-browser', selectedBrowser];
+  }
+  return cookieFile ? ['--cookies', cookieFile] : [];
+}
 
 function toBoundedInteger(value, fallback, min, max) {
   const parsed = typeof value === 'number' ? value : Number(value);
@@ -82,7 +107,8 @@ function loadConfig() {
     NUM_CONNECTIONS: 16,
     MAX_PLAYLIST_ITEMS: 200,
     BATCH_CONCURRENCY: 2,
-    HISTORY_LIMIT: 200
+    HISTORY_LIMIT: 200,
+    MEDIA_COOKIES_BROWSER: 'none'
   };
 
   if (fs.existsSync(configPath)) {
@@ -98,6 +124,8 @@ function loadConfig() {
       MAX_PLAYLIST_ITEMS = toBoundedInteger(userConfig.MAX_PLAYLIST_ITEMS, defaults.MAX_PLAYLIST_ITEMS, 1, 5000);
       BATCH_CONCURRENCY = toBoundedInteger(userConfig.BATCH_CONCURRENCY, defaults.BATCH_CONCURRENCY, 1, 8);
       HISTORY_LIMIT = toBoundedInteger(userConfig.HISTORY_LIMIT, defaults.HISTORY_LIMIT, 10, 5000);
+      const cookieBrowser = String(userConfig.MEDIA_COOKIES_BROWSER || 'none').toLowerCase();
+      MEDIA_COOKIES_BROWSER = MEDIA_COOKIE_BROWSERS.has(cookieBrowser) ? cookieBrowser : 'none';
     } catch (e) {
       print(chalk.yellow('⚠️ ไม่สามารถอ่าน config.json ได้ จะใช้ค่าเริ่มต้นแทน'));
     }
@@ -124,6 +152,7 @@ function getConfigSnapshot() {
     MAX_PLAYLIST_ITEMS,
     BATCH_CONCURRENCY,
     HISTORY_LIMIT,
+    MEDIA_COOKIES_BROWSER,
   };
 }
 
@@ -136,6 +165,15 @@ function saveConfig() {
 
 function updateSetting(name, rawValue) {
   const key = String(name || '').toUpperCase();
+  if (key === 'MEDIA_COOKIES_BROWSER') {
+    const value = String(rawValue || '').trim().toLowerCase();
+    if (!MEDIA_COOKIE_BROWSERS.has(value)) {
+      throw new Error(`MEDIA_COOKIES_BROWSER must be one of: ${[...MEDIA_COOKIE_BROWSERS].join(', ')}`);
+    }
+    MEDIA_COOKIES_BROWSER = value;
+    saveConfig();
+    return value;
+  }
   const specs = {
     MAX_REDIRECTS: [0, 50], TIMEOUT_MS: [1000, 600000], MAX_RETRIES: [0, 10],
     NUM_CONNECTIONS: [1, 32], MAX_PLAYLIST_ITEMS: [1, 5000],
@@ -205,10 +243,8 @@ function finishHistory(id, result) {
 // Helper to auto-load cookies.txt if available
 function getCookiesArgs() {
   const cookiesPath = path.join(BASE_DIR, 'cookies.txt');
-  if (fs.existsSync(cookiesPath)) {
-    return { str: ` --cookies "${cookiesPath}"`, arr: ['--cookies', cookiesPath] };
-  }
-  return { str: '', arr: [] };
+  const arr = buildMediaCookieArgs(MEDIA_COOKIES_BROWSER, fs.existsSync(cookiesPath) ? cookiesPath : '');
+  return { str: arr.length ? ` ${arr.map(value => `"${value}"`).join(' ')}` : '', arr };
 }
 
 // ── Chalk Helpers ──
@@ -923,14 +959,8 @@ async function resolveDownloadProvider(rawUrl, fetchPage = requestProviderPage) 
     return { provider: 'GitHub', url: parsed.href };
   }
 
-  const mediaProviders = [
-    ['vimeo.com', 'Vimeo'], ['tiktok.com', 'TikTok'], ['facebook.com', 'Facebook'],
-    ['fb.watch', 'Facebook'], ['instagram.com', 'Instagram'], ['x.com', 'X/Twitter'],
-    ['twitter.com', 'X/Twitter'], ['twitch.tv', 'Twitch'], ['dailymotion.com', 'Dailymotion'],
-    ['dai.ly', 'Dailymotion'], ['soundcloud.com', 'SoundCloud'], ['bandcamp.com', 'Bandcamp'],
-  ];
-  const mediaProvider = mediaProviders.find(([domain]) => hostname === domain || hostname.endsWith(`.${domain}`));
-  if (mediaProvider) return { provider: mediaProvider[1], url: parsed.href };
+  const mediaProvider = getMediaProviderName(parsed.href);
+  if (mediaProvider) return { provider: mediaProvider, url: parsed.href };
 
   return { provider: 'Direct HTTP', url: parsed.href };
 }
@@ -1588,17 +1618,13 @@ function isYouTubeUrl(urlStr) {
 }
 
 function isMediaExtractorUrl(urlStr) {
-  try {
-    const hostname = new URL(urlStr).hostname.toLowerCase();
-    const domains = [
-      'youtube.com', 'youtu.be', 'vimeo.com', 'tiktok.com', 'facebook.com', 'fb.watch',
-      'instagram.com', 'x.com', 'twitter.com', 'twitch.tv', 'dailymotion.com', 'dai.ly',
-      'soundcloud.com', 'bandcamp.com',
-    ];
-    return domains.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
-  } catch (_) {
-    return false;
-  }
+  return Boolean(getMediaProviderName(urlStr));
+}
+
+function shouldUseMediaExtractor(urlStr, contentType = '') {
+  return isMediaExtractorUrl(urlStr)
+    || String(urlStr || '').toLowerCase().includes('.m3u8')
+    || /(?:text\/html|application\/xhtml\+xml)/i.test(String(contentType || ''));
 }
 
 function getYouTubeVideoId(url) {
@@ -2149,7 +2175,7 @@ try {
 }`;
 }
 
-async function downloadYouTubeFile(url) {
+async function downloadMediaFile(url) {
   print('      ' + info('\u27F3') + ' กำลังเตรียมระบบดาวน์โหลดสื่อ...');
 
   const ytdlpPath = await getYtDlpPath();
@@ -2161,9 +2187,7 @@ async function downloadYouTubeFile(url) {
 
   const ffmpegPath = await getFfmpegPath();
 
-  const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
-
-  if (!isMediaExtractorUrl(url) && !isM3u8) {
+  if (!isValidUrl(url)) {
     print('      ' + error('\u2715') + ' ลิงก์ไม่รองรับ');
     print();
     return { success: false, error: 'Unsupported URL' };
@@ -2208,6 +2232,11 @@ async function downloadYouTubeFile(url) {
     }
   } catch (err) {
     print('      ' + error('\u2715') + ' ไม่สามารถตรวจสอบข้อมูลลิงก์ได้: ' + err.message);
+    const mediaProvider = getMediaProviderName(url);
+    if (['TikTok', 'Facebook'].includes(mediaProvider)) {
+      print('      ' + dim('ลองตั้งค่า MEDIA_COOKIES_BROWSER เป็น browser ที่ล็อกอินอยู่ หรือพิมพ์ update เพื่ออัปเดต yt-dlp'));
+      print('      ' + dim('ใช้ได้เฉพาะเนื้อหาที่บัญชีของคุณเข้าถึงได้ ไม่ข้าม private, DRM หรือข้อจำกัดสิทธิ์'));
+    }
     print();
     return { success: false, error: err.message };
   }
@@ -2237,8 +2266,8 @@ async function downloadYouTubeFile(url) {
 
   // Ask format selection via interactive menu
   const formatType = await promptInteractiveMenu([
-    { label: '🎵 MP3 (เสียงเท่านั้น)', value: 'mp3' },
-    { label: '🎬 MP4 (วิดีโอพร้อมเสียง)', value: 'mp4' }
+    { label: '🎬 MP4 (วิดีโอพร้อมเสียง)', value: 'mp4' },
+    { label: '🎵 MP3 (เสียงเท่านั้น)', value: 'mp3' }
   ], 'เลือกรูปแบบดาวน์โหลด:');
 
   let selectedQuality = 'best';
@@ -2420,12 +2449,16 @@ async function downloadYouTubeFile(url) {
   }
 
   // ทะลวงลิมิตความเร็วของ YouTube โดยใช้เทคนิคการโหลดพร้อมกันหลายท่อ (Multi-connection for DASH/HLS)
+  const mediaProviderName = getMediaProviderName(url);
   if (isPlaylist) {
     // Playlist: ลดความเร็วลงเพื่อป้องกัน YouTube rate-limit
     args.push('--concurrent-fragments', '4');
     args.push('--sleep-interval', '2', '--max-sleep-interval', '5');
+  } else if (['TikTok', 'Facebook'].includes(mediaProviderName)) {
+    // TikTok and Facebook may throttle highly parallel fragment requests.
+    args.push('--concurrent-fragments', '4');
   } else {
-    args.push('--concurrent-fragments', '32');
+    args.push('--concurrent-fragments', '16');
   }
 
   const cookieArgs = getCookiesArgs().arr;
@@ -2959,8 +2992,8 @@ async function performDownload(url) {
   const githubRepository = parseGitHubRepositoryUrl(url);
   if (githubRepository) return downloadGitHubRepository(url, githubRepository);
   const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
-  if (isMediaExtractorUrl(url) || isM3u8) {
-    return downloadYouTubeFile(url);
+  if (shouldUseMediaExtractor(url) || isM3u8) {
+    return downloadMediaFile(url);
   }
   print('      ' + info('\u27F3') + ' กำลังตรวจสอบลิงก์...');
 
@@ -2974,11 +3007,9 @@ async function performDownload(url) {
   }
 
   const { finalUrl, acceptRanges, totalSize, contentType } = fileInfo;
-  if (provider.provider !== 'Direct HTTP' && /text\/html/i.test(contentType)) {
-    const message = `${provider.provider} ส่งหน้าเว็บแทนไฟล์ กรุณาตรวจสิทธิ์แชร์หรือล็อกอิน`;
-    print('      ' + error('\u2715') + ' ' + message);
-    print();
-    return { success: false, error: message };
+  if (shouldUseMediaExtractor(finalUrl, contentType)) {
+    print('      ' + info('\u27F3') + ' ลิงก์นี้เป็นหน้าเว็บ ไม่ใช่ไฟล์ตรง กำลังลองตัวดึงคลิปจากเว็บที่รองรับ...');
+    return downloadMediaFile(finalUrl);
   }
   const filename = safeFilename(fileInfo.filename);
 
@@ -3835,6 +3866,7 @@ if (require.main === module) {
 
 module.exports = {
   CancelController,
+  buildMediaCookieArgs,
   buildGitHubArchiveUrl,
   buildSmartLibrary,
   buildGitHubRawUrl,
@@ -3845,9 +3877,11 @@ module.exports = {
   diagnoseHttpResponse,
   downloadRange,
   findChecksum,
+  getMediaProviderName,
   formatGitHubProgressLines,
   extractUrlsFromText,
   isValidUrl,
+  isMediaExtractorUrl,
   openFolder,
   isCancelInput,
   mergeRangeParts,
@@ -3863,6 +3897,7 @@ module.exports = {
   resolveZipEntryPath,
   runWithConcurrency,
   safeFilename,
+  shouldUseMediaExtractor,
   summarizeGitHubTree,
   toBoundedInteger,
   verifyDownloadIntegrity,

@@ -55,7 +55,7 @@
 - 🔄 **Auto Update** - ระบบอัปเดตตัวเองอัตโนมัติ (พิมพ์ `upgrade`) และอัปเดต core `yt-dlp` / `ffmpeg` อัตโนมัติ
 - 📦 **Batch Download** - วางหลายลิงก์คั่นด้วยเว้นวรรค/ขึ้นบรรทัดใหม่ หรือโหลดจากไฟล์ `.txt` ได้ พร้อมตัดลิงก์ซ้ำอัตโนมัติ
 - ☁️ **Multi-provider** - รองรับลิงก์แชร์สาธารณะจาก Google Drive/Docs, Dropbox, OneDrive, SharePoint, MediaFire, Pixeldrain, 1Filez, Vik1ngFile, Rootz, BuzzHeavier, DataNodes, FileMirage, FileKeeper, FileDitchFiles, Hugging Face, GitHub และลิงก์ไฟล์ตรง
-- 🎬 **Media sites** - รองรับ YouTube, Vimeo, TikTok, Facebook, Instagram, X/Twitter, Twitch, Dailymotion, SoundCloud และ Bandcamp ผ่าน yt-dlp
+- 🎬 **Media sites** - รองรับเว็บวิดีโอ/เสียงชื่อดังและเว็บอีกจำนวนมากที่ yt-dlp มีตัวดึงข้อมูล รวมถึง YouTube, Vimeo, TikTok, Facebook, Instagram, X/Twitter, Twitch และ Dailymotion; URL หน้าเว็บทั่วไปจะลองใช้ generic extractor เมื่อเซิร์ฟเวอร์ส่งหน้า HTML กลับมา
 - 🐙 **GitHub Repository** - วางลิงก์ `https://github.com/owner/repo` เพื่อดาวน์โหลดและแตกไฟล์ทั้ง repo อัตโนมัติ
 - 📊 **Honest Progress** - ไฟล์ที่ไม่แจ้งขนาดจะแสดง LIVE, bytes, speed และ elapsed time พร้อมจำนวน connections ที่ใช้จริง
 - 🚀 **GitHub Ranged Download** - อ่าน Git tree แล้วแบ่งทั้งหลายไฟล์และไฟล์ใหญ่เป็น byte ranges สูงสุด 16 connections พร้อม `%` และ ETA; หาก API ใช้ไม่ได้จะ fallback เป็น ZIP
@@ -90,7 +90,15 @@ chmod +x register-linux.sh
 
 ### การโหลดวิดีโอ
 - เปิดโปรแกรมขึ้นมาแล้ว **คลิกขวาเพื่อวางลิงก์ (Paste)** วิดีโอที่ต้องการ แล้วกด `Enter`
-- โปรแกรมจะจัดการดาวน์โหลดด้วยคุณภาพสูงสุดให้ทันที
+- โปรแกรมจะตรวจเว็บที่รองรับและลองดึงข้อมูลจากหน้าเว็บให้โดยอัตโนมัติ เว็บที่ต้องล็อกอินสามารถเลือกส่ง cookies จากเบราว์เซอร์ได้ (ใช้เฉพาะโปรไฟล์ของคุณและเก็บ cookies เป็นความลับ)
+- เว็บที่ไม่รองรับ, ต้องผ่าน CAPTCHA, คลิปส่วนตัว หรือ DRM อาจโหลดไม่ได้; การรองรับขึ้นกับ yt-dlp และการเปลี่ยนแปลงของแต่ละเว็บ ไม่ได้รับประกันว่าทุกเว็บจะใช้งานได้
+
+#### ใช้ cookies จากเบราว์เซอร์สำหรับเว็บที่ต้องล็อกอิน (ไม่บังคับ)
+เลือก browser ที่ล็อกอินอยู่ เช่น Edge:
+```text
+set MEDIA_COOKIES_BROWSER edge
+```
+ใช้ `none` เพื่อปิด และกลับไปใช้ `cookies.txt` ถ้ามีไฟล์นั้น รองรับ `chrome`, `edge`, `firefox`, `brave`, `opera`, `safari`, `vivaldi`, `whale` และ `chromium` ทั้งนี้ควรปิด browser ก่อนเริ่มดาวน์โหลดหากไฟล์ cookies ถูกล็อก
 
 ## 📖 คำสั่งที่รองรับ (Commands)
 

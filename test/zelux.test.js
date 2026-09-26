@@ -6,6 +6,7 @@ const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const vm = require('node:vm');
+const { EventEmitter } = require('node:events');
 
 const {
   CancelController,
@@ -44,6 +45,7 @@ const {
   summarizeGitHubTree,
   toBoundedInteger,
   verifyDownloadIntegrity,
+  waitForUpdateHelperReady,
 } = require('../zelux');
 
 test('media extraction covers known providers, short links and generic video pages', () => {
@@ -641,6 +643,7 @@ test('findChecksum selects and validates the requested release asset', () => {
 
 test('Windows update handoff waits, verifies the replacement, relaunches, and logs rollback errors', () => {
   const script = buildWindowsUpdateScript();
+  assert.match(script, /Updater started; waiting for process/);
   assert.match(script, /Get-Process -Id \$ParentPid/);
   assert.match(script, /for \(\$Attempt = 1; \$Attempt -le 20/);
   assert.match(script, /\$ActualVersion -ne \$ExpectedVersion/);
@@ -648,6 +651,21 @@ test('Windows update handoff waits, verifies the replacement, relaunches, and lo
   assert.match(script, /Restored the previous executable and reopening it/);
   assert.match(script, /\[string\]\$LogPath/);
   assert.match(script, /Write-UpdateLog "Update\/relaunch failed:/);
+});
+
+test('Windows updater handoff does not proceed until the PowerShell helper reports ready', async t => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-update-helper-'));
+  const logPath = path.join(tempDir, 'update.log');
+  const child = new EventEmitter();
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+  const ready = waitForUpdateHelperReady(child, logPath, 500);
+  setTimeout(() => fs.writeFileSync(logPath, 'Updater started; waiting for process 123.\n'), 25);
+  await ready;
+
+  const exitedChild = new EventEmitter();
+  const exited = waitForUpdateHelperReady(exitedChild, path.join(tempDir, 'missing.log'), 500);
+  exitedChild.emit('exit', 1, null);
+  await assert.rejects(exited, /exited before it was ready/);
 });
 
 test('runWithConcurrency respects its worker limit and preserves order', async () => {

@@ -40,7 +40,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.6.8';
+const APP_VERSION = '1.6.9';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -1877,6 +1877,41 @@ function findChecksum(checksumText, assetName) {
   return hash && /^[a-f0-9]{64}$/.test(hash) ? hash : null;
 }
 
+function waitForUpdateHelperReady(child, logPath, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let interval;
+    let timeout;
+    const finish = err => {
+      if (settled) return;
+      settled = true;
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (err) reject(err);
+      else resolve();
+    };
+    const checkLog = () => {
+      try {
+        if (fs.existsSync(logPath) && fs.readFileSync(logPath, 'utf8').includes('Updater started; waiting for process')) {
+          finish();
+          return true;
+        }
+      } catch (_) { /* The helper may still be creating its log. */ }
+      return false;
+    };
+
+    child.once('error', err => finish(new Error(`PowerShell updater could not start: ${err.message}`)));
+    child.once('exit', (code, signal) => {
+      if (!settled && !checkLog()) {
+        finish(new Error(`PowerShell updater exited before it was ready (code ${code}, signal ${signal || 'none'}).`));
+      }
+    });
+    interval = setInterval(checkLog, 100);
+    timeout = setTimeout(() => finish(new Error(`PowerShell updater did not report ready within ${Math.ceil(timeoutMs / 1000)} seconds.`)), timeoutMs);
+    checkLog();
+  });
+}
+
 // Check GitHub for a newer release. Returns { available, latest, downloadUrl, releaseNotes } or null
 async function checkForUpdate() {
   if (!GITHUB_REPO) return null;
@@ -1969,6 +2004,7 @@ async function selfUpdate() {
       const scriptPath = path.join(helperDir, '_update.ps1');
       const logPath = path.join(helperDir, '_update.log');
       fs.writeFileSync(scriptPath, buildWindowsUpdateScript(), 'utf8');
+      fs.writeFileSync(logPath, '', 'utf8');
 
       print();
       print('    ' + success('✓') + chalk.green.bold(' ดาวน์โหลดสำเร็จ! กำลังอัปเดต...'));
@@ -1978,8 +2014,11 @@ async function selfUpdate() {
 
       const { spawn } = require('child_process');
       await new Promise((resolve, reject) => {
-        const child = spawn('powershell.exe', [
-          '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+        const systemRoot = process.env.SystemRoot || 'C:\\Windows';
+        const powershellPath = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+        const powershellExe = fs.existsSync(powershellPath) ? powershellPath : 'powershell.exe';
+        const child = spawn(powershellExe, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
           '-File', scriptPath,
           '-ParentPid', String(process.pid),
           '-ExePath', exePath,
@@ -1990,7 +2029,16 @@ async function selfUpdate() {
           '-ExpectedVersion', update.latest.replace(/^v/i, ''),
         ], { cwd: BASE_DIR, detached: true, stdio: 'ignore', windowsHide: true });
         child.once('error', reject);
-        child.once('spawn', () => { child.unref(); resolve(); });
+        child.once('spawn', async () => {
+          try {
+            await waitForUpdateHelperReady(child, logPath);
+            child.unref();
+            resolve();
+          } catch (err) {
+            try { child.kill(); } catch (_) { }
+            reject(err);
+          }
+        });
       });
 
       // Releasing our PID is what allows PowerShell to replace the EXE safely.
@@ -2124,13 +2172,14 @@ function Write-UpdateLog([string]$Message) {
   Add-Content -LiteralPath $LogPath -Value "[$(Get-Date -Format s)] $Message"
 }
 try {
-  Write-UpdateLog "Waiting for process $ParentPid to exit."
+  Write-UpdateLog "Updater started; waiting for process $ParentPid to exit."
   $Deadline = (Get-Date).AddSeconds(45)
   while (Get-Process -Id $ParentPid -ErrorAction SilentlyContinue) {
     if ((Get-Date) -gt $Deadline) { throw 'Timed out waiting for the old program to exit.' }
     Start-Sleep -Milliseconds 250
   }
   if (-not (Test-Path -LiteralPath $TempPath -PathType Leaf)) { throw 'The verified update file is missing.' }
+  Write-UpdateLog 'Verified update file exists; preparing executable replacement.'
   if (Test-Path -LiteralPath $BackupPath) { Remove-Item -LiteralPath $BackupPath -Force }
   $Replaced = $false
   for ($Attempt = 1; $Attempt -le 20; $Attempt++) {
@@ -2148,6 +2197,7 @@ try {
     }
   }
   if (-not $Replaced) { throw 'Could not replace the executable.' }
+  Write-UpdateLog 'Executable replaced; checking installed version.'
   $ActualVersion = (& $ExePath --version 2>&1 | Out-String).Trim()
   if ($LASTEXITCODE -ne 0 -or $ActualVersion -ne $ExpectedVersion) {
     throw "Installed executable version check failed. Expected $ExpectedVersion, got $ActualVersion."
@@ -3901,4 +3951,5 @@ module.exports = {
   summarizeGitHubTree,
   toBoundedInteger,
   verifyDownloadIntegrity,
+  waitForUpdateHelperReady,
 };

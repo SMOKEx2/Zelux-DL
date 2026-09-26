@@ -40,7 +40,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.6.5';
+const APP_VERSION = '1.6.6';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 
 
@@ -581,9 +581,92 @@ async function requestProviderPage(rawUrl, extraHeaders = {}) {
         reject(new Error('หน้าแชร์มีขนาดใหญ่เกินไป'));
       }
     });
-    res.on('end', () => resolve({ body, headers: res.headers, finalUrl }));
+    res.on('end', () => resolve({ body, headers: res.headers, finalUrl, statusCode: res.statusCode }));
     res.on('error', reject);
   });
+}
+
+function diagnoseHttpResponse(statusCode, headers = {}, body = '', provider = 'ลิงก์') {
+  const visible = String(body)
+    .replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ').trim();
+  const challenge = /captcha|verify (?:that )?you are human|checking your browser|just a moment|turnstile|unusual traffic/i.test(visible);
+  if (challenge) return `${provider} ต้องยืนยันผ่านเว็บ (CAPTCHA/เบราว์เซอร์) ก่อน ดาวน์โหลดอัตโนมัติไม่ได้ ให้เปิดลิงก์ในเบราว์เซอร์แล้วลองลิงก์ดาวน์โหลดตรง`;
+
+  const authHeader = headers['www-authenticate'] || headers['WWW-Authenticate'];
+  const loginPage = /log\s*in to (?:continue|download)|sign\s*in to (?:continue|download)|login required|authentication required|<input\b[^>]*type\s*=\s*["']?password/i.test(String(body));
+  if (Number(statusCode) === 401 || authHeader || loginPage) {
+    return `${provider} ต้องล็อกอินหรือไม่มี session ที่ใช้ได้ ให้เปิดลิงก์ในเบราว์เซอร์และตรวจว่าแชร์ไฟล์เป็นสาธารณะ`;
+  }
+
+  const status = Number(statusCode);
+  if (status === 403) return `${provider} ปฏิเสธการเข้าถึง (HTTP 403) ตรวจสิทธิ์แชร์ ลิงก์สาธารณะ หรือข้อจำกัดของบัญชี`;
+  if (status === 404 || status === 410) return `${provider} ไม่พบไฟล์ (HTTP ${status}) ลิงก์อาจถูกลบหรือหมดอายุ`;
+  if (status === 429) return `${provider} จำกัดคำขอชั่วคราว (HTTP 429) รอสักครู่แล้วลองใหม่`;
+  if (status >= 500) return `${provider} มีปัญหาฝั่งเซิร์ฟเวอร์ (HTTP ${status}) ลองใหม่ภายหลัง`;
+  if (status >= 400) return `${provider} ตรวจลิงก์ไม่ผ่าน (HTTP ${status}) ตรวจ URL และสิทธิ์เข้าถึง`;
+  return null;
+}
+
+function readResponseSnippet(res, maxBytes = 64 * 1024) {
+  return new Promise(resolve => {
+    let body = '', bytes = 0, settled = false;
+    const finish = destroy => {
+      if (settled) return;
+      settled = true;
+      res.removeListener('data', onData);
+      res.removeListener('end', onEnd);
+      res.removeListener('error', onEnd);
+      res.removeListener('close', onEnd);
+      if (destroy) res.destroy();
+      resolve(body);
+    };
+    const onData = chunk => {
+      bytes += chunk.length;
+      body += chunk.toString('utf8');
+      if (bytes >= maxBytes) finish(true);
+    };
+    const onEnd = () => finish(false);
+    res.on('data', onData);
+    res.once('end', onEnd);
+    res.once('error', onEnd);
+    res.once('close', onEnd);
+  });
+}
+
+function parseSha256Metadata(headers = {}) {
+  const normalized = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+  const candidates = [normalized['x-checksum-sha256'], normalized['x-amz-checksum-sha256']];
+  const digest = String(normalized.digest || '');
+  const digestValue = digest.match(/(?:^|,)\s*sha-?256\s*=\s*:?(?<value>[a-z0-9+/=_-]+):?/i)?.groups?.value;
+  if (digestValue) candidates.push(digestValue);
+  const googleHash = String(normalized['x-goog-hash'] || '').match(/(?:^|,)\s*sha256=(?<value>[a-z0-9+/=_-]+)/i)?.groups?.value;
+  if (googleHash) candidates.push(googleHash);
+
+  for (const candidate of candidates) {
+    const value = String(candidate || '').trim().replace(/^sha-?256\s*[:=]\s*/i, '');
+    if (/^[a-f0-9]{64}$/i.test(value)) return value.toLowerCase();
+    if (/^[a-z0-9+/]{43}=$/i.test(value)) {
+      const bytes = Buffer.from(value, 'base64');
+      if (bytes.length === 32) return bytes.toString('hex');
+    }
+  }
+  return null;
+}
+
+async function verifyDownloadIntegrity(filePath, { expectedSize = null, expectedSha256 = null } = {}) {
+  const actualSize = fs.statSync(filePath).size;
+  if (Number.isSafeInteger(expectedSize) && expectedSize >= 0 && actualSize !== expectedSize) {
+    throw new Error(`ขนาดไฟล์ไม่ตรงกับเซิร์ฟเวอร์ (คาดไว้ ${formatBytes(expectedSize)}, ได้ ${formatBytes(actualSize)}) ไฟล์อาจโหลดไม่ครบ`);
+  }
+  const sha256 = await calculateSHA256(filePath);
+  if (expectedSha256 && sha256.toLowerCase() !== expectedSha256.toLowerCase()) {
+    throw new Error('SHA-256 ของไฟล์ไม่ตรงกับค่าที่ผู้ให้บริการแจ้ง ไฟล์อาจเสียหรือถูกเปลี่ยนแปลง');
+  }
+  return { size: actualSize, sha256 };
 }
 
 function getHtmlAttribute(tag, name) {
@@ -624,6 +707,8 @@ async function resolveProviderPage(rawUrl, provider, fetchPage = requestProvider
   let response = await fetchPage(rawUrl);
   if (typeof response === 'string') response = { body: response, headers: {}, finalUrl: rawUrl };
   const pageUrl = response.finalUrl || rawUrl;
+  const responseIssue = diagnoseHttpResponse(response.statusCode, response.headers, response.body, provider);
+  if (responseIssue) throw new Error(responseIssue);
   const hxGet = String(response.body).match(/\bhx-get\s*=\s*['"]([^'"]+)['"]/i)?.[1];
   if (hxGet) {
     const actionUrl = new URL(hxGet, pageUrl).href;
@@ -731,6 +816,10 @@ async function resolveDownloadProvider(rawUrl, fetchPage = requestProviderPage) 
   if (hostname === 'mediafire.com' || hostname.endsWith('.mediafire.com')) {
     if (hostname.startsWith('download')) return { provider: 'MediaFire', url: parsed.href };
     const page = await fetchPage(parsed.href);
+    if (typeof page !== 'string') {
+      const responseIssue = diagnoseHttpResponse(page.statusCode, page.headers, page.body, 'MediaFire');
+      if (responseIssue) throw new Error(responseIssue);
+    }
     const html = typeof page === 'string' ? page : page.body;
     const button = html.match(/<a\b[^>]*\bid=["']downloadButton["'][^>]*>/i)?.[0];
     const direct = button?.match(/\bhref=["']([^"']+)["']/i)?.[1]
@@ -1207,23 +1296,34 @@ function httpRequest(rawUrl, extraHeaders = {}, redirectCount = 0) {
 async function probeFileInfo(url, retryCount = 0) {
   try {
     const { res, finalUrl } = await httpRequest(url, { 'Range': 'bytes=0-0' });
-    res.destroy();
-
-    if (res.statusCode >= 400) {
-      const err = new Error(`HTTP ${res.statusCode}`);
-      err.statusCode = res.statusCode;
+    const statusCode = res.statusCode;
+    const headers = res.headers;
+    const contentType = headers['content-type'] || 'unknown';
+    const isHtml = /text\/html/i.test(contentType);
+    const snippet = statusCode >= 400 || isHtml ? await readResponseSnippet(res) : (res.destroy(), '');
+    const responseIssue = diagnoseHttpResponse(statusCode, headers, snippet);
+    if (responseIssue) {
+      const err = new Error(responseIssue);
+      err.statusCode = statusCode;
       throw err;
     }
 
-    const acceptRanges = res.statusCode === 206 || res.headers['accept-ranges'] === 'bytes';
+    const acceptRanges = statusCode === 206 || headers['accept-ranges'] === 'bytes';
     let totalSize = 0;
-    if (res.statusCode === 206 && res.headers['content-range']) {
-      const m = res.headers['content-range'].match(/\/(\d+)/);
+    if (statusCode === 206 && headers['content-range']) {
+      const m = headers['content-range'].match(/\/(\d+)/);
       if (m) totalSize = parseInt(m[1], 10);
     } else {
-      totalSize = parseInt(res.headers['content-length'], 10) || 0;
+      totalSize = parseInt(headers['content-length'], 10) || 0;
     }
-    return { finalUrl, acceptRanges, totalSize, filename: extractFilename(finalUrl, res.headers), contentType: res.headers['content-type'] || 'unknown' };
+    const filename = extractFilename(finalUrl, headers);
+    if (isHtml && !/attachment/i.test(headers['content-disposition'] || '') && !/\.x?html?$/i.test(filename)) {
+      throw new Error(`ปลายทางส่งหน้าเว็บ HTML แทนไฟล์ (${filename}) ลิงก์นี้อาจยังไม่ใช่ลิงก์ดาวน์โหลดตรง หรือเว็บต้องให้ล็อกอิน/ยืนยันผ่านเบราว์เซอร์`);
+    }
+    return {
+      finalUrl, acceptRanges, totalSize, filename, contentType, statusCode,
+      expectedSha256: parseSha256Metadata(headers),
+    };
   } catch (err) {
     const isTemporary = err.statusCode === 429 || (err.statusCode >= 500 && err.statusCode < 600) || !err.statusCode;
     if (isTemporary && retryCount < MAX_RETRIES) {
@@ -2906,9 +3006,16 @@ async function performDownload(url) {
 
     if (cancelCtrl.cancelled) throw new Error('CANCELLED');
 
+    terminalWrite('      ' + dim('\uD83D\uDD12 กำลังคำนวณ SHA256...'));
+    const integrity = await verifyDownloadIntegrity(filePath, {
+      expectedSize: totalSize > 0 ? totalSize : null,
+      expectedSha256: fileInfo.expectedSha256,
+    });
+    terminalWrite('\r\x1b[K');
+    downloadedBytes = integrity.size;
     cancelCtrl.stopListening();
     clearInterval(redrawTimer);
-    bar.update(totalSize > 0 ? totalSize : 100, {
+    bar.update(totalSize > 0 ? totalSize : downloadedBytes, {
       speed: '\u2713 Done!',
       eta_formatted: '0:00',
       elapsed_formatted: formatETA((Date.now() - startTime) / 1000),
@@ -2917,10 +3024,6 @@ async function performDownload(url) {
       indeterminate: false,
     });
     bar.stop();
-
-    terminalWrite('      ' + dim('\uD83D\uDD12 กำลังคำนวณ SHA256...'));
-    const hash = await calculateSHA256(filePath);
-    terminalWrite('\r\x1b[K');
 
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
     const avgSpd = downloadedBytes / ((Date.now() - startTime) / 1000);
@@ -2933,8 +3036,9 @@ async function performDownload(url) {
     print('      ' + dim('เฉลี่ย     : ') + chalk.hex('#818cf8')(formatSpeed(avgSpd)));
     const displayFilePath = filePath.length > 30 ? '...' + filePath.substring(filePath.length - 27) : filePath;
     print('      ' + dim('บันทึก    : ') + chalk.cyan(displayFilePath));
-    const displayHash = hash.substring(0, 12) + '...' + hash.substring(hash.length - 12);
+    const displayHash = integrity.sha256.substring(0, 12) + '...' + integrity.sha256.substring(integrity.sha256.length - 12);
     print('      ' + dim('SHA256    : ') + accent(displayHash));
+    if (fileInfo.expectedSha256) print('      ' + dim('Checksum  : ') + success('ตรงกับ SHA-256 ที่เซิร์ฟเวอร์แจ้ง'));
     print('    ' + rainbowLine('\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501', Date.now() / 5));
     print();
     return { success: true, filePath };
@@ -3531,6 +3635,7 @@ module.exports = {
   compareVersions,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
+  diagnoseHttpResponse,
   downloadRange,
   findChecksum,
   formatGitHubProgressLines,
@@ -3541,8 +3646,10 @@ module.exports = {
   mergeRangeParts,
   parseGitHubRepositoryUrl,
   parseYtDlpProgressLine,
+  parseSha256Metadata,
   planGitHubRangeTasks,
   resolveDownloadProvider,
+  probeFileInfo,
   removeDirectoryIfEmpty,
   cleanupDownloadArtifacts,
   removeTreeWithRetries,
@@ -3551,4 +3658,5 @@ module.exports = {
   safeFilename,
   summarizeGitHubTree,
   toBoundedInteger,
+  verifyDownloadIntegrity,
 };

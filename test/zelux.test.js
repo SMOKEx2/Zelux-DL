@@ -1,6 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const crypto = require('node:crypto');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
@@ -14,6 +15,7 @@ const {
   compareVersions,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
+  diagnoseHttpResponse,
   downloadRange,
   extractUrlsFromText,
   findChecksum,
@@ -24,15 +26,18 @@ const {
   mergeRangeParts,
   parseGitHubRepositoryUrl,
   parseYtDlpProgressLine,
+  parseSha256Metadata,
   planGitHubRangeTasks,
   removeDirectoryIfEmpty,
   removeTreeWithRetries,
   resolveDownloadProvider,
+  probeFileInfo,
   resolveZipEntryPath,
   runWithConcurrency,
   safeFilename,
   summarizeGitHubTree,
   toBoundedInteger,
+  verifyDownloadIntegrity,
 } = require('../zelux');
 
 test('decodeZeluxProtocolArg preserves encoded GitHub URLs and legacy links', () => {
@@ -147,6 +152,76 @@ test('resolveDownloadProvider reports host pages that require browser verificati
     })),
     /ต้องยืนยันผ่านเว็บ/,
   );
+});
+
+test('HTTP diagnostics distinguish authentication, CAPTCHA, missing files and rate limits', () => {
+  assert.match(diagnoseHttpResponse(401, {}, ''), /ต้องล็อกอิน/);
+  assert.match(diagnoseHttpResponse(403, {}, '<html>Cloudflare Turnstile CAPTCHA</html>', 'Host'), /CAPTCHA/);
+  assert.match(diagnoseHttpResponse(404, {}, ''), /ลิงก์อาจถูกลบหรือหมดอายุ/);
+  assert.match(diagnoseHttpResponse(410, {}, ''), /ลิงก์อาจถูกลบหรือหมดอายุ/);
+  assert.match(diagnoseHttpResponse(429, {}, ''), /จำกัดคำขอชั่วคราว/);
+  assert.equal(diagnoseHttpResponse(200, {}, ''), null);
+});
+
+test('parseSha256Metadata accepts common checksum headers and rejects malformed values', () => {
+  const digest = crypto.createHash('sha256').update('checksum fixture').digest();
+  const hex = digest.toString('hex');
+  const base64 = digest.toString('base64');
+  assert.equal(parseSha256Metadata({ 'X-Checksum-Sha256': hex }), hex);
+  assert.equal(parseSha256Metadata({ Digest: `sha-256=:${base64}:` }), hex);
+  assert.equal(parseSha256Metadata({ 'x-goog-hash': `crc32c=AAAA,sha256=${base64}` }), hex);
+  assert.equal(parseSha256Metadata({ 'x-amz-checksum-sha256': 'not-a-checksum' }), null);
+});
+
+test('verifyDownloadIntegrity checks actual size and compares a provided SHA-256', async t => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-integrity-'));
+  const filePath = path.join(tempDir, 'fixture.bin');
+  const payload = Buffer.from('trusted fixture bytes');
+  const hash = crypto.createHash('sha256').update(payload).digest('hex');
+  fs.writeFileSync(filePath, payload);
+  t.after(() => fs.rmSync(tempDir, { recursive: true, force: true }));
+
+  assert.deepEqual(await verifyDownloadIntegrity(filePath, { expectedSize: payload.length, expectedSha256: hash }), {
+    size: payload.length, sha256: hash,
+  });
+  await assert.rejects(verifyDownloadIntegrity(filePath, { expectedSize: payload.length + 1 }), /ขนาดไฟล์ไม่ตรง/);
+  await assert.rejects(verifyDownloadIntegrity(filePath, { expectedSha256: '0'.repeat(64) }), /SHA-256.*ไม่ตรง/);
+});
+
+test('probeFileInfo reads reliable file metadata and explains provider error pages', async t => {
+  const payload = Buffer.from('probe fixture payload');
+  const hash = crypto.createHash('sha256').update(payload).digest('hex');
+  const server = http.createServer((request, response) => {
+    if (request.url === '/missing') {
+      response.writeHead(404, { 'Content-Type': 'text/html' });
+      response.end('<h1>Not found</h1>');
+      return;
+    }
+    if (request.url === '/challenge') {
+      response.writeHead(403, { 'Content-Type': 'text/html' });
+      response.end('<html>Complete CAPTCHA to continue</html>');
+      return;
+    }
+    const range = request.headers.range;
+    response.writeHead(range ? 206 : 200, {
+      'Content-Type': 'application/octet-stream',
+      'Content-Disposition': 'attachment; filename="fixture.bin"',
+      'Content-Length': range ? 1 : payload.length,
+      ...(range ? { 'Content-Range': `bytes 0-0/${payload.length}` } : {}),
+      'X-Checksum-Sha256': hash,
+    });
+    response.end(range ? payload.subarray(0, 1) : payload);
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => server.close());
+  const base = `http://127.0.0.1:${server.address().port}`;
+
+  const info = await probeFileInfo(`${base}/file`);
+  assert.equal(info.totalSize, payload.length);
+  assert.equal(info.expectedSha256, hash);
+  assert.equal(info.filename, 'fixture.bin');
+  await assert.rejects(probeFileInfo(`${base}/missing`), /ลิงก์อาจถูกลบหรือหมดอายุ/);
+  await assert.rejects(probeFileInfo(`${base}/challenge`), /CAPTCHA/);
 });
 
 test('resolveDownloadProvider ignores download links inside HTML comments', async () => {

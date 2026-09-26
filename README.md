@@ -3,14 +3,30 @@
   <h1>🚀 ZELUX-DL</h1>
   <p><b>Lightning-fast, beautiful, and interactive terminal video downloader.</b></p>
   
-  [![Version](https://img.shields.io/badge/version-1.3.6-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-1.6.5-blue.svg)](#)
   [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
 </div>
 
 ---
 
-## ZELUX-DL 1.5
+## ZELUX-DL 1.6: Terminal Edition
+
+หน้าจอใหม่ดัดแปลงจากต้นแบบ `installer.ps1`: โลโก้ม่วง–ฟ้า เมนูลูกศร และสถานะงานจริงในหน้าจอเดียว ไม่มี Electron หรือข้อมูลตัวอย่าง
+
+- ใช้ **↑ ↓ / Enter** เลือกเมนู หรือพิมพ์/วาง URL และคำสั่งได้ทันที
+- เมนู Download, History, Settings, Open Downloads, Retry Failed, Upgrade และ Commands เชื่อมกับระบบเดิม
+- หน้าดาวน์โหลดแสดงเปอร์เซ็นต์ ความเร็ว ขนาด และ log จริง รองรับหลายงานพร้อมกัน
+- **Esc / Ctrl+C** ระหว่างดาวน์โหลดใช้ยกเลิกและรอการลบไฟล์ค้าง; หน้าผลลัพธ์แยกจำนวนสำเร็จ/ล้มเหลว/ยกเลิก
+- Settings เลือกค่าแล้วแก้ไขได้; History และผลลัพธ์เลื่อนด้วย ↑ ↓ / Page Up / Page Down
+- แนะนำเทอร์มินัล **90 × 32** ช่อง (ขั้นต่ำ 60 × 26); หน้าจอปรับตามขนาดโดยไม่เปลี่ยนฟอนต์ระบบหรือขอสิทธิ์ Admin
+- เปิดโปรแกรมมีอนิเมชันโลโก้แบบ glitch สั้น ๆ, กดปุ่มใดก็ข้ามได้; `ZELUX-DL.exe --no-animation` หรือ `ZELUX_REDUCED_MOTION=1` จะเปิดเมนูทันที
+- `ZELUX-DL.exe --plain` ใช้หน้าคำสั่งเดิม; การ pipe input ยังใช้โหมดเดิมอัตโนมัติ
+- `ZELUX-DL.exe --version` ตรวจเวอร์ชันโดยไม่เข้าเมนู
+
+เมื่อรันจากซอร์ส `upgrade` จะไม่เขียนทับ Node.js: ใช้ Git อัปเดตซอร์ส หรือรันคำสั่งนี้จาก EXE ที่แพ็กแล้ว
+
+## ระบบดาวน์โหลด
 
 เวอร์ชัน 1.1 เพิ่มระบบดาวน์โหลดต่อจากไฟล์ `.part`, ประวัติและ Retry, คิว Batch แบบพร้อมกัน,
 หน้า Settings และการตรวจ SHA-256 ก่อนติดตั้งอัปเดต

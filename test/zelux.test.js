@@ -19,6 +19,7 @@ const {
   findChecksum,
   formatGitHubProgressLines,
   isValidUrl,
+  openFolder,
   isCancelInput,
   mergeRangeParts,
   parseGitHubRepositoryUrl,
@@ -40,6 +41,14 @@ test('decodeZeluxProtocolArg preserves encoded GitHub URLs and legacy links', ()
   assert.equal(decodeZeluxProtocolArg(protocolUrl), githubUrl);
   assert.equal(decodeZeluxProtocolArg('zelux://https://github.com/owner/project'), 'https://github.com/owner/project');
   assert.equal(decodeZeluxProtocolArg(githubUrl), githubUrl);
+});
+
+test('MediaFire resolver accepts the structured HTTP page response', async () => {
+  const resolved = await resolveDownloadProvider('https://www.mediafire.com/file/id/sample.zip/file', async () => ({
+    body: '<a id="downloadButton" href="https://download1.mediafire.com/sample.zip">Download</a>',
+    headers: {},
+  }));
+  assert.equal(resolved.url, 'https://download1.mediafire.com/sample.zip');
 });
 
 test('decodeZeluxProtocolArgs accepts a multi-link protocol payload', () => {
@@ -306,6 +315,8 @@ test('isCancelInput accepts Windows Terminal escape sequences and Ctrl+C', () =>
   assert.equal(isCancelInput('\x1b[27;1;27~'), true);
   assert.equal(isCancelInput('\x03'), true);
   assert.equal(isCancelInput('q'), false);
+  assert.equal(isCancelInput('\x1b[A'), false);
+  assert.equal(isCancelInput('\x1b[200~'), false);
 });
 
 test('downloadRange settles promptly when its controller is cancelled', async () => {
@@ -408,6 +419,29 @@ test('isValidUrl accepts only HTTP and HTTPS URLs', () => {
   assert.equal(isValidUrl('http://localhost/file'), true);
   assert.equal(isValidUrl('file:///etc/passwd'), false);
   assert.equal(isValidUrl('not a url'), false);
+});
+
+test('openFolder launches a visible Windows Explorer window and reports success', async () => {
+  const { EventEmitter } = require('node:events');
+  const directory = 'C:\\Downloads with spaces';
+  const child = new EventEmitter();
+  child.unref = () => {};
+  let invocation;
+  const resultPromise = openFolder((...args) => { invocation = args; return child; }, 'win32', directory);
+  child.emit('spawn');
+  assert.deepEqual(await resultPromise, { directory, success: true });
+  assert.deepEqual(invocation, ['explorer.exe', [directory], {
+    detached: true, stdio: 'ignore', windowsHide: false,
+  }]);
+});
+
+test('openFolder reports when the file browser cannot start', async () => {
+  const { EventEmitter } = require('node:events');
+  const child = new EventEmitter();
+  child.unref = () => {};
+  const resultPromise = openFolder(() => child, 'win32', 'downloads');
+  child.emit('error', new Error('launcher unavailable'));
+  assert.deepEqual(await resultPromise, { directory: 'downloads', success: false, error: 'launcher unavailable' });
 });
 
 test('safeFilename prevents traversal and invalid Windows names', () => {

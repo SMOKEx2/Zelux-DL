@@ -66,3 +66,15 @@
 - Verify self-updates against release SHA-256 checksums.
 - Add automated Windows/Linux builds, optional Windows signing, and GitHub Releases.
 - Reduce production dependencies and add automated tests.
+# 1.6.3
+
+- Add a short, skippable glitch-gradient startup reveal to the terminal interface.
+- Respect reduced-motion mode by opening directly to the menu.
+# 1.6.4
+
+- Move the configured download destination directly below the home menu frame.
+- Keep menu spacing readable at the minimum supported terminal height.
+# 1.6.5
+
+- Add semantic color highlighting to command names in the help screen.
+- Keep command descriptions aligned and readable in narrow terminals.

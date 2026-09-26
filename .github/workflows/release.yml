@@ -35,6 +35,10 @@ jobs:
       - name: Smoke-test Windows executable
         shell: pwsh
         run: |
+          & .\dist\ZELUX-DL.exe --check-ui
+          if ($LASTEXITCODE -ne 0) {
+            throw "Packaged terminal renderer failed with code $LASTEXITCODE"
+          }
           'q' | & .\dist\ZELUX-DL.exe | Out-Null
           if ($LASTEXITCODE -ne 0) {
             throw "ZELUX-DL.exe exited with code $LASTEXITCODE"

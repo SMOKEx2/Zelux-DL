@@ -40,6 +40,7 @@
 | `history` | แสดงประวัติล่าสุดพร้อม ID และสถานะ |
 | `retry failed` | ลองดาวน์โหลดรายการที่ล้มเหลวทั้งหมดอีกครั้ง |
 | `retry <ID>` | ลองดาวน์โหลดรายการตาม History ID |
+| `library` | จัดประเภทไฟล์ แสดงที่มา และตรวจหาไฟล์ซ้ำด้วย SHA-256 |
 
 การออก Release อัตโนมัติทำงานเมื่อ push tag รูปแบบ `v*` และจะสร้าง Windows EXE, Linux binary
 และ `SHA256SUMS.txt` หากตั้งค่า GitHub Secrets `WINDOWS_CERTIFICATE_BASE64` กับ
@@ -58,6 +59,7 @@
 - 🐙 **GitHub Repository** - วางลิงก์ `https://github.com/owner/repo` เพื่อดาวน์โหลดและแตกไฟล์ทั้ง repo อัตโนมัติ
 - 📊 **Honest Progress** - ไฟล์ที่ไม่แจ้งขนาดจะแสดง LIVE, bytes, speed และ elapsed time พร้อมจำนวน connections ที่ใช้จริง
 - 🚀 **GitHub Ranged Download** - อ่าน Git tree แล้วแบ่งทั้งหลายไฟล์และไฟล์ใหญ่เป็น byte ranges สูงสุด 16 connections พร้อม `%` และ ETA; หาก API ใช้ไม่ได้จะ fallback เป็น ZIP
+- 🗂️ **Smart Library** - พิมพ์ `library` เพื่อจัดกลุ่มไฟล์ตามประเภท จับคู่ URL ต้นทางจากประวัติ และตรวจไฟล์ซ้ำด้วย SHA-256 โดยไม่ย้ายหรือลบไฟล์อัตโนมัติ
 - 🛠 **Zero Setup** - โหลดเสร็จเปิดใช้ได้เลย โปรแกรมจัดการดาวน์โหลดไฟล์ที่จำเป็น (`ffmpeg`, `yt-dlp`) ให้เองทั้งหมด
 
 ## 📥 วิธีติดตั้งและใช้งาน (Installation)

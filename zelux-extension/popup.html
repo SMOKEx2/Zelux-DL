@@ -1,217 +1,55 @@
-<!DOCTYPE html>
-<html>
+<!doctype html>
+<html lang="en">
 <head>
   <meta charset="utf-8">
-  <style>
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap');
-
-    :root {
-      --primary: #a855f7;
-      --primary-glow: rgba(168, 85, 247, 0.5);
-      --secondary: #3b82f6;
-      --bg-color: #0b0f19;
-      --card-bg: rgba(20, 25, 40, 0.6);
-      --text-main: #f8fafc;
-      --text-muted: #94a3b8;
-    }
-
-    body {
-      width: 320px;
-      margin: 0;
-      padding: 0;
-      font-family: 'Inter', sans-serif;
-      background: var(--bg-color);
-      color: var(--text-main);
-      overflow: hidden;
-      position: relative;
-    }
-
-    /* Ambient background glows */
-    body::before, body::after {
-      content: '';
-      position: absolute;
-      width: 150px;
-      height: 150px;
-      border-radius: 50%;
-      filter: blur(60px);
-      z-index: -1;
-      opacity: 0.6;
-    }
-
-    body::before {
-      background: var(--primary);
-      top: -50px;
-      left: -50px;
-    }
-
-    body::after {
-      background: var(--secondary);
-      bottom: -50px;
-      right: -50px;
-    }
-
-    .container {
-      padding: 24px;
-      background: var(--card-bg);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid rgba(255, 255, 255, 0.05);
-      min-height: 200px;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .header {
-      display: flex;
-      align-items: center;
-      gap: 12px;
-      margin-bottom: 16px;
-    }
-
-    .logo {
-      width: 36px;
-      height: 36px;
-      border-radius: 8px;
-      background: linear-gradient(135deg, var(--primary), var(--secondary));
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      box-shadow: 0 4px 15px var(--primary-glow);
-    }
-    
-    .logo img {
-      width: 100%;
-      height: 100%;
-      border-radius: 8px;
-      object-fit: cover;
-    }
-
-    h2 {
-      margin: 0;
-      font-size: 18px;
-      font-weight: 800;
-      letter-spacing: 0.5px;
-      background: linear-gradient(90deg, #fff, #cbd5e1);
-      -webkit-background-clip: text;
-      -webkit-text-fill-color: transparent;
-    }
-
-    p {
-      margin: 0 0 20px 0;
-      font-size: 13px;
-      line-height: 1.5;
-      color: var(--text-muted);
-    }
-
-    .input-wrapper {
-      position: relative;
-      margin-bottom: 16px;
-    }
-
-    .input-wrapper::before {
-      content: '';
-      position: absolute;
-      inset: -1px;
-      border-radius: 10px;
-      background: linear-gradient(90deg, var(--primary), var(--secondary));
-      z-index: 0;
-      opacity: 0.3;
-      transition: opacity 0.3s ease;
-    }
-
-    .input-wrapper:focus-within::before {
-      opacity: 1;
-    }
-
-    textarea {
-      position: relative;
-      width: 100%;
-      box-sizing: border-box;
-      padding: 12px 14px;
-      background: #0f1423;
-      border: 1px solid transparent;
-      color: white;
-      border-radius: 9px;
-      font-family: 'Inter', sans-serif;
-      font-size: 13px;
-      z-index: 1;
-      outline: none;
-      transition: background 0.3s ease;
-      resize: vertical;
-      min-height: 92px;
-    }
-
-    textarea::placeholder {
-      color: #475569;
-    }
-
-    textarea:focus {
-      background: #0b0f19;
-    }
-
-    button {
-      position: relative;
-      width: 100%;
-      padding: 12px;
-      background: linear-gradient(135deg, var(--primary), var(--secondary));
-      color: white;
-      border: none;
-      border-radius: 8px;
-      cursor: pointer;
-      font-weight: 600;
-      font-size: 14px;
-      font-family: 'Inter', sans-serif;
-      overflow: hidden;
-      transition: transform 0.2s ease, box-shadow 0.2s ease;
-      box-shadow: 0 4px 15px rgba(168, 85, 247, 0.3);
-    }
-
-    button::after {
-      content: '';
-      position: absolute;
-      top: 0;
-      left: -100%;
-      width: 50%;
-      height: 100%;
-      background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.2), transparent);
-      transform: skewX(-20deg);
-      transition: none;
-    }
-
-    button:hover {
-      transform: translateY(-1px);
-      box-shadow: 0 6px 20px rgba(168, 85, 247, 0.5);
-    }
-
-    button:hover::after {
-      left: 200%;
-      transition: left 0.6s ease-in-out;
-    }
-
-    button:active {
-      transform: translateY(1px);
-      box-shadow: 0 2px 10px rgba(168, 85, 247, 0.3);
-    }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ZELUX-DL Link Capture</title>
+  <link rel="stylesheet" href="popup.css">
 </head>
 <body>
-  <div class="container">
-    <div class="header">
-      <div class="logo">
-        <img src="icon.png" alt="Z" onerror="this.style.display='none'">
+  <main class="popup-shell">
+    <header class="header">
+      <img class="brand-mark" src="icon48.png" alt="">
+      <div class="brand-copy">
+        <strong>ZELUX-DL</strong>
+        <span>LINK CAPTURE</span>
       </div>
-      <h2>ZELUX-DL</h2>
+      <span class="version">2.3</span>
+    </header>
+
+    <section class="page-context" aria-labelledby="page-title">
+      <div class="eyebrow">CURRENT TAB</div>
+      <div class="page-title-row">
+        <span class="site-indicator" aria-hidden="true"></span>
+        <div class="page-copy">
+          <strong id="page-title">Reading current page…</strong>
+          <span id="page-host"></span>
+        </div>
+        <button id="scanBtn" class="quiet-button" type="button" title="Find downloadable links on this page">Scan</button>
+      </div>
+    </section>
+
+    <section class="capture-section" aria-labelledby="links-label">
+      <div class="section-heading">
+        <label id="links-label" for="urlInput">Links to send</label>
+        <span id="linkCount" class="count">0 links</span>
+      </div>
+      <textarea id="urlInput" rows="5" placeholder="Paste one or more URLs&#10;One link per line" autocomplete="off" spellcheck="false"></textarea>
+      <div class="input-hint">Paste a link list, or scan this page to collect links.</div>
+    </section>
+
+    <div id="status" class="status" role="status" aria-live="polite">
+      <span class="status-dot" aria-hidden="true"></span>
+      <span id="statusText">Ready to capture links.</span>
     </div>
-    
-    <p>Paste one or many links below. Put each link on a new line.</p>
-    
-    <div class="input-wrapper">
-      <textarea id="urlInput" rows="5" placeholder="https://example.com/file-1.zip&#10;https://example.com/file-2.zip" autocomplete="off" spellcheck="false"></textarea>
-    </div>
-    
-    <button id="downloadBtn">Download Batch</button>
-  </div>
-  
+
+    <button id="sendBtn" class="primary-button" type="button" disabled>
+      <span>Send to ZELUX-DL</span>
+      <span class="button-arrow" aria-hidden="true">↗</span>
+    </button>
+
+    <footer>Runs locally through the ZELUX-DL protocol handler.</footer>
+  </main>
   <script src="popup.js"></script>
 </body>
 </html>

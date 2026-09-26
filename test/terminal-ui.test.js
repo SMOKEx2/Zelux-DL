@@ -123,7 +123,7 @@ test('home download destination sits immediately below the menu frame', () => {
   }
 });
 
-test('home screen shows the startup version-check result without replacing download status', () => {
+test('home screen avoids repeating the version already shown in the header', () => {
   const input = new PassThrough();
   input.isTTY = true;
   input.setRawMode = value => { input.isRaw = value; };
@@ -136,9 +136,8 @@ test('home screen shows the startup version-check result without replacing downl
   ui.home();
   const frame = ui.buildFrame(90, 32);
   const plain = frame.lines.flatMap(parts => parts.map(part => stripVTControlCharacters(part.text))).join(' ');
-  assert.match(plain, /Up to date: v1\.6\.7/);
+  assert.doesNotMatch(plain, /Up to date: v1\.6\.7/);
   assert.match(plain, /3 completed\s+·\s+1 failed\s+·\s+4 connections configured/);
-  assert.ok(JSON.stringify(frame).includes('38;2;74;222;128'), 'latest version status uses success color');
   ui.finish(null);
   ui.close();
 });

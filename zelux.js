@@ -489,6 +489,92 @@ function formatBytes(b) {
   return (b / Math.pow(1024, i)).toFixed(i > 0 ? 1 : 0) + ' ' + u[i];
 }
 
+const LIBRARY_CATEGORIES = [
+  ['Video', new Set(['.mp4', '.mkv', '.mov', '.avi', '.webm', '.m4v', '.mpeg', '.mpg'])],
+  ['Audio', new Set(['.mp3', '.m4a', '.aac', '.wav', '.flac', '.ogg', '.opus'])],
+  ['Archive', new Set(['.zip', '.rar', '.7z', '.tar', '.gz', '.bz2', '.xz', '.iso'])],
+  ['Image', new Set(['.jpg', '.jpeg', '.png', '.gif', '.webp', '.bmp', '.tiff', '.svg'])],
+  ['Document', new Set(['.pdf', '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.txt', '.md'])],
+  ['Application', new Set(['.exe', '.msi', '.apk', '.dmg', '.deb', '.rpm', '.appimage'])],
+];
+
+function categorizeLibraryFile(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+  return LIBRARY_CATEGORIES.find(([, extensions]) => extensions.has(extension))?.[0] || 'Other';
+}
+
+async function hashFileSha256(filePath) {
+  const hash = crypto.createHash('sha256');
+  for await (const chunk of fs.createReadStream(filePath)) hash.update(chunk);
+  return hash.digest('hex');
+}
+
+async function buildSmartLibrary(directory, history = []) {
+  const root = path.resolve(directory);
+  const normalizeFilePath = filePath => {
+    const resolved = path.resolve(filePath);
+    return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+  };
+  const sources = new Map();
+  for (const entry of history) {
+    if (entry.status !== 'completed' || !entry.filePath) continue;
+    sources.set(normalizeFilePath(entry.filePath), entry.url || '');
+  }
+
+  const files = [];
+  async function walk(current) {
+    let entries;
+    try { entries = await fs.promises.readdir(current, { withFileTypes: true }); }
+    catch (_) { return; }
+    for (const entry of entries) {
+      const filePath = path.join(current, entry.name);
+      if (entry.isDirectory()) { await walk(filePath); continue; }
+      if (!entry.isFile() || /\.(?:part|tmp|crdownload)$/i.test(entry.name)) continue;
+      try {
+        const stat = await fs.promises.stat(filePath);
+        files.push({
+          name: entry.name,
+          path: filePath,
+          relativePath: path.relative(root, filePath),
+          size: stat.size,
+          modifiedAt: stat.mtimeMs,
+          category: categorizeLibraryFile(filePath),
+          source: sources.get(normalizeFilePath(filePath)) || '',
+        });
+      } catch (_) { /* Ignore files that disappear or become inaccessible during a scan. */ }
+    }
+  }
+  await walk(root);
+
+  const sameSize = new Map();
+  for (const file of files) {
+    if (!sameSize.has(file.size)) sameSize.set(file.size, []);
+    sameSize.get(file.size).push(file);
+  }
+  const sameHash = new Map();
+  for (const candidates of sameSize.values()) {
+    if (candidates.length < 2) continue;
+    for (const file of candidates) {
+      try {
+        file.sha256 = await hashFileSha256(file.path);
+        const key = `${file.size}:${file.sha256}`;
+        if (!sameHash.has(key)) sameHash.set(key, []);
+        sameHash.get(key).push(file);
+      } catch (_) { /* Keep the file visible even if it could not be hashed. */ }
+    }
+  }
+  const duplicates = [...sameHash.values()].filter(group => group.length > 1);
+  files.sort((a, b) => b.modifiedAt - a.modifiedAt);
+  return {
+    directory: root,
+    files,
+    totalBytes: files.reduce((sum, file) => sum + file.size, 0),
+    categories: Object.fromEntries([...new Set([...LIBRARY_CATEGORIES.map(([name]) => name), 'Other'])]
+      .map(name => [name, files.filter(file => file.category === name).length])),
+    duplicates,
+  };
+}
+
 function formatSpeed(bps) {
   if (!bps || bps === 0) return '0 B/s';
   const u = ['B/s', 'KB/s', 'MB/s', 'GB/s'];
@@ -3510,7 +3596,6 @@ async function runUpdate() {
 }
 
 async function runTerminalApp(initialUrls = []) {
-  let versionStatus = { text: 'Checking for updates...', color: 'cyan' };
   terminalUI = new TerminalUI({
     version: APP_VERSION,
     motion: !process.argv.includes('--no-animation') && process.env.ZELUX_REDUCED_MOTION !== '1',
@@ -3520,7 +3605,6 @@ async function runTerminalApp(initialUrls = []) {
         directory: DOWNLOADS_DIR, connections: NUM_CONNECTIONS,
         completed: entries.filter(entry => entry.status === 'completed').length,
         failed: entries.filter(entry => entry.status === 'failed').length,
-        versionStatus,
       };
     },
     onCancel: () => cancelCtrl.cancel(),
@@ -3556,9 +3640,6 @@ async function runTerminalApp(initialUrls = []) {
     const startupUpdate = await startupUpdatePromise;
     if (ui.state.type === 'input') startupInput = ui.state.text;
     if (startupUpdate?.available) {
-      versionStatus = { text: `Update available: ${startupUpdate.latest}`, color: 'yellow' };
-      ui.dirty = true;
-      ui.render();
       if (!initialUrls.length) {
         try {
           const shouldUpgrade = await ui.choose([
@@ -3570,14 +3651,6 @@ async function runTerminalApp(initialUrls = []) {
           if (err.message !== 'CANCELLED') throw err;
         }
       }
-    } else if (startupUpdate) {
-      versionStatus = { text: `Up to date: v${startupUpdate.current}`, color: 'green' };
-      ui.dirty = true;
-      ui.render();
-    } else {
-      versionStatus = { text: 'Update check unavailable', color: 'dim' };
-      ui.dirty = true;
-      ui.render();
     }
     if (initialUrls.length) await run('DOWNLOAD', () => handleBatch(initialUrls));
     while (true) {
@@ -3601,6 +3674,7 @@ async function runTerminalApp(initialUrls = []) {
           'Paste URLs separated by spaces or newlines. Enter submits.',
           'A .txt file path imports a batch of links.', '',
           { label: 'history', description: 'Review recent jobs and their IDs', color: 'cyan' },
+          { label: 'library', description: 'Browse files, sources and SHA-256 duplicates', color: 'purple' },
           { label: 'retry failed', description: 'Retry failed / cancelled jobs', color: 'yellow' },
           { label: 'retry ID', description: 'Retry one job from history', color: 'yellow' },
           { label: 'settings', description: 'Edit settings with arrow keys', color: 'blue' },
@@ -3621,6 +3695,36 @@ async function runTerminalApp(initialUrls = []) {
           `${entry.status.toUpperCase()}   ${entry.id}`,
           entry.url, entry.filePath || entry.error || '', '',
         ]) : ['No downloads yet. Select DOWNLOAD to add a link.']);
+      } else if (cmd === 'library') {
+        await run('SMART LIBRARY', async () => {
+          const library = await buildSmartLibrary(DOWNLOADS_DIR, readHistory());
+          print(`Folder: ${library.directory}`);
+          print(`${library.files.length} files  ·  ${formatBytes(library.totalBytes)} total  ·  ${library.duplicates.length} duplicate groups`);
+          print('');
+          print('FILE TYPES');
+          for (const [category, count] of Object.entries(library.categories)) {
+            if (count) print(`  ${category.padEnd(14)} ${count}`);
+          }
+          print('');
+          if (library.duplicates.length) {
+            print('DUPLICATES  ·  matched by SHA-256');
+            for (const group of library.duplicates) {
+              print(`  ${formatBytes(group[0].size)}  ${group[0].sha256.slice(0, 12)}…`);
+              for (const file of group) print(`    ${file.relativePath}`);
+            }
+            print('');
+          } else print('No duplicate files found.');
+          print('RECENT FILES  ·  newest first');
+          for (const file of library.files.slice(0, 12)) {
+            let sourceHost = 'source unknown';
+            if (file.source) {
+              try { sourceHost = new URL(file.source).hostname; } catch (_) { sourceHost = 'source saved'; }
+            }
+            print(`  ${formatBytes(file.size).padEnd(9)} ${file.category.padEnd(12)} ${file.relativePath}`);
+            print(`             ${sourceHost}`);
+          }
+          if (!library.files.length) print('No files yet. Downloads will appear here when complete.');
+        }, false);
       } else if (['list', 'ls', 'l'].includes(cmd)) {
         const entries = fs.readdirSync(DOWNLOADS_DIR, { withFileTypes: true });
         await ui.page('DOWNLOAD FILES', [DOWNLOADS_DIR, '', ...entries.map(entry =>
@@ -3732,6 +3836,7 @@ if (require.main === module) {
 module.exports = {
   CancelController,
   buildGitHubArchiveUrl,
+  buildSmartLibrary,
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
   compareVersions,

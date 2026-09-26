@@ -9,6 +9,7 @@ const vm = require('node:vm');
 
 const {
   CancelController,
+  buildSmartLibrary,
   cleanupDownloadArtifacts,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
@@ -40,6 +41,36 @@ const {
   toBoundedInteger,
   verifyDownloadIntegrity,
 } = require('../zelux');
+
+test('smart library classifies files, links download sources and hashes duplicate content', async () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-library-'));
+  try {
+    const nested = path.join(root, 'archives');
+    fs.mkdirSync(nested);
+    const video = path.join(root, 'clip.MP4');
+    const archiveA = path.join(root, 'bundle-a.zip');
+    const archiveB = path.join(nested, 'bundle-b.zip');
+    fs.writeFileSync(video, 'video-data');
+    fs.writeFileSync(archiveA, 'same archive');
+    fs.writeFileSync(archiveB, 'same archive');
+    fs.writeFileSync(path.join(root, 'unfinished.zip.part'), 'partial');
+
+    const library = await buildSmartLibrary(root, [
+      { status: 'completed', filePath: video, url: 'https://example.com/watch/123' },
+      { status: 'failed', filePath: archiveA, url: 'https://bad.example/file' },
+    ]);
+
+    assert.equal(library.files.length, 3);
+    assert.equal(library.totalBytes, Buffer.byteLength('video-data') + 2 * Buffer.byteLength('same archive'));
+    assert.equal(library.files.find(file => file.path === video).category, 'Video');
+    assert.equal(library.files.find(file => file.path === video).source, 'https://example.com/watch/123');
+    assert.equal(library.duplicates.length, 1);
+    assert.deepEqual(library.duplicates[0].map(file => file.name).sort(), ['bundle-a.zip', 'bundle-b.zip']);
+    assert.equal(library.categories.Archive, 2);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test('decodeZeluxProtocolArg preserves encoded GitHub URLs and legacy links', () => {
   const githubUrl = 'https://github.com/owner/project/releases/download/v1.0/app.zip?download=1#asset';
@@ -264,7 +295,7 @@ test('parseYtDlpProgressLine handles playlist items and current yt-dlp progress'
   assert.equal(parseYtDlpProgressLine('[youtube] Downloading webpage'), null);
 });
 
-test('extension 2.2 sends multiple fully encoded URLs through the protocol', async () => {
+test('extension scans page links and sends reviewed batches through the protocol', async () => {
   const listeners = {};
   let execution = null;
   const chrome = {
@@ -274,10 +305,31 @@ test('extension 2.2 sends multiple fully encoded URLs through the protocol', asy
     },
     contextMenus: {
       create: () => {},
+      removeAll: callback => callback(),
       onClicked: { addListener: listener => { listeners.clicked = listener; } },
     },
     scripting: {
-      executeScript: async options => { execution = options; },
+      executeScript: async options => {
+        execution = options;
+        if (options.func && !options.args) {
+          const document = {
+            querySelectorAll(selector) {
+              if (selector === 'a[href]') return [
+                { href: 'https://example.com/file.zip', innerText: 'Download file' },
+                { href: 'javascript:void(0)', innerText: 'Bad link' },
+                { href: 'https://example.com/file.zip', innerText: 'Duplicate' },
+              ];
+              return [{ src: 'https://example.com/video.mp4', tagName: 'VIDEO', getAttribute: () => '' }];
+            },
+          };
+          const result = vm.runInNewContext(`(${options.func.toString()})()`, {
+            URL,
+            document,
+            location: { href: 'https://example.com/page' },
+          });
+          return [{ result }];
+        }
+      },
     },
   };
 
@@ -287,6 +339,17 @@ test('extension 2.2 sends multiple fully encoded URLs through the protocol', asy
     'https://github.com/owner/project/releases/download/v1.0/app.zip?raw=1#asset',
     'https://example.com/second.zip?download=1',
   ];
+  const scanned = await new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('extension scan response timed out')), 1000);
+    listeners.message({ type: 'scan-page', tabId: 42 }, {}, value => {
+      clearTimeout(timer);
+      resolve(value);
+    });
+  });
+  assert.equal(scanned.ok, true);
+  assert.deepEqual(Array.from(scanned.urls), ['https://example.com/file.zip', 'https://example.com/video.mp4']);
+  assert.equal(execution.target.tabId, 42);
+
   const response = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('extension response timed out')), 1000);
     const keepAlive = listeners.message(
@@ -300,12 +363,13 @@ test('extension 2.2 sends multiple fully encoded URLs through the protocol', asy
     assert.equal(keepAlive, true);
   });
 
-  assert.equal(response.ok, true);
+  assert.equal(response.ok, true, response.error);
   assert.equal(response.count, 2);
   assert.equal(execution.target.tabId, 42);
   assert.equal(execution.args[0], `zelux://download?urls=${encodeURIComponent(JSON.stringify(urls))}`);
   const popupSource = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'popup.js'), 'utf8');
-  assert.match(popupSource, /tab\?\.url && \/\^https\?:/);
+  assert.match(popupSource, /type: 'scan-page'/);
+  assert.match(popupSource, /type: 'launch-download'/);
   assert.match(popupSource, /message\.urls|urls,/);
 });
 

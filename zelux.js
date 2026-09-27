@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.0';
+const APP_VERSION = '1.8.1';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -2310,6 +2310,24 @@ function findChecksum(checksumText, assetName) {
   return hash && /^[a-f0-9]{64}$/.test(hash) ? hash : null;
 }
 
+function quoteWindowsArgument(value) {
+  const input = String(value);
+  let quoted = '"';
+  let backslashes = 0;
+  for (const character of input) {
+    if (character === '\\') {
+      backslashes++;
+    } else if (character === '"') {
+      quoted += `${'\\'.repeat(backslashes * 2 + 1)}"`;
+      backslashes = 0;
+    } else {
+      quoted += `${'\\'.repeat(backslashes)}${character}`;
+      backslashes = 0;
+    }
+  }
+  return `${quoted}${'\\'.repeat(backslashes * 2)}"`;
+}
+
 function waitForUpdateHelperReady(child, logPath, timeoutMs = 10000) {
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -2336,7 +2354,9 @@ function waitForUpdateHelperReady(child, logPath, timeoutMs = 10000) {
     child.once('error', err => finish(new Error(`PowerShell updater could not start: ${err.message}`)));
     child.once('exit', (code, signal) => {
       if (!settled && !checkLog()) {
-        finish(new Error(`PowerShell updater exited before it was ready (code ${code}, signal ${signal || 'none'}).`));
+        let details = '';
+        try { details = fs.readFileSync(logPath, 'utf8').trim().split(/\r?\n/).slice(-3).join(' | '); } catch (_) { /* No helper diagnostics yet. */ }
+        finish(new Error(`PowerShell updater exited before it was ready (code ${code}, signal ${signal || 'none'}).${details ? ` ${details}` : ''}`));
       }
     });
     interval = setInterval(checkLog, 100);
@@ -2435,8 +2455,10 @@ async function selfUpdate() {
       const helperDir = path.join(process.env.LOCALAPPDATA || BASE_DIR, 'ZELUX-DL');
       fs.mkdirSync(helperDir, { recursive: true });
       const scriptPath = path.join(helperDir, '_update.ps1');
+      const launcherPath = path.join(helperDir, '_update_launcher.ps1');
       const logPath = path.join(helperDir, '_update.log');
       fs.writeFileSync(scriptPath, buildWindowsUpdateScript(), 'utf8');
+      fs.writeFileSync(launcherPath, buildWindowsUpdateLauncherScript(), 'utf8');
       fs.writeFileSync(logPath, '', 'utf8');
 
       print();
@@ -2450,7 +2472,7 @@ async function selfUpdate() {
         const systemRoot = process.env.SystemRoot || 'C:\\Windows';
         const powershellPath = path.join(systemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
         const powershellExe = fs.existsSync(powershellPath) ? powershellPath : 'powershell.exe';
-        const child = spawn(powershellExe, [
+        const helperArgs = [
           '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
           '-File', scriptPath,
           '-ParentPid', String(process.pid),
@@ -2460,12 +2482,20 @@ async function selfUpdate() {
           '-WorkDir', BASE_DIR,
           '-LogPath', logPath,
           '-ExpectedVersion', update.latest.replace(/^v/i, ''),
-        ], { cwd: BASE_DIR, detached: true, stdio: 'ignore', windowsHide: true });
+        ];
+        const argumentLine = helperArgs.map(quoteWindowsArgument).join(' ');
+        const child = spawn(powershellExe, [
+          '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+          '-File', launcherPath,
+          '-PowerShellPath', powershellExe,
+          '-ArgumentLine', argumentLine,
+          '-WorkDir', BASE_DIR,
+          '-LogPath', logPath,
+        ], { cwd: BASE_DIR, stdio: 'ignore', windowsHide: true });
         child.once('error', reject);
         child.once('spawn', async () => {
           try {
             await waitForUpdateHelperReady(child, logPath);
-            child.unref();
             resolve();
           } catch (err) {
             try { child.kill(); } catch (_) { }
@@ -2655,6 +2685,38 @@ try {
       Start-Process -FilePath $ExePath -WorkingDirectory $WorkDir
     } catch { Write-UpdateLog "Rollback/relaunch failed: $($_.Exception.Message)" }
   }
+}`;
+}
+
+function buildWindowsUpdateLauncherScript() {
+  return String.raw`param(
+  [Parameter(Mandatory = $true)][string]$PowerShellPath,
+  [Parameter(Mandatory = $true)][string]$ArgumentLine,
+  [Parameter(Mandatory = $true)][string]$WorkDir,
+  [Parameter(Mandatory = $true)][string]$LogPath
+)
+$ErrorActionPreference = 'Stop'
+$Helper = $null
+try {
+  $Helper = Start-Process -FilePath $PowerShellPath -ArgumentList $ArgumentLine -WorkingDirectory $WorkDir -WindowStyle Hidden -PassThru
+  $Deadline = (Get-Date).AddSeconds(8)
+  while ((Get-Date) -lt $Deadline) {
+    if (Test-Path -LiteralPath $LogPath -PathType Leaf) {
+      $LogContent = Get-Content -LiteralPath $LogPath -Raw -ErrorAction SilentlyContinue
+      if ($LogContent -and $LogContent.Contains('Updater started; waiting for process')) { exit 0 }
+    }
+    if (-not (Get-Process -Id $Helper.Id -ErrorAction SilentlyContinue)) {
+      throw "Detached updater process $($Helper.Id) exited before reporting ready."
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  throw 'Detached updater did not report ready within 8 seconds.'
+} catch {
+  try { Add-Content -LiteralPath $LogPath -Value "[$(Get-Date -Format s)] Launcher failed: $($_.Exception.Message)" } catch { }
+  if ($Helper -and (Get-Process -Id $Helper.Id -ErrorAction SilentlyContinue)) {
+    try { Stop-Process -Id $Helper.Id -Force } catch { }
+  }
+  exit 1
 }`;
 }
 
@@ -4754,6 +4816,7 @@ module.exports = {
   buildSmartLibrary,
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
+  buildWindowsUpdateLauncherScript,
   compareVersions,
   cleanupStaleTemporaryFacebookCookies,
   cleanupStaleTemporaryYouTubeCookies,
@@ -4809,5 +4872,6 @@ module.exports = {
   verifyDownloadIntegrity,
   verifyZeluxExeIdentity,
   waitForUpdateHelperReady,
+  quoteWindowsArgument,
   withTemporaryMediaCookies,
 };

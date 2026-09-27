@@ -19,6 +19,7 @@ const {
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
+  buildWindowsUpdateLauncherScript,
   compareVersions,
   cleanupStaleTemporaryFacebookCookies,
   cleanupStaleTemporaryYouTubeCookies,
@@ -57,6 +58,7 @@ const {
   removeTemporaryYouTubeCookies,
   resolveDownloadProvider,
   probeFileInfo,
+  quoteWindowsArgument,
   postprocessMediaInfoJson,
   parseYtDlpAfterMovePath,
   resolveZipEntryPath,
@@ -185,7 +187,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.8.0');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.1');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -1325,6 +1327,66 @@ test('Windows update handoff waits, verifies the replacement, relaunches, and lo
   assert.match(script, /Restored the previous executable and reopening it/);
   assert.match(script, /\[string\]\$LogPath/);
   assert.match(script, /Write-UpdateLog "Update\/relaunch failed:/);
+});
+
+test('Windows updater uses a PowerShell Start-Process launcher instead of Node detached PowerShell', () => {
+  const launcher = buildWindowsUpdateLauncherScript();
+  assert.match(launcher, /Start-Process -FilePath \$PowerShellPath -ArgumentList \$ArgumentLine/);
+  assert.match(launcher, /Updater started; waiting for process/);
+  assert.match(launcher, /Stop-Process -Id \$Helper\.Id -Force/);
+  assert.equal(quoteWindowsArgument('D:\\Folder With Spaces\\ZELUX-DL.exe'), '"D:\\Folder With Spaces\\ZELUX-DL.exe"');
+  assert.equal(quoteWindowsArgument('D:\\Trailing\\'), '"D:\\Trailing\\\\"');
+  assert.equal(quoteWindowsArgument('a"b'), '"a\\"b"');
+});
+
+test('Windows updater launcher actually starts its detached helper', { skip: process.platform !== 'win32' }, async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux updater launcher '));
+  const scriptPath = path.join(directory, '_update.ps1');
+  const launcherPath = path.join(directory, '_launcher.ps1');
+  const logPath = path.join(directory, '_update.log');
+  const fakeParent = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {
+    stdio: 'ignore', windowsHide: true,
+  });
+  t.after(() => {
+    try { fakeParent.kill(); } catch (_) { /* The process may already have exited. */ }
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+  await new Promise((resolve, reject) => {
+    fakeParent.once('spawn', resolve);
+    fakeParent.once('error', reject);
+  });
+  fs.writeFileSync(scriptPath, buildWindowsUpdateScript(), 'utf8');
+  fs.writeFileSync(launcherPath, buildWindowsUpdateLauncherScript(), 'utf8');
+  fs.writeFileSync(logPath, '', 'utf8');
+  const powershellPath = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
+  const helperArgs = [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-WindowStyle', 'Hidden',
+    '-File', scriptPath,
+    '-ParentPid', String(fakeParent.pid),
+    '-ExePath', path.join(directory, 'not-used.exe'),
+    '-TempPath', path.join(directory, 'missing.update'),
+    '-BackupPath', path.join(directory, 'not-used.backup'),
+    '-WorkDir', directory,
+    '-LogPath', logPath,
+    '-ExpectedVersion', '1.8.1',
+  ];
+  const launcher = require('child_process').spawn(powershellPath, [
+    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+    '-File', launcherPath,
+    '-PowerShellPath', powershellPath,
+    '-ArgumentLine', helperArgs.map(quoteWindowsArgument).join(' '),
+    '-WorkDir', directory,
+    '-LogPath', logPath,
+  ], { cwd: directory, stdio: 'ignore', windowsHide: true });
+  const ready = waitForUpdateHelperReady(launcher, logPath, 5000);
+  await ready;
+  assert.match(fs.readFileSync(logPath, 'utf8'), /Updater started; waiting for process/);
+  fakeParent.kill();
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline && !fs.readFileSync(logPath, 'utf8').includes('The verified update file is missing.')) {
+    await new Promise(resolve => setTimeout(resolve, 50));
+  }
+  assert.match(fs.readFileSync(logPath, 'utf8'), /The verified update file is missing/);
 });
 
 test('Windows updater handoff does not proceed until the PowerShell helper reports ready', async t => {

@@ -113,8 +113,10 @@ test('home download destination sits immediately below the menu frame', () => {
     const visible = Math.min(ui.state.options.length, Math.max(4, frame.height - 19));
     const frameBottom = 11 + visible + 1;
     const saveRow = frameBottom + 1;
+    const cookieRow = saveRow + 1;
     const lineText = y => frame.lines[y].map(part => stripVTControlCharacters(part.text)).join(' ');
     assert.ok(lineText(saveRow).includes('Save to: D:\\Downloads'));
+    assert.ok(lineText(cookieRow).includes('Cookies: cookies.txt'));
     assert.ok(lineText(frameBottom).includes('╰'), 'the row above the path is the menu bottom border');
     const menuX = Math.floor((frame.width - Math.min(48, frame.width - 12)) / 2);
     const savePart = frame.lines[saveRow].find(part => stripVTControlCharacters(part.text).includes('Save to:'));
@@ -212,6 +214,51 @@ test('download progress uses a moving cyan-blue-violet gradient', () => {
   assert.ok(first.includes('38;2;139;92;246'), 'gradient reaches violet');
   assert.notEqual(first, second, 'gradient colors advance while the job is active');
   assert.ok(second.includes('80.0%'), 'real download percentage remains visible');
+});
+
+test('batch progress focuses one link and switches to the next active link after completion', () => {
+  const { ui } = fixture();
+  ui.state = { type: 'operation', title: 'DOWNLOAD / 2 LINKS' };
+  ui.beginBatch(['https://youtu.be/first', 'https://youtu.be/second']);
+  ui.startBatchItem(0);
+  ui.startBatchItem(1);
+  const first = ui.progressBatch(0, 'first.mp4');
+  first.start(100, 60, { downloaded: '60 MB', total: '100 MB', speed: '8 MB/s' });
+  const second = ui.progressBatch(1, 'second.mp4');
+  second.start(100, 25, { downloaded: '25 MB', total: '100 MB', speed: '4 MB/s' });
+  ui.logBatch(0, 'First link status');
+  ui.logBatch(1, 'Second link status');
+
+  const visibleFirst = ui.buildFrame(90, 32).lines.flatMap(parts => parts.map(part => stripVTControlCharacters(part.text))).join(' ');
+  assert.match(visibleFirst, /LINK 1\/2/);
+  assert.match(visibleFirst, /first\.mp4/);
+  assert.match(visibleFirst, /First link status/);
+  assert.doesNotMatch(visibleFirst, /second\.mp4|Second link status/);
+  assert.match(visibleFirst, /60\.0%/);
+
+  ui.finishBatchItem(0, { success: true });
+  const visibleSecond = ui.buildFrame(90, 32).lines.flatMap(parts => parts.map(part => stripVTControlCharacters(part.text))).join(' ');
+  assert.match(visibleSecond, /LINK 2\/2/);
+  assert.match(visibleSecond, /second\.mp4/);
+  assert.match(visibleSecond, /Second link status/);
+  assert.match(visibleSecond, /25\.0%/);
+  ui.finishBatchItem(1, { success: true });
+  ui.endBatch();
+});
+
+test('batch UI distinguishes completed transfers from the cover-embedding stage', () => {
+  const { ui } = fixture();
+  ui.state = { type: 'operation', title: 'DOWNLOAD / 2 LINKS' };
+  ui.beginBatch(['https://youtu.be/first', 'https://youtu.be/second']);
+  ui.startBatchItem(0);
+  ui.markBatchItemFinalizing(0);
+  const frame = ui.buildFrame(90, 32).lines.flatMap(parts => parts.map(part => stripVTControlCharacters(part.text))).join(' ');
+  assert.match(frame, /1 downloaded/);
+  assert.match(frame, /ดาวน์โหลดครบแล้ว/);
+  ui.updateBatchItem(0, 'ฝังปก 1/2');
+  const postprocessFrame = ui.buildFrame(90, 32).lines.flatMap(parts => parts.map(part => stripVTControlCharacters(part.text))).join(' ');
+  assert.match(postprocessFrame, /ฝังปก 1\/2/);
+  ui.endBatch();
 });
 
 test('unknown file sizes show a moving gradient pulse without an invented percentage', () => {

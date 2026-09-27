@@ -1,7 +1,6 @@
 document.addEventListener('DOMContentLoaded', async () => {
   const input = document.getElementById('urlInput');
   const sendButton = document.getElementById('sendBtn');
-  const scanButton = document.getElementById('scanBtn');
   const linkCount = document.getElementById('linkCount');
   const status = document.getElementById('status');
   const statusText = document.getElementById('statusText');
@@ -9,6 +8,8 @@ document.addEventListener('DOMContentLoaded', async () => {
   const pageHost = document.getElementById('page-host');
   const sessionControl = document.getElementById('facebookSessionControl');
   const includeFacebookCookies = document.getElementById('includeFacebookCookies');
+  const youtubeSessionControl = document.getElementById('youtubeSessionControl');
+  const includeYouTubeCookies = document.getElementById('includeYouTubeCookies');
   const captureView = document.getElementById('captureView');
   const settingsView = document.getElementById('settingsView');
   const settingsToggle = document.getElementById('settingsToggle');
@@ -21,10 +22,15 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let activeTab = null;
   let configuredExePath = '';
-  let cookiePermissionGranted = false;
+  let facebookCookiePermissionGranted = false;
+  let youtubeCookiePermissionGranted = false;
   const facebookPermission = {
     permissions: ['cookies'],
     origins: ['https://facebook.com/*', 'https://*.facebook.com/*', 'http://127.0.0.1/*'],
+  };
+  const youtubePermission = {
+    permissions: ['cookies'],
+    origins: ['https://youtube.com/*', 'https://*.youtube.com/*', 'http://127.0.0.1/*'],
   };
 
   function normalizeZeluxExePath(value) {
@@ -35,7 +41,12 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   function extractUrls(value) {
-    const matches = String(value || '').match(/https?:\/\/[^\s<>"']+/gi) || [];
+    const sourceText = String(value || '')
+      .replace(/https?\\:\/\//gi, url => url.replace('\\:', ':'))
+      .replace(/&#(?:x0*d|0*13);/gi, '\n')
+      .replace(/\\(?=\s*(?:\r?\n|$))/g, '')
+      .replace(/\*\*/g, '');
+    const matches = sourceText.match(/https?:\/\/[^\s<>"']+/gi) || [];
     return [...new Set(matches.map(url => url.replace(/[),;]+$/g, '')).filter(isHttpUrl))];
   }
 
@@ -51,6 +62,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (_) { return false; }
   }
 
+  function isYouTubeHost(value) {
+    try {
+      const host = new URL(value).hostname.toLowerCase();
+      return host === 'youtube.com' || host.endsWith('.youtube.com');
+    } catch (_) { return false; }
+  }
+
+  function isYouTubeUrl(value) {
+    try {
+      const host = new URL(value).hostname.toLowerCase();
+      return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be';
+    } catch (_) { return false; }
+  }
+
   function updateSessionOption() {
     const urls = extractUrls(input.value);
     const onFacebook = isFacebookUrl(activeTab?.url || '');
@@ -58,8 +83,16 @@ document.addEventListener('DOMContentLoaded', async () => {
     sessionControl.hidden = !(onFacebook && onlyFacebookLinks);
     if (sessionControl.hidden && includeFacebookCookies.checked) {
       includeFacebookCookies.checked = false;
-      cookiePermissionGranted = false;
+      facebookCookiePermissionGranted = false;
       chrome.permissions.remove(facebookPermission).catch(() => {});
+    }
+    const onYouTube = isYouTubeHost(activeTab?.url || '');
+    const onlyYouTubeLinks = urls.length > 0 && urls.every(isYouTubeUrl);
+    youtubeSessionControl.hidden = !(onYouTube && onlyYouTubeLinks);
+    if (youtubeSessionControl.hidden && includeYouTubeCookies.checked) {
+      includeYouTubeCookies.checked = false;
+      youtubeCookiePermissionGranted = false;
+      chrome.permissions.remove(youtubePermission).catch(() => {});
     }
   }
 
@@ -71,7 +104,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function renderConfiguration() {
     setupNotice.hidden = Boolean(configuredExePath);
-    scanButton.disabled = !configuredExePath || !Number.isInteger(activeTab?.id);
     if (configuredExePath) {
       savedPath.hidden = false;
       savedPath.innerHTML = '';
@@ -130,16 +162,13 @@ document.addEventListener('DOMContentLoaded', async () => {
       pageTitle.textContent = activeTab.title || new URL(activeTab.url).hostname;
       pageHost.textContent = new URL(activeTab.url).hostname;
     } else {
-      pageTitle.textContent = 'This page cannot be scanned';
-      pageHost.textContent = 'Open a website to capture links';
-      scanButton.disabled = true;
+      pageTitle.textContent = 'No web page selected';
+      pageHost.textContent = 'Paste links below to continue';
     }
   } catch (_) {
     pageTitle.textContent = 'Browser tab unavailable';
     pageHost.textContent = 'Paste links below to continue';
-    scanButton.disabled = true;
   }
-  scanButton.disabled = !configuredExePath || !Number.isInteger(activeTab?.id);
   renderCount();
   updateSessionOption();
 
@@ -173,33 +202,56 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   if (new URLSearchParams(location.search).get('settings') === '1') showSettings(true);
 
-  includeFacebookCookies.addEventListener('change', async () => {
-    if (!includeFacebookCookies.checked) {
-      cookiePermissionGranted = false;
-      chrome.permissions.remove(facebookPermission).catch(() => {});
-      setStatus('Temporary Facebook session is off. No cookies will be sent.', 'idle');
+  async function requestSessionPermission(provider, checkbox) {
+    const isYouTube = provider === 'youtube';
+    const permission = isYouTube ? youtubePermission : facebookPermission;
+    const validTab = isYouTube ? isYouTubeHost(activeTab?.url || '') : isFacebookUrl(activeTab?.url || '');
+    const validLinks = extractUrls(input.value).every(isYouTube ? isYouTubeUrl : isFacebookUrl);
+    const providerLabel = isYouTube ? 'YouTube' : 'Facebook';
+    if (!checkbox.checked) {
+      if (isYouTube) youtubeCookiePermissionGranted = false;
+      else facebookCookiePermissionGranted = false;
+      chrome.permissions.remove(permission).catch(() => {});
+      setStatus(`Temporary ${providerLabel} session is off. No cookies will be sent.`, 'idle');
       return;
     }
-    if (!isFacebookUrl(activeTab?.url || '') || !extractUrls(input.value).every(isFacebookUrl)) {
+    if (isYouTube && includeFacebookCookies.checked) {
       includeFacebookCookies.checked = false;
-      setStatus('Open Facebook and use only Facebook links for temporary session mode.', 'error');
+      facebookCookiePermissionGranted = false;
+      chrome.permissions.remove(facebookPermission).catch(() => {});
+    } else if (!isYouTube && includeYouTubeCookies.checked) {
+      includeYouTubeCookies.checked = false;
+      youtubeCookiePermissionGranted = false;
+      chrome.permissions.remove(youtubePermission).catch(() => {});
+    }
+    if (!validTab || !validLinks) {
+      checkbox.checked = false;
+      setStatus(`Open ${providerLabel} and use only ${providerLabel} links for temporary session mode.`, 'error');
       return;
     }
-    includeFacebookCookies.disabled = true;
-    setStatus('Approve Brave’s one-time Facebook and local-app permission prompt…', 'busy');
+    checkbox.disabled = true;
+    setStatus(isYouTube
+      ? 'Approve one-time YouTube-cookie and local-app access…'
+      : 'Approve Brave’s one-time Facebook and local-app permission prompt…', 'busy');
     try {
-      cookiePermissionGranted = await chrome.permissions.request(facebookPermission);
-      if (!cookiePermissionGranted) throw new Error('Permission was not granted. No Facebook cookies were read.');
-      setStatus('Permission approved. Click Send to open ZELUX-DL and continue.', 'success');
+      const granted = await chrome.permissions.request(permission);
+      if (!granted) throw new Error(`Permission was not granted. No ${providerLabel} cookies were read.`);
+      if (isYouTube) youtubeCookiePermissionGranted = true;
+      else facebookCookiePermissionGranted = true;
+      setStatus(`Permission approved. Only ${providerLabel} cookies will be sent locally for this job. Click Send to continue.`, 'success');
     } catch (error) {
-      cookiePermissionGranted = false;
-      includeFacebookCookies.checked = false;
-      chrome.permissions.remove(facebookPermission).catch(() => {});
-      setStatus(error.message || 'Permission was not granted. No Facebook cookies were read.', 'error');
+      if (isYouTube) youtubeCookiePermissionGranted = false;
+      else facebookCookiePermissionGranted = false;
+      checkbox.checked = false;
+      chrome.permissions.remove(permission).catch(() => {});
+      setStatus(error.message || `Permission was not granted. No ${providerLabel} cookies were read.`, 'error');
     } finally {
-      includeFacebookCookies.disabled = false;
+      checkbox.disabled = false;
     }
-  });
+  }
+
+  includeFacebookCookies.addEventListener('change', () => requestSessionPermission('facebook', includeFacebookCookies));
+  includeYouTubeCookies.addEventListener('change', () => requestSessionPermission('youtube', includeYouTubeCookies));
 
   input.addEventListener('input', () => {
     renderCount();
@@ -207,29 +259,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
   input.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !sendButton.disabled) sendLinks();
-  });
-
-  scanButton.addEventListener('click', async () => {
-    if (!configuredExePath) {
-      setStatus('ต้องระบุพาธ ZELUX-DL.exe ในการตั้งค่าก่อนใช้งาน', 'error');
-      showSettings(true);
-      return;
-    }
-    if (!Number.isInteger(activeTab?.id)) return;
-    scanButton.disabled = true;
-    setStatus('Scanning links visible on this page…', 'busy');
-    try {
-      const result = await chrome.runtime.sendMessage({ type: 'scan-page', tabId: activeTab.id });
-      if (!result?.ok) throw new Error(result?.error || 'The page could not be scanned.');
-      const combined = extractUrls(`${input.value}\n${(result.urls || []).join('\n')}`);
-      input.value = combined.join('\n');
-      renderCount();
-      setStatus(result.urls?.length ? `Added ${result.urls.length} page link${result.urls.length === 1 ? '' : 's'}. Review the list before sending.` : 'No additional links found. The current page URL is still in the list.', 'success');
-    } catch (error) {
-      setStatus(error.message || 'Could not scan this page. You can paste links manually.', 'error');
-    } finally {
-      scanButton.disabled = !configuredExePath || !Number.isInteger(activeTab?.id);
-    }
   });
 
   async function sendLinks() {
@@ -244,20 +273,26 @@ document.addEventListener('DOMContentLoaded', async () => {
       return;
     }
     sendButton.disabled = true;
-    scanButton.disabled = true;
-    const useCookies = includeFacebookCookies.checked;
+    const cookieProvider = includeYouTubeCookies.checked ? 'youtube'
+      : includeFacebookCookies.checked ? 'facebook' : '';
+    const useCookies = Boolean(cookieProvider);
+    const providerLabel = cookieProvider === 'youtube' ? 'YouTube' : 'Facebook';
     setStatus(useCookies
       ? 'Opening ZELUX-DL directly. The opted-in session will be sent only after its identity is verified…'
       : `Handing ${urls.length} link${urls.length === 1 ? '' : 's'} to Windows…`, 'busy');
     try {
       let resultPromise;
       if (useCookies) {
-        if (!urls.every(isFacebookUrl) || !isFacebookUrl(activeTab?.url || '')) {
-          throw new Error('Open Facebook and use only Facebook links for temporary session mode.');
+        const isYouTube = cookieProvider === 'youtube';
+        const validTab = isYouTube ? isYouTubeHost(activeTab?.url || '') : isFacebookUrl(activeTab?.url || '');
+        const validUrls = urls.every(isYouTube ? isYouTubeUrl : isFacebookUrl);
+        if (!validUrls || !validTab) {
+          throw new Error(`Open ${providerLabel} and use only ${providerLabel} links for temporary session mode.`);
         }
-        if (!Number.isInteger(activeTab?.id)) throw new Error('No active Facebook tab. Reopen the extension on Facebook and try again.');
+        if (!Number.isInteger(activeTab?.id)) throw new Error(`No active ${providerLabel} tab. Reopen the extension on ${providerLabel} and try again.`);
         if (urls.length > 200) throw new Error('A batch can contain up to 200 URLs.');
-        if (!cookiePermissionGranted) throw new Error('First enable the Facebook session option and approve Brave’s permission prompt. No cookies were read.');
+        const permissionGranted = isYouTube ? youtubeCookiePermissionGranted : facebookCookiePermissionGranted;
+        if (!permissionGranted) throw new Error(`First enable the ${providerLabel} session option and approve the permission prompt. No cookies were read.`);
         const cookieToken = createCookieToken();
         const protocolUrl = buildProtocolUrl(urls, cookieToken, configuredExePath);
         if (protocolUrl.length > 30000) throw new Error('The URL list is too long to open directly. Send a smaller batch.');
@@ -265,7 +300,8 @@ document.addEventListener('DOMContentLoaded', async () => {
           type: 'launch-download',
           urls,
           tabId: activeTab?.id,
-          includeFacebookCookies: true,
+          includeFacebookCookies: !isYouTube,
+          includeYouTubeCookies: isYouTube,
           cookieToken,
           protocolAlreadyLaunched: true,
         });
@@ -276,12 +312,13 @@ document.addEventListener('DOMContentLoaded', async () => {
           urls,
           tabId: activeTab?.id,
           includeFacebookCookies: false,
+          includeYouTubeCookies: false,
         });
       }
       const result = await resultPromise;
       if (!result?.ok) throw new Error(result?.error || 'Could not hand links to ZELUX-DL.');
       setStatus(result.usedTemporaryCookies
-        ? `Sent a temporary Facebook session locally for ${result.count} link${result.count === 1 ? '' : 's'}. ZELUX-DL removes its temporary file after the job.`
+        ? `Sent a temporary ${providerLabel} session locally for ${result.count} link${result.count === 1 ? '' : 's'}. ZELUX-DL removes its temporary file after the job.`
         : `Requested Windows to open ${result.count} link${result.count === 1 ? '' : 's'} with ZELUX-DL. If nothing opens, check protocol registration.`, 'success');
     } catch (error) {
       const detail = error.message || 'Could not send the link to ZELUX-DL.';
@@ -290,10 +327,11 @@ document.addEventListener('DOMContentLoaded', async () => {
         : `${detail} Check that ZELUX-DL is installed and its zelux:// handler is registered.`, 'error');
     } finally {
       if (useCookies) {
-        cookiePermissionGranted = false;
+        facebookCookiePermissionGranted = false;
+        youtubeCookiePermissionGranted = false;
         includeFacebookCookies.checked = false;
+        includeYouTubeCookies.checked = false;
       }
-      scanButton.disabled = !configuredExePath || !Number.isInteger(activeTab?.id);
       renderCount();
     }
   }

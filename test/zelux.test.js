@@ -11,13 +11,17 @@ const { EventEmitter } = require('node:events');
 const {
   CancelController,
   buildMediaCookieArgs,
+  chooseBatchMediaOptions,
+  buildMediaPostprocessArgs,
   buildSmartLibrary,
   cleanupDownloadArtifacts,
+  cleanupMediaInfoJson,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
   compareVersions,
   cleanupStaleTemporaryFacebookCookies,
+  cleanupStaleTemporaryYouTubeCookies,
   decodeZeluxProtocolRequest,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
@@ -25,6 +29,10 @@ const {
   downloadRange,
   extractUrlsFromText,
   formatFacebookCookies,
+  formatYouTubeCookies,
+  ensureMediaCookiesFile,
+  hasNetscapeCookieEntries,
+  receiveTemporaryMediaCookies,
   findChecksum,
   getMediaProviderName,
   formatGitHubProgressLines,
@@ -32,6 +40,8 @@ const {
   isValidUrl,
   isAllowedCookieRelayOrigin,
   isMediaExtractorUrl,
+  isLikelyMediaPlaylist,
+  listInfoJsonFiles,
   openFolder,
   isCancelInput,
   mergeRangeParts,
@@ -44,8 +54,11 @@ const {
   removeTreeWithRetries,
   receiveTemporaryFacebookCookies,
   removeTemporaryFacebookCookies,
+  removeTemporaryYouTubeCookies,
   resolveDownloadProvider,
   probeFileInfo,
+  postprocessMediaInfoJson,
+  parseYtDlpAfterMovePath,
   resolveZipEntryPath,
   runWithConcurrency,
   safeFilename,
@@ -55,6 +68,8 @@ const {
   verifyDownloadIntegrity,
   waitForUpdateHelperReady,
   writeTemporaryFacebookCookies,
+  writeTemporaryYouTubeCookies,
+  withTemporaryMediaCookies,
 } = require('../zelux');
 
 test('media extraction covers known providers, short links and generic video pages', () => {
@@ -82,11 +97,60 @@ test('media extraction covers known providers, short links and generic video pag
   assert.equal(shouldUseMediaExtractor('https://example.com/page', 'application/xhtml+xml'), true);
 });
 
+test('media batches ask once for format and quality, then share the selection across links', async () => {
+  const prompts = [];
+  const urls = Array.from({ length: 10 }, (_, index) => `https://www.youtube.com/watch?v=video${index}`);
+  const selected = await chooseBatchMediaOptions(urls, async (options, title) => {
+    prompts.push({ options, title });
+    return prompts.length === 1 ? 'mp4' : '720';
+  });
+  assert.deepEqual(selected, { formatType: 'mp4', selectedQuality: '720' });
+  assert.equal(prompts.length, 2);
+  assert.match(prompts[0].title, /10/);
+  assert.match(prompts[1].title, /ทั้งชุด/);
+});
+
+test('audio-only batches ask for MP3 once and ordinary file batches skip media prompts', async () => {
+  let calls = 0;
+  const audio = await chooseBatchMediaOptions([
+    'https://www.youtube.com/watch?v=one',
+    'https://youtu.be/two',
+  ], async () => { calls += 1; return 'mp3'; });
+  assert.deepEqual(audio, { formatType: 'mp3', selectedQuality: 'best' });
+  assert.equal(calls, 1);
+  const direct = await chooseBatchMediaOptions(['https://example.com/a.zip', 'https://example.com/b.zip'], async () => {
+    throw new Error('Direct file batch must not ask media questions');
+  });
+  assert.equal(direct, null);
+});
+
+test('media playlists are detected without classifying ordinary watch URLs as playlists', () => {
+  assert.equal(isLikelyMediaPlaylist('https://www.youtube.com/watch?v=abc&list=PL123'), true);
+  assert.equal(isLikelyMediaPlaylist('https://www.youtube.com/playlist?list=PL123'), true);
+  assert.equal(isLikelyMediaPlaylist('https://www.youtube.com/watch?v=abc'), false);
+});
+
 test('media cookie args prefer an explicitly selected browser and otherwise use cookies.txt', () => {
   assert.deepEqual(buildMediaCookieArgs('edge', 'cookies.txt'), ['--cookies-from-browser', 'edge']);
   assert.deepEqual(buildMediaCookieArgs('none', 'cookies.txt'), ['--cookies', 'cookies.txt']);
   assert.deepEqual(buildMediaCookieArgs('invalid-browser', 'cookies.txt'), ['--cookies', 'cookies.txt']);
   assert.deepEqual(buildMediaCookieArgs('none', ''), []);
+});
+
+test('startup creates a private-use Netscape cookie template and only activates it when populated', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-cookie-template-'));
+  const cookiePath = path.join(directory, 'cookies.txt');
+  const created = ensureMediaCookiesFile(cookiePath);
+  assert.equal(created.created, true);
+  assert.equal(created.hasCookies, false);
+  assert.match(fs.readFileSync(cookiePath, 'utf8'), /^# Netscape HTTP Cookie File/m);
+  assert.equal(hasNetscapeCookieEntries(cookiePath), false);
+  fs.writeFileSync(cookiePath, '# Netscape HTTP Cookie File\nyoutube.com\tTRUE\t/\tTRUE\t0\tSID\tprivate-value\n');
+  assert.equal(hasNetscapeCookieEntries(cookiePath), true);
+  const existing = ensureMediaCookiesFile(cookiePath);
+  assert.equal(existing.created, false);
+  assert.equal(fs.readFileSync(cookiePath, 'utf8').includes('private-value'), true);
+  fs.rmSync(directory, { recursive: true, force: true });
 });
 
 test('cookie relay accepts Chromium extension origins but rejects normal web origins', () => {
@@ -121,7 +185,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.7.5');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.0');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -202,6 +266,105 @@ test('temporary Facebook cookie files are constrained, private, and removed', ()
   } finally {
     fs.rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test('temporary YouTube cookies are scoped to youtube.com and cleaned after the job', () => {
+  const cookies = [
+    { domain: '.youtube.com', name: 'SID', value: 'youtube-secret', path: '/', secure: true, httpOnly: true },
+    { domain: '.google.com', name: 'SID', value: 'google-secret', path: '/', secure: true, httpOnly: true },
+    { domain: 'youtube.com.attacker.example', name: 'bad', value: 'ignored', path: '/' },
+    { domain: '.youtube.com', name: 'bad\tname', value: 'ignored', path: '/' },
+  ];
+  const jar = formatYouTubeCookies(cookies);
+  assert.match(jar, /#HttpOnly_\.youtube\.com\tTRUE\t\/\tTRUE\t0\tSID\tyoutube-secret/);
+  assert.doesNotMatch(jar, /google-secret|attacker|bad/);
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-youtube-cookie-test-'));
+  try {
+    const filePath = writeTemporaryYouTubeCookies(cookies, directory);
+    assert.match(path.basename(filePath), /^zelux-youtube-[a-f0-9]{32}\.txt$/);
+    assert.match(fs.readFileSync(filePath, 'utf8'), /youtube-secret/);
+    assert.equal(removeTemporaryYouTubeCookies(filePath), true);
+    assert.equal(fs.existsSync(filePath), false);
+    const stalePath = path.join(directory, `zelux-youtube-${'b'.repeat(32)}.txt`);
+    fs.writeFileSync(stalePath, 'stale');
+    fs.utimesSync(stalePath, new Date(0), new Date(0));
+    assert.equal(cleanupStaleTemporaryYouTubeCookies(directory, Date.now(), 1000), 1);
+    assert.equal(fs.existsSync(stalePath), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('temporary media cookie file is removed even when the download action fails', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-temp-cookie-cleanup-'));
+  try {
+    const filePath = writeTemporaryYouTubeCookies([
+      { domain: '.youtube.com', name: 'SID', value: 'temporary', path: '/', secure: true, httpOnly: true },
+    ], directory);
+    await assert.rejects(withTemporaryMediaCookies(filePath, async () => {
+      assert.equal(fs.existsSync(filePath), true);
+      throw new Error('simulated cancel/failure');
+    }), /simulated cancel\/failure/);
+    assert.equal(fs.existsSync(filePath), false);
+  } finally {
+    fs.rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('temporary YouTube cookie bridge accepts only YouTube cookies', async () => {
+  const token = crypto.randomBytes(32).toString('hex');
+  let port = 0;
+  const received = receiveTemporaryMediaCookies(token, 'youtube', {
+    port: 0,
+    timeoutMs: 3000,
+    onListening: value => { port = value; },
+  });
+  while (!port) await new Promise(resolve => setTimeout(resolve, 1));
+
+  const post = payload => new Promise((resolve, reject) => {
+    const request = http.request({
+      host: '127.0.0.1', port, path: '/cookies', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Zelux-Token': token },
+    }, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    request.on('error', reject);
+    request.end(JSON.stringify(payload));
+  });
+
+  assert.equal(await post({ provider: 'youtube', cookies: [
+    { domain: '.youtube.com', name: 'SID', value: 'only-youtube', path: '/', secure: true, httpOnly: true },
+    { domain: '.google.com', name: 'SID', value: 'must-not-enter', path: '/' },
+  ] }), 200);
+  const jar = await received;
+  assert.match(jar, /only-youtube/);
+  assert.doesNotMatch(jar, /must-not-enter|facebook/);
+});
+
+test('temporary YouTube cookie bridge rejects a Facebook payload', async () => {
+  const token = crypto.randomBytes(32).toString('hex');
+  let port = 0;
+  const received = receiveTemporaryMediaCookies(token, 'youtube', {
+    port: 0,
+    timeoutMs: 3000,
+    onListening: value => { port = value; },
+  });
+  const rejection = assert.rejects(received, /provider did not match/i);
+  while (!port) await new Promise(resolve => setTimeout(resolve, 1));
+  const status = await new Promise((resolve, reject) => {
+    const request = http.request({
+      host: '127.0.0.1', port, path: '/cookies', method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Zelux-Token': token },
+    }, response => {
+      response.resume();
+      response.on('end', () => resolve(response.statusCode));
+    });
+    request.on('error', reject);
+    request.end(JSON.stringify({ provider: 'facebook', cookies: [{ domain: '.facebook.com', name: 'SID', value: 'wrong-provider' }] }));
+  });
+  assert.equal(status, 400);
+  await rejection;
 });
 
 test('ZELUX protocol keeps the one-time cookie token separate from download URLs', () => {
@@ -326,6 +489,24 @@ test('extractUrlsFromText finds valid links and removes duplicates', () => {
     'https://example.com/one.zip',
     'https://example.com/two.iso',
   ]);
+});
+
+test('extractUrlsFromText cleans the supplied YouTube batch copied with Markdown escapes', () => {
+  const pasted = String.raw`**https\://youtube.com/watch?v=xln2zsmvxPg&si=MaD2te-IuxecBRTK&#xD;**\
+**https\://youtu.be/zN1YY7THiPU?si=nii8tmOdPYD73RAZ&#xD;**\
+**https\://youtu.be/Ng56Dxajk5I?si=dhwTcYd3la7sq_Rq&#xD;**\
+**https\://youtu.be/elX2LSaj9O4?si=9Ec0chrLHYDCtRBb&#xD;**\
+**https\://youtu.be/9AQnYYHHuMg?si=ggt6iPJ4zzglAJ33&#xD;**\
+**https\://youtu.be/Psdh1XVfRAw?si=rY5H-EL0slOTBD2l&#xD;**\
+**https\://youtu.be/75tcmYwnNR4?si=UzA69bE6uc3wg6Oa&#xD;**\
+**https\://youtu.be/Ry7mNsFdP0M?si=zBfB--2uKiXjBzu0&#xD;**\
+**https\://youtu.be/h4m3krflE9I?si=WgfgL9L5LYL1Rmok&#xD;**\
+**https\://youtu.be/IQjzVuO2KM8?si=D-Ie4zYLQNoq93xB**`;
+  const urls = extractUrlsFromText(pasted);
+  assert.equal(urls.length, 10);
+  assert.equal(urls[0], 'https://youtube.com/watch?v=xln2zsmvxPg&si=MaD2te-IuxecBRTK');
+  assert.equal(urls[9], 'https://youtu.be/IQjzVuO2KM8?si=D-Ie4zYLQNoq93xB');
+  assert.ok(urls.every(url => isValidUrl(url) && !/[\\*]|&#xD;/i.test(url)));
 });
 
 test('resolveDownloadProvider converts public cloud share links', async () => {
@@ -514,7 +695,7 @@ test('parseYtDlpProgressLine handles playlist items and current yt-dlp progress'
   assert.equal(parseYtDlpProgressLine('[youtube] Downloading webpage'), null);
 });
 
-test('extension scans page links and sends reviewed batches through the protocol', async () => {
+test('extension sends pasted batches through the protocol without a page scanner', async () => {
   const listeners = {};
   let execution = null;
   const chrome = {
@@ -560,17 +741,6 @@ test('extension scans page links and sends reviewed batches through the protocol
     'https://github.com/owner/project/releases/download/v1.0/app.zip?raw=1#asset',
     'https://example.com/second.zip?download=1',
   ];
-  const scanned = await new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new Error('extension scan response timed out')), 1000);
-    listeners.message({ type: 'scan-page', tabId: 42 }, {}, value => {
-      clearTimeout(timer);
-      resolve(value);
-    });
-  });
-  assert.equal(scanned.ok, true);
-  assert.deepEqual(Array.from(scanned.urls), ['https://example.com/file.zip', 'https://example.com/video.mp4']);
-  assert.equal(execution.target.tabId, 42);
-
   const response = await new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('extension response timed out')), 1000);
     const keepAlive = listeners.message(
@@ -590,8 +760,10 @@ test('extension scans page links and sends reviewed batches through the protocol
   const protocol = new URL(execution.args[0]);
   assert.equal(protocol.searchParams.get('urls'), JSON.stringify(urls));
   assert.equal(protocol.searchParams.get('exePath'), 'D:\\Zelux-DL\\ZELUX-DL.exe');
+  const markup = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'popup.html'), 'utf8');
   const popupSource = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'popup.js'), 'utf8');
-  assert.match(popupSource, /type: 'scan-page'/);
+  assert.doesNotMatch(markup, /scanBtn|scan this page/i);
+  assert.doesNotMatch(popupSource, /scan-page|scanButton/);
   assert.match(popupSource, /type: 'launch-download'/);
   assert.match(popupSource, /message\.urls|urls,/);
   assert.match(popupSource, /launchProtocolFromPopup\(protocolUrl\)/);
@@ -700,6 +872,68 @@ test('extension reads only Facebook cookies after explicit opt-in and sends them
   assert.match(blocked.error, /identity verification failed/i);
   assert.equal(relayCalls.length, 1);
   assert.equal(posted, null);
+});
+
+test('extension reads only YouTube cookies after explicit opt-in and sends them only to loopback', async () => {
+  const listeners = {};
+  let cookieQuery = null;
+  let posted = null;
+  let protocolUrl = '';
+  const expectedToken = '1b'.repeat(32);
+  const removedPermissions = [];
+  const chrome = {
+    runtime: {
+      onInstalled: { addListener: () => {} },
+      onMessage: { addListener: listener => { listeners.message = listener; } },
+    },
+    contextMenus: { create: () => {}, removeAll: callback => callback(), onClicked: { addListener: () => {} } },
+    storage: { local: { get: async () => ({ zeluxExePath: 'D:\\Zelux-DL\\ZELUX-DL.exe' }) } },
+    action: { setBadgeText: () => {}, setBadgeBackgroundColor: () => {}, setTitle: () => {} },
+    tabs: { get: async tabId => ({ id: tabId, url: 'https://www.youtube.com/watch?v=video' }) },
+    cookies: { getAll: async query => {
+      cookieQuery = query;
+      return [
+        { domain: '.youtube.com', name: 'SID', value: 'youtube-secret', path: '/', secure: true, httpOnly: true },
+        { domain: '.google.com', name: 'SID', value: 'google-must-not-send', path: '/', secure: true, httpOnly: true },
+      ];
+    } },
+    permissions: { remove: async value => { removedPermissions.push(value); return true; } },
+    scripting: { executeScript: async options => { protocolUrl = options.args?.[0] || ''; } },
+  };
+  const source = fs.readFileSync(path.join(__dirname, '..', 'zelux-extension', 'background.js'), 'utf8');
+  vm.runInNewContext(source, {
+    chrome, console, encodeURIComponent, URL, URLSearchParams, Uint8Array, AbortController, setTimeout, clearTimeout,
+    crypto: { getRandomValues: bytes => { bytes.set(Buffer.from(expectedToken, 'hex')); return bytes; }, subtle: crypto.webcrypto.subtle },
+    fetch: async (url, options = {}) => {
+      if (url.includes('/challenge?')) {
+        const nonce = new URL(url).searchParams.get('nonce');
+        const proof = crypto.createHmac('sha256', Buffer.from(expectedToken, 'hex')).update(nonce, 'hex').digest('hex');
+        return { ok: true, status: 200, json: async () => ({ proof }) };
+      }
+      posted = { url, options };
+      return { ok: true, status: 200 };
+    },
+  });
+
+  const result = await new Promise(resolve => listeners.message({
+    type: 'launch-download',
+    urls: ['https://youtu.be/video'],
+    tabId: 18,
+    includeYouTubeCookies: true,
+    cookieToken: expectedToken,
+    protocolAlreadyLaunched: true,
+  }, {}, resolve));
+  assert.equal(result.ok, true, result.error);
+  assert.equal(cookieQuery.url, 'https://www.youtube.com/');
+  assert.equal(posted.url, 'http://127.0.0.1:47821/cookies');
+  assert.match(posted.options.body, /"provider":"youtube"/);
+  assert.match(posted.options.body, /youtube-secret/);
+  assert.doesNotMatch(posted.options.body, /google-must-not-send/);
+  assert.equal(posted.options.headers['X-Zelux-Token'], expectedToken);
+  assert.equal(protocolUrl, '');
+  assert.equal(result.usedTemporaryCookies, true);
+  assert.equal(removedPermissions.length, 1);
+  assert.deepEqual(Array.from(removedPermissions[0].origins), ['https://youtube.com/*', 'https://*.youtube.com/*', 'http://127.0.0.1/*']);
 });
 
 test('extension blocks capture before reading cookies when the configured path is not a ZELUX-DL executable', async () => {
@@ -956,6 +1190,110 @@ test('openFolder reports when the file browser cannot start', async () => {
   const resultPromise = openFolder(() => child, 'win32', 'downloads');
   child.emit('error', new Error('launcher unavailable'));
   assert.deepEqual(await resultPromise, { directory: 'downloads', success: false, error: 'launcher unavailable' });
+});
+
+test('batch cover post-processing embeds metadata and artwork from local files without invoking yt-dlp', () => {
+  const mediaPath = 'D:\\Downloads\\Music\\track.mp3';
+  const thumbnailPath = `${mediaPath}.webp`;
+  const tempPath = 'D:\\Downloads\\Music\\track.zelux-123.mp3';
+  const args = buildMediaPostprocessArgs({ title: 'Track', artist: 'Artist', upload_date: '20260927' }, mediaPath, thumbnailPath, tempPath);
+  assert.deepEqual(args.slice(0, 4), ['-y', '-i', mediaPath, '-i']);
+  assert.ok(args.includes(thumbnailPath));
+  assert.ok(args.includes('-map'));
+  assert.ok(args.includes('0:a:0'));
+  assert.ok(args.includes('1:v:0'));
+  assert.ok(args.includes('-disposition:v:0'));
+  assert.ok(args.includes('attached_pic'));
+  assert.ok(args.includes('title=Track'));
+  assert.ok(args.includes('artist=Artist'));
+  assert.ok(args.includes('date=2026-09-27'));
+  assert.equal(args.at(-1), tempPath);
+  assert.ok(!args.includes('--load-info-json'));
+});
+
+test('media post-processing updates the downloaded file using a local cover and never invokes yt-dlp', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-postprocess-runner-'));
+  const mediaPath = path.join(directory, 'clip.mp3');
+  const thumbnailPath = `${mediaPath}.webp`;
+  const infoPath = path.join(directory, 'clip.info.json');
+  fs.writeFileSync(mediaPath, 'completed');
+  fs.writeFileSync(thumbnailPath, 'cover');
+  fs.writeFileSync(infoPath, JSON.stringify({ title: 'Clip', thumbnails: [{ filepath: thumbnailPath }] }));
+  let invocation;
+  const child = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const resultPromise = postprocessMediaInfoJson('yt-dlp.exe', infoPath, 'ffmpeg.exe', mediaPath, (...args) => {
+    invocation = args;
+    fs.writeFileSync(args[1].at(-1), 'embedded');
+    return child;
+  });
+  child.emit('close', 0);
+  assert.deepEqual(await resultPromise, { success: true });
+  assert.equal(invocation[0], 'ffmpeg.exe');
+  assert.ok(invocation[1].includes(mediaPath));
+  assert.ok(invocation[1].includes(thumbnailPath));
+  assert.equal(fs.readFileSync(mediaPath, 'utf8'), 'embedded');
+  assert.equal(fs.readdirSync(directory).some(name => name.includes('backup') || name.includes('.zelux-')), false);
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('yt-dlp after-move output preserves the actual final path and media ID', () => {
+  assert.deepEqual(
+    parseYtDlpAfterMovePath('__ZELUX_MEDIA_FILE__abc123|E:\\Downloads\\Music\\ชื่อเพลง (1).mp3'),
+    { id: 'abc123', filePath: 'E:\\Downloads\\Music\\ชื่อเพลง (1).mp3' },
+  );
+  assert.equal(parseYtDlpAfterMovePath('ordinary progress output'), null);
+  assert.equal(parseYtDlpAfterMovePath('__ZELUX_MEDIA_FILE__missing-path'), null);
+});
+
+test('media post-processing skips a missing completed file instead of downloading it again', async () => {
+  let spawned = false;
+  const result = await postprocessMediaInfoJson('yt-dlp.exe', 'clip.info.json', 'ffmpeg', 'missing-clip.mp4', () => {
+    spawned = true;
+    return new EventEmitter();
+  });
+  assert.equal(spawned, false);
+  assert.equal(result.success, false);
+  assert.match(result.error, /ไม่เริ่มดาวน์โหลดซ้ำ/);
+});
+
+test('media post-processing reports a missing local cover without starting a downloader', async () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-postprocess-warning-'));
+  const mediaPath = path.join(directory, 'clip.mp3');
+  fs.writeFileSync(mediaPath, 'completed');
+  const infoPath = path.join(directory, 'clip.info.json');
+  fs.writeFileSync(infoPath, JSON.stringify({ title: 'Clip' }));
+  let spawned = false;
+  const result = await postprocessMediaInfoJson('yt-dlp.exe', infoPath, 'ffmpeg', mediaPath, () => { spawned = true; });
+  assert.equal(spawned, false);
+  assert.equal(result.success, false);
+  assert.match(result.error, /ไม่พบไฟล์ภาพปก/);
+  assert.equal(fs.readFileSync(mediaPath, 'utf8'), 'completed');
+  fs.rmSync(directory, { recursive: true, force: true });
+});
+
+test('cleanupMediaInfoJson removes only sidecars listed inside the info JSON directory', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-cover-cleanup-'));
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-cover-outside-'));
+  const infoPath = path.join(root, 'clip.info.json');
+  const localCover = path.join(root, 'clip.jpg');
+  const staleCover = path.join(root, 'clip.png');
+  const ytDlpCover = path.join(root, 'clip.mp4.webp');
+  const externalCover = path.join(outside, 'keep.jpg');
+  fs.writeFileSync(localCover, 'cover');
+  fs.writeFileSync(staleCover, 'cover');
+  fs.writeFileSync(ytDlpCover, 'cover');
+  fs.writeFileSync(externalCover, 'keep');
+  fs.writeFileSync(infoPath, JSON.stringify({ thumbnails: [{ filepath: localCover }, { filepath: externalCover }] }));
+  assert.deepEqual(listInfoJsonFiles(root), [infoPath]);
+  cleanupMediaInfoJson(infoPath, path.join(root, 'clip.mp4'));
+  assert.equal(fs.existsSync(infoPath), false);
+  assert.equal(fs.existsSync(localCover), false);
+  assert.equal(fs.existsSync(staleCover), false);
+  assert.equal(fs.existsSync(ytDlpCover), false);
+  assert.equal(fs.existsSync(externalCover), true);
+  fs.rmSync(root, { recursive: true, force: true });
+  fs.rmSync(outside, { recursive: true, force: true });
 });
 
 test('safeFilename prevents traversal and invalid Windows names', () => {

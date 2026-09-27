@@ -26,49 +26,12 @@ chrome.contextMenus.onClicked.addListener((info, tab) => {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.type === 'download-progress') return false;
-  if (message?.type === 'scan-page') {
-    scanPageLinks(message.tabId)
-      .then((urls) => sendResponse({ ok: true, urls }))
-      .catch((error) => sendResponse({ ok: false, error: error.message }));
-    return true;
-  }
   if (message?.type !== 'launch-download') return false;
   launchDownload(message)
     .then((result) => sendResponse({ ok: true, ...result }))
     .catch((error) => sendResponse({ ok: false, error: error.message }));
   return true;
 });
-
-async function scanPageLinks(tabId) {
-  if (!Number.isInteger(tabId)) throw new Error('No active browser tab.');
-  const injected = await chrome.scripting.executeScript({
-    target: { tabId },
-    func: () => {
-      const candidates = [];
-      for (const anchor of document.querySelectorAll('a[href]')) {
-        const raw = anchor.href;
-        const label = (anchor.innerText || anchor.getAttribute('download') || anchor.title || '').trim();
-        candidates.push({ url: raw, label });
-      }
-      for (const media of document.querySelectorAll('video[src], audio[src], video source[src], audio source[src]')) {
-        candidates.push({ url: media.src, label: media.getAttribute('title') || media.getAttribute('aria-label') || media.tagName.toLowerCase() });
-      }
-      const found = [];
-      const seen = new Set();
-      for (const candidate of candidates) {
-        try {
-          const url = new URL(candidate.url, location.href);
-          if (!['http:', 'https:'].includes(url.protocol) || seen.has(url.href)) continue;
-          seen.add(url.href);
-          found.push(url.href);
-          if (found.length >= 200) break;
-        } catch (_) { /* Ignore malformed or non-web URLs. */ }
-      }
-      return found;
-    }
-  });
-  return injected?.[0]?.result || [];
-}
 
 function normalizeUrls(values) {
   const urls = [];
@@ -110,15 +73,32 @@ function isFacebookHost(rawUrl) {
   } catch (_) { return false; }
 }
 
+function isYouTubeHost(rawUrl) {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    return host === 'youtube.com' || host.endsWith('.youtube.com');
+  } catch (_) { return false; }
+}
+
+function isYouTubeUrl(rawUrl) {
+  try {
+    const host = new URL(rawUrl).hostname.toLowerCase();
+    return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be';
+  } catch (_) { return false; }
+}
+
 function createCookieToken() {
   const bytes = new Uint8Array(32);
   crypto.getRandomValues(bytes);
   return [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
 }
 
-function selectCookieFields(cookies) {
+function selectCookieFields(cookies, provider = 'facebook') {
+  const allowedDomain = provider === 'youtube'
+    ? domain => /^\.?([a-z0-9-]+\.)*youtube\.com$/i.test(domain)
+    : domain => domain === 'facebook.com' || domain.endsWith('.facebook.com');
   return cookies
-    .filter(cookie => cookie.domain === 'facebook.com' || String(cookie.domain || '').endsWith('.facebook.com'))
+    .filter(cookie => allowedDomain(String(cookie.domain || '').toLowerCase()))
     .map(cookie => ({
       domain: cookie.domain,
       name: cookie.name,
@@ -130,7 +110,7 @@ function selectCookieFields(cookies) {
     }));
 }
 
-async function sendCookiesToLocalApp(token, cookies) {
+async function sendCookiesToLocalApp(token, cookies, provider = 'facebook') {
   let lastError = 'ZELUX-DL did not accept the temporary session.';
   const startedAt = Date.now();
   const deadline = startedAt + 30000;
@@ -179,7 +159,7 @@ async function sendCookiesToLocalApp(token, cookies) {
         throw new Error('Another or outdated service answered on the local cookie port. ZELUX-DL identity verification failed; no cookies were sent.');
       }
 
-      reportDownloadProgress('ZELUX-DL identity verified. Sending the opted-in session locally…');
+      reportDownloadProgress(`ZELUX-DL identity verified. Sending the opted-in ${provider} session locally…`);
       postStarted = true;
       const response = await fetchLocalBridge('http://127.0.0.1:47821/cookies', {
         method: 'POST',
@@ -187,7 +167,7 @@ async function sendCookiesToLocalApp(token, cookies) {
           'Content-Type': 'application/json',
           'X-Zelux-Token': token,
         },
-        body: JSON.stringify({ cookies }),
+        body: JSON.stringify({ provider, cookies }),
         cache: 'no-store',
       }, Math.min(3000, deadline - Date.now()));
       if (response.ok) return;
@@ -231,20 +211,30 @@ async function launchDownload(message) {
   const tabId = message.tabId;
   let cookieToken = '';
   let cookies = [];
-  const includeCookies = message.includeFacebookCookies === true;
+  const cookieProvider = message.includeYouTubeCookies === true ? 'youtube'
+    : message.includeFacebookCookies === true ? 'facebook' : '';
+  const includeCookies = Boolean(cookieProvider);
   const protocolAlreadyLaunched = message.protocolAlreadyLaunched === true;
   try {
     const exePath = await getConfiguredZeluxExePath();
+    if (message.includeYouTubeCookies === true && message.includeFacebookCookies === true) {
+      throw new Error('Choose only one temporary browser session per download.');
+    }
     const tab = includeCookies && Number.isInteger(tabId) ? await chrome.tabs.get(tabId) : null;
 
     if (includeCookies) {
-      reportDownloadProgress('Reading the Facebook session you opted to share, locally in Brave…');
+      const isYouTube = cookieProvider === 'youtube';
+      const providerLabel = isYouTube ? 'YouTube' : 'Facebook';
+      reportDownloadProgress(`Reading the ${providerLabel} session you opted to share, locally in Brave…`);
       const urls = normalizeUrls(values);
-      if (!tab?.url || !isFacebookHost(tab.url) || !urls.length || urls.some(url => !isFacebookHost(url))) {
-        throw new Error('Temporary login cookies are available only for Facebook links opened from a Facebook tab.');
+      const validTab = isYouTube ? isYouTubeHost(tab?.url || '') : isFacebookHost(tab?.url || '');
+      const validUrls = isYouTube ? urls.every(isYouTubeUrl) : urls.every(isFacebookHost);
+      if (!tab?.url || !validTab || !urls.length || !validUrls) {
+        throw new Error(`Temporary login cookies are available only for ${providerLabel} links opened from a ${providerLabel} tab.`);
       }
-      cookies = selectCookieFields(await chrome.cookies.getAll({ url: tab.url }));
-      if (!cookies.length) throw new Error('No Facebook cookies found in this browser tab. Sign in to Facebook and retry.');
+      const cookieQuery = isYouTube ? { url: 'https://www.youtube.com/' } : { url: tab.url };
+      cookies = selectCookieFields(await chrome.cookies.getAll(cookieQuery), cookieProvider);
+      if (!cookies.length) throw new Error(`No ${providerLabel} cookies found. Sign in to ${providerLabel} and retry.`);
       if (protocolAlreadyLaunched) {
         cookieToken = String(message.cookieToken || '');
         if (!/^[a-f0-9]{64}$/i.test(cookieToken)) throw new Error('The direct ZELUX-DL launch token is invalid. No cookies were sent.');
@@ -264,15 +254,18 @@ async function launchDownload(message) {
       if (cookieToken) reportDownloadProgress('Opening ZELUX-DL and connecting to its local bridge…');
       count = await triggerZeluxProtocol(values, tabId, cookieToken, exePath);
     }
-    if (cookieToken) await sendCookiesToLocalApp(cookieToken, cookies);
+    if (cookieToken) await sendCookiesToLocalApp(cookieToken, cookies, cookieProvider);
     return { count, usedTemporaryCookies: Boolean(cookieToken) };
   } finally {
     cookies.length = 0;
     if (includeCookies) {
+      const origins = cookieProvider === 'youtube'
+        ? ['https://youtube.com/*', 'https://*.youtube.com/*', 'http://127.0.0.1/*']
+        : ['https://facebook.com/*', 'https://*.facebook.com/*', 'http://127.0.0.1/*'];
       try {
         await chrome.permissions.remove({
           permissions: ['cookies'],
-          origins: ['https://facebook.com/*', 'https://*.facebook.com/*', 'http://127.0.0.1/*'],
+          origins,
         });
       } catch (_) { /* The browser may already have revoked the optional permissions. */ }
     }

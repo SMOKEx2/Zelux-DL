@@ -15,19 +15,40 @@ const cliProgress = require('cli-progress');
 const yauzl = require('yauzl');
 const os = require('os');
 const crypto = require('crypto');
+const { AsyncLocalStorage } = require('async_hooks');
 const { once } = require('events');
 const { execSync, execFileSync, spawn } = require('child_process');
 const { TerminalUI, clean: cleanTerminalText } = require('./lib/terminal-ui');
 let terminalUI = null;
+const batchTaskContext = new AsyncLocalStorage();
+
+function writeBatchTaskLog(task, value) {
+  if (terminalUI?.active) {
+    terminalUI.logBatch(task.index, value);
+    return;
+  }
+  const text = cleanTerminalText(value).trim();
+  if (text) task.logs.push(text);
+}
 
 // One output owner while the full-screen UI is active. The plain CLI keeps its
 // original output, while downloader messages become the live activity log.
 function print(...args) {
+  const task = batchTaskContext.getStore();
+  if (task) {
+    writeBatchTaskLog(task, require('util').format(...args));
+    return;
+  }
   if (terminalUI?.active) terminalUI.log(...args);
   else console.log(...args);
 }
 
 function terminalWrite(text) {
+  const task = batchTaskContext.getStore();
+  if (task) {
+    writeBatchTaskLog(task, text);
+    return true;
+  }
   if (terminalUI?.active) {
     if (cleanTerminalText(text).trim()) terminalUI.log(text);
     return true;
@@ -36,11 +57,14 @@ function terminalWrite(text) {
 }
 
 function createProgressBar(label, options) {
+  const task = batchTaskContext.getStore();
+  if (task && terminalUI?.active) return terminalUI.progressBatch(task.index, label);
+  if (task) return { start() {}, update() {}, stop() {} };
   return terminalUI?.operation ? terminalUI.progress(label) : new cliProgress.SingleBar(options);
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.7.5';
+const APP_VERSION = '1.8.0';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -69,6 +93,7 @@ let MAX_PLAYLIST_ITEMS = 200;
 let BATCH_CONCURRENCY = 2;
 let HISTORY_LIMIT = 200;
 let MEDIA_COOKIES_BROWSER = 'none';
+let MEDIA_COOKIES_FILE = path.join(BASE_DIR, 'cookies.txt');
 let TEMP_MEDIA_COOKIES_FILE = '';
 const MEDIA_COOKIE_BROWSERS = new Set(['none', 'chrome', 'edge', 'firefox', 'brave', 'opera', 'safari', 'vivaldi', 'whale', 'chromium']);
 const MEDIA_PROVIDERS = [
@@ -111,7 +136,8 @@ function loadConfig() {
     MAX_PLAYLIST_ITEMS: 200,
     BATCH_CONCURRENCY: 2,
     HISTORY_LIMIT: 200,
-    MEDIA_COOKIES_BROWSER: 'none'
+    MEDIA_COOKIES_BROWSER: 'none',
+    MEDIA_COOKIES_FILE: 'cookies.txt',
   };
 
   if (fs.existsSync(configPath)) {
@@ -129,6 +155,8 @@ function loadConfig() {
       HISTORY_LIMIT = toBoundedInteger(userConfig.HISTORY_LIMIT, defaults.HISTORY_LIMIT, 10, 5000);
       const cookieBrowser = String(userConfig.MEDIA_COOKIES_BROWSER || 'none').toLowerCase();
       MEDIA_COOKIES_BROWSER = MEDIA_COOKIE_BROWSERS.has(cookieBrowser) ? cookieBrowser : 'none';
+      const cookieFile = String(userConfig.MEDIA_COOKIES_FILE || 'cookies.txt').trim();
+      MEDIA_COOKIES_FILE = path.isAbsolute(cookieFile) ? cookieFile : path.join(BASE_DIR, cookieFile);
     } catch (e) {
       print(chalk.yellow('⚠️ ไม่สามารถอ่าน config.json ได้ จะใช้ค่าเริ่มต้นแทน'));
     }
@@ -156,6 +184,7 @@ function getConfigSnapshot() {
     BATCH_CONCURRENCY,
     HISTORY_LIMIT,
     MEDIA_COOKIES_BROWSER,
+    MEDIA_COOKIES_FILE,
   };
 }
 
@@ -176,6 +205,15 @@ function updateSetting(name, rawValue) {
     MEDIA_COOKIES_BROWSER = value;
     saveConfig();
     return value;
+  }
+  if (key === 'MEDIA_COOKIES_FILE') {
+    const value = String(rawValue || '').trim();
+    if (!value) throw new Error('MEDIA_COOKIES_FILE must not be empty');
+    MEDIA_COOKIES_FILE = path.isAbsolute(value) ? value : path.join(BASE_DIR, value);
+    const cookieFile = ensureMediaCookiesFile(MEDIA_COOKIES_FILE);
+    if (cookieFile.error) throw new Error(`Could not create cookie file: ${cookieFile.error.message}`);
+    saveConfig();
+    return MEDIA_COOKIES_FILE;
   }
   const specs = {
     MAX_REDIRECTS: [0, 50], TIMEOUT_MS: [1000, 600000], MAX_RETRIES: [0, 10],
@@ -243,13 +281,43 @@ function finishHistory(id, result) {
   writeHistory(entries);
 }
 
-// Helper to auto-load cookies.txt if available
+const MEDIA_COOKIES_TEMPLATE = [
+  '# Netscape HTTP Cookie File',
+  '# ZELUX-DL reads this file only when it contains at least one cookie record.',
+  '# Keep this file private. Do not share it or upload it to GitHub.',
+  '# Format: domain<TAB>includeSubdomains<TAB>path<TAB>secure<TAB>expiry<TAB>name<TAB>value',
+  '',
+].join('\n');
+
+function hasNetscapeCookieEntries(cookieFilePath) {
+  try {
+    return fs.readFileSync(cookieFilePath, 'utf8').split(/\r?\n/).some(line => {
+      if (!line || line.startsWith('#') && !line.startsWith('#HttpOnly_')) return false;
+      const fields = line.replace(/^#HttpOnly_/, '').split('\t');
+      return fields.length >= 7 && Boolean(fields[0] && fields[2]?.startsWith('/') && fields[5]);
+    });
+  } catch (_) { return false; }
+}
+
+function ensureMediaCookiesFile(cookieFilePath = MEDIA_COOKIES_FILE) {
+  const resolvedPath = path.resolve(cookieFilePath);
+  try {
+    fs.mkdirSync(path.dirname(resolvedPath), { recursive: true });
+    fs.writeFileSync(resolvedPath, MEDIA_COOKIES_TEMPLATE, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+    return { path: resolvedPath, created: true, hasCookies: false };
+  } catch (error) {
+    if (error.code === 'EEXIST') return { path: resolvedPath, created: false, hasCookies: hasNetscapeCookieEntries(resolvedPath) };
+    return { path: resolvedPath, created: false, hasCookies: false, error };
+  }
+}
+
+// Automatically use a populated Netscape-format cookies file without the extension.
 function getCookiesArgs() {
   if (TEMP_MEDIA_COOKIES_FILE && fs.existsSync(TEMP_MEDIA_COOKIES_FILE)) {
     return { str: ` --cookies "${TEMP_MEDIA_COOKIES_FILE}"`, arr: ['--cookies', TEMP_MEDIA_COOKIES_FILE] };
   }
-  const cookiesPath = path.join(BASE_DIR, 'cookies.txt');
-  const arr = buildMediaCookieArgs(MEDIA_COOKIES_BROWSER, fs.existsSync(cookiesPath) ? cookiesPath : '');
+  const cookiesPath = hasNetscapeCookieEntries(MEDIA_COOKIES_FILE) ? MEDIA_COOKIES_FILE : '';
+  const arr = buildMediaCookieArgs(MEDIA_COOKIES_BROWSER, cookiesPath);
   return { str: arr.length ? ` ${arr.map(value => `"${value}"`).join(' ')}` : '', arr };
 }
 
@@ -274,6 +342,27 @@ function formatFacebookCookies(cookies) {
   return `${lines.join('\n')}\n`;
 }
 
+function formatYouTubeCookies(cookies) {
+  if (!Array.isArray(cookies) || cookies.length === 0) throw new Error('No YouTube cookies were provided.');
+  const lines = ['# Netscape HTTP Cookie File', '# Temporary ZELUX-DL YouTube session'];
+  let accepted = 0;
+  for (const cookie of cookies) {
+    const domain = String(cookie?.domain || '').toLowerCase();
+    const name = String(cookie?.name || '');
+    const value = String(cookie?.value || '');
+    const cookiePath = String(cookie?.path || '/');
+    if (!/^\.?([a-z0-9-]+\.)*youtube\.com$/.test(domain) || !name || !cookiePath.startsWith('/') || /[\t\r\n]/.test(domain + name + value + cookiePath)) continue;
+    const expires = Number.isFinite(Number(cookie.expirationDate)) ? Math.floor(Number(cookie.expirationDate)) : 0;
+    const secure = cookie.secure ? 'TRUE' : 'FALSE';
+    const includeSubdomains = domain.startsWith('.') ? 'TRUE' : 'FALSE';
+    const cookieDomain = cookie.httpOnly ? `#HttpOnly_${domain}` : domain;
+    lines.push(`${cookieDomain}\t${includeSubdomains}\t${cookiePath}\t${secure}\t${expires}\t${name}\t${value}`);
+    accepted += 1;
+  }
+  if (!accepted) throw new Error('No cookies for youtube.com were provided.');
+  return `${lines.join('\n')}\n`;
+}
+
 function writeTemporaryFacebookCookies(cookies, directory = os.tmpdir()) {
   const contents = formatFacebookCookies(cookies);
   return writeTemporaryFacebookCookiesFromNetscape(contents, directory);
@@ -290,12 +379,39 @@ function writeTemporaryFacebookCookiesFromNetscape(contents, directory = os.tmpd
   return filePath;
 }
 
+function writeTemporaryYouTubeCookies(cookies, directory = os.tmpdir()) {
+  return writeTemporaryYouTubeCookiesFromNetscape(formatYouTubeCookies(cookies), directory);
+}
+
+function writeTemporaryYouTubeCookiesFromNetscape(contents, directory = os.tmpdir()) {
+  const text = String(contents || '');
+  if (!/^# Netscape HTTP Cookie File(?:\r?\n)/.test(text) || !/\n(?:#HttpOnly_)?\.?[\w.-]*youtube\.com\t/m.test(text)) {
+    throw new Error('Temporary YouTube cookies are not in the expected Netscape format.');
+  }
+  const filePath = path.join(directory, `zelux-youtube-${crypto.randomBytes(16).toString('hex')}.txt`);
+  fs.writeFileSync(filePath, text, { encoding: 'utf8', flag: 'wx', mode: 0o600 });
+  try { fs.chmodSync(filePath, 0o600); } catch (_) { /* Windows ACLs inherit from the per-user temp directory. */ }
+  return filePath;
+}
+
 function removeTemporaryFacebookCookies(filePath) {
   if (!filePath || !/^zelux-facebook-[a-f0-9]{32}\.txt$/i.test(path.basename(filePath))) return false;
   try {
     if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
     return true;
   } catch (_) { return false; }
+}
+
+function removeTemporaryYouTubeCookies(filePath) {
+  if (!filePath || !/^zelux-youtube-[a-f0-9]{32}\.txt$/i.test(path.basename(filePath))) return false;
+  try {
+    if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+    return true;
+  } catch (_) { return false; }
+}
+
+function removeTemporaryMediaCookies(filePath) {
+  return removeTemporaryFacebookCookies(filePath) || removeTemporaryYouTubeCookies(filePath);
 }
 
 function isAllowedCookieRelayOrigin(origin) {
@@ -321,7 +437,23 @@ function cleanupStaleTemporaryFacebookCookies(directory = os.tmpdir(), now = Dat
   return removed;
 }
 
-function receiveTemporaryFacebookCookies(token, { port = COOKIE_RELAY_PORT, timeoutMs = 30000, onListening = () => {} } = {}) {
+function cleanupStaleTemporaryYouTubeCookies(directory = os.tmpdir(), now = Date.now(), maxAgeMs = 24 * 60 * 60 * 1000) {
+  let removed = 0;
+  try {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (!entry.isFile() || !/^zelux-youtube-[a-f0-9]{32}\.txt$/i.test(entry.name)) continue;
+      const filePath = path.join(directory, entry.name);
+      try {
+        if (now - fs.statSync(filePath).mtimeMs > maxAgeMs && removeTemporaryYouTubeCookies(filePath)) removed += 1;
+      } catch (_) { /* Ignore files in use or already removed. */ }
+    }
+  } catch (_) { /* Temp cleanup is best effort. */ }
+  return removed;
+}
+
+function receiveTemporaryMediaCookies(token, provider = 'facebook', { port = COOKIE_RELAY_PORT, timeoutMs = 30000, onListening = () => {} } = {}) {
+  const cookieProvider = String(provider || '').toLowerCase();
+  if (!['facebook', 'youtube'].includes(cookieProvider)) return Promise.reject(new Error('Unsupported temporary cookie provider.'));
   if (!/^[a-f0-9]{64}$/i.test(String(token || ''))) return Promise.reject(new Error('Invalid temporary cookie request token.'));
   return new Promise((resolve, reject) => {
     let settled = false;
@@ -398,7 +530,11 @@ function receiveTemporaryFacebookCookies(token, { port = COOKIE_RELAY_PORT, time
         if (settled) return;
         try {
           const payload = JSON.parse(body);
-          const netscapeCookies = formatFacebookCookies(payload?.cookies);
+          const payloadProvider = String(payload?.provider || 'facebook').toLowerCase();
+          if (payloadProvider !== cookieProvider) throw new Error('The temporary cookie provider did not match this download.');
+          const netscapeCookies = cookieProvider === 'youtube'
+            ? formatYouTubeCookies(payload?.cookies)
+            : formatFacebookCookies(payload?.cookies);
           response.writeHead(200, { 'Content-Type': 'application/json' }).end('{"accepted":true}');
           settle(null, netscapeCookies);
         } catch (error) {
@@ -424,14 +560,26 @@ function receiveTemporaryFacebookCookies(token, { port = COOKIE_RELAY_PORT, time
   });
 }
 
+function receiveTemporaryFacebookCookies(token, options) {
+  return receiveTemporaryMediaCookies(token, 'facebook', options);
+}
+
+function receiveTemporaryYouTubeCookies(token, options) {
+  return receiveTemporaryMediaCookies(token, 'youtube', options);
+}
+
 async function withTemporaryFacebookCookies(filePath, action) {
+  return withTemporaryMediaCookies(filePath, action);
+}
+
+async function withTemporaryMediaCookies(filePath, action) {
   const previous = TEMP_MEDIA_COOKIES_FILE;
   TEMP_MEDIA_COOKIES_FILE = filePath;
   try {
     return await action();
   } finally {
     TEMP_MEDIA_COOKIES_FILE = previous;
-    removeTemporaryFacebookCookies(filePath);
+    removeTemporaryMediaCookies(filePath);
   }
 }
 
@@ -546,6 +694,8 @@ function renderScreen() {
     case 'default':
       const displayDownloadsDir = DOWNLOADS_DIR.length > 22 ? '...' + DOWNLOADS_DIR.substring(DOWNLOADS_DIR.length - 19) : DOWNLOADS_DIR;
       print('       ' + chalk.hex('#38bdf8')('📁 โฟลเดอร์: ') + chalk.yellow.bold(displayDownloadsDir));
+      const cookieState = hasNetscapeCookieEntries(MEDIA_COOKIES_FILE) ? 'พร้อมใช้' : 'ว่าง — ใส่ Netscape cookies เพื่อใช้โดยไม่ต้อง Extension';
+      print('       ' + chalk.hex('#38bdf8')('🍪 Cookie file: ') + chalk.yellow.bold(path.basename(MEDIA_COOKIES_FILE)) + dim(` (${cookieState})`));
       print('       ' + chalk.hex('#fbbf24')('💡 Tip:') + dim(' วางหลาย URL เพื่อโหลด ') + chalk.green.bold('Batch'));
       print('       ' + chalk.hex('#fbbf24')('💡 Tip:') + dim(' พิมพ์ ') + chalk.magenta.bold('help') + dim(' เพื่อดูคำสั่งทั้งหมด'));
       const filesCount = fs.existsSync(DOWNLOADS_DIR) ? fs.readdirSync(DOWNLOADS_DIR).filter(f => fs.statSync(path.join(DOWNLOADS_DIR, f)).isFile()).length : 0;
@@ -579,6 +729,9 @@ function renderScreen() {
       for (const [key, value] of Object.entries(getConfigSnapshot())) {
         print(`    ${chalk.cyan(key.padEnd(20))} ${chalk.yellow(String(value))}`);
       }
+      print();
+      print(dim(`    Cookie file: ${MEDIA_COOKIES_FILE}`));
+      print(dim(`    Status: ${hasNetscapeCookieEntries(MEDIA_COOKIES_FILE) ? 'Netscape cookies detected' : 'empty; extension is not required when populated'}`));
       print();
       print(dim('    ใช้: set KEY VALUE'));
       break;
@@ -1316,7 +1469,12 @@ function extractUrlsFromText(value) {
       : [String(item || '')];
 
     for (const candidate of candidates) {
-      const matches = String(candidate).match(/https?:\/\/[^\s<>"']+/gi) || [];
+      const sourceText = String(candidate)
+        .replace(/https?\\:\/\//gi, value => value.replace('\\:', ':'))
+        .replace(/&#(?:x0*d|0*13);/gi, '\n')
+        .replace(/\\(?=\s*(?:\r?\n|$))/g, '')
+        .replace(/\*\*/g, '');
+      const matches = sourceText.match(/https?:\/\/[^\s<>"']+/gi) || [];
       for (let url of matches) {
         // Remove punctuation commonly left behind when links are pasted from prose.
         url = url.replace(/[),;]+$/g, '');
@@ -2500,7 +2658,210 @@ try {
 }`;
 }
 
-async function downloadMediaFile(url) {
+function isLikelyMediaPlaylist(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    return parsed.searchParams.has('list')
+      || /\/(?:playlist|sets)\//i.test(parsed.pathname);
+  } catch (_) {
+    return false;
+  }
+}
+
+function listInfoJsonFiles(directory) {
+  if (!directory || !fs.existsSync(directory)) return [];
+  const found = [];
+  const visit = current => {
+    let entries;
+    try { entries = fs.readdirSync(current, { withFileTypes: true }); } catch (_) { return; }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) visit(fullPath);
+      else if (entry.isFile() && entry.name.endsWith('.info.json')) found.push(fullPath);
+    }
+  };
+  visit(directory);
+  return found;
+}
+
+function parseYtDlpAfterMovePath(line, marker = '__ZELUX_MEDIA_FILE__') {
+  if (typeof line !== 'string' || !line.startsWith(marker)) return null;
+  const separator = line.indexOf('|', marker.length);
+  if (separator <= marker.length) return null;
+  const id = line.slice(marker.length, separator).trim();
+  const filePath = line.slice(separator + 1).trim();
+  return id && filePath ? { id, filePath } : null;
+}
+
+function findMediaThumbnail(infoJsonPath, mediaFilePath, info) {
+  const directory = path.dirname(path.resolve(mediaFilePath));
+  const candidates = [];
+  for (const thumbnail of (Array.isArray(info?.thumbnails) ? info.thumbnails : [])) {
+    if (thumbnail?.filepath) candidates.push(thumbnail.filepath);
+  }
+  if (info?.thumbnail_filepath) candidates.push(info.thumbnail_filepath);
+  const mediaBase = path.basename(mediaFilePath);
+  const mediaStem = path.basename(mediaFilePath, path.extname(mediaFilePath));
+  const infoStem = path.basename(infoJsonPath, '.info.json');
+  for (const stem of new Set([mediaBase, mediaStem, infoStem])) {
+    for (const extension of ['.jpg', '.jpeg', '.png', '.webp']) candidates.push(path.join(directory, `${stem}${extension}`));
+  }
+  return candidates.find(candidate => {
+    try {
+      const resolved = path.resolve(candidate);
+      return path.dirname(resolved) === directory && fs.statSync(resolved).isFile();
+    } catch (_) { return false; }
+  }) || '';
+}
+
+function buildMediaPostprocessArgs(info, mediaFilePath, thumbnailPath, outputPath) {
+  const extension = path.extname(mediaFilePath).toLowerCase();
+  const args = ['-y', '-i', mediaFilePath, '-i', thumbnailPath];
+  if (extension === '.mp3') {
+    args.push('-map', '0:a:0', '-map', '1:v:0', '-c:a', 'copy', '-c:v', 'mjpeg', '-id3v2_version', '3', '-write_id3v1', '1');
+    args.push('-metadata:s:v:0', 'title=Album cover', '-metadata:s:v:0', 'comment=Cover (front)', '-disposition:v:0', 'attached_pic');
+  } else if (['.m4a', '.mp4', '.mov'].includes(extension)) {
+    args.push('-map', '0', '-map', '1:v:0', '-c', 'copy', '-c:v:1', 'mjpeg', '-disposition:v:1', 'attached_pic');
+    args.push('-metadata:s:v:1', 'title=Album cover', '-metadata:s:v:1', 'comment=Cover (front)');
+  } else {
+    return null;
+  }
+  const metadata = [
+    ['title', info?.title],
+    ['artist', Array.isArray(info?.artists) ? info.artists.join(', ') : info?.artist || info?.creator],
+    ['album', info?.album],
+    ['date', info?.release_date || info?.upload_date],
+    ['track', info?.track_number],
+    ['comment', info?.description],
+  ];
+  for (const [key, value] of metadata) {
+    if (value !== undefined && value !== null && String(value).trim()) {
+      let normalized = String(value).trim();
+      if (key === 'date' && /^\d{8}$/.test(normalized)) normalized = `${normalized.slice(0, 4)}-${normalized.slice(4, 6)}-${normalized.slice(6, 8)}`;
+      args.push('-metadata', `${key}=${normalized}`);
+    }
+  }
+  args.push('-f', extension.slice(1), outputPath);
+  return args;
+}
+
+async function postprocessMediaInfoJson(ytdlpPath, infoJsonPath, ffmpegPath, mediaFilePath = '', spawnProcess = require('child_process').spawn) {
+  if (!mediaFilePath || !fs.existsSync(mediaFilePath)) {
+    return { success: false, error: 'ไฟล์ที่ดาวน์โหลดเสร็จแล้วไม่อยู่ในตำแหน่งที่คาดไว้ จึงไม่เริ่มดาวน์โหลดซ้ำ' };
+  }
+  let info;
+  try { info = JSON.parse(fs.readFileSync(infoJsonPath, 'utf8')); } catch (_) {
+    return { success: false, error: 'อ่านข้อมูล metadata ที่บันทึกไว้ไม่สำเร็จ จึงไม่แตะไฟล์ที่ดาวน์โหลดแล้ว' };
+  }
+  const thumbnailPath = findMediaThumbnail(infoJsonPath, mediaFilePath, info);
+  if (!thumbnailPath) return { success: false, error: 'ไม่พบไฟล์ภาพปกที่ดาวน์โหลดไว้ จึงไม่เริ่มดาวน์โหลดสื่อซ้ำ' };
+  if (!buildMediaPostprocessArgs(info, mediaFilePath, thumbnailPath, '')) return { success: false, error: `ยังไม่รองรับการฝังปกในไฟล์ ${path.extname(mediaFilePath) || 'ชนิดนี้'}; เก็บไฟล์ที่โหลดไว้โดยไม่ดาวน์โหลดซ้ำ` };
+  if (!ffmpegPath) return { success: false, error: 'ไม่พบ FFmpeg สำหรับฝังปก; เก็บไฟล์ที่โหลดไว้โดยไม่ดาวน์โหลดซ้ำ' };
+  const extension = path.extname(mediaFilePath);
+  const directory = path.dirname(mediaFilePath);
+  const stem = path.basename(mediaFilePath, extension);
+  const nonce = `${process.pid}-${Date.now()}`;
+  const tempPath = path.join(directory, `${stem}.zelux-${nonce}${extension}`);
+  const backupPath = `${mediaFilePath}.zelux-backup-${nonce}`;
+  const ffmpegArgs = buildMediaPostprocessArgs(info, mediaFilePath, thumbnailPath, tempPath);
+  return new Promise((resolve, reject) => {
+    let child;
+    try {
+      cancelCtrl.startListening();
+      child = spawnProcess(ffmpegPath, ffmpegArgs, { windowsHide: true });
+      cancelCtrl.childProcesses.add(child);
+    } catch (err) {
+      cancelCtrl.stopListening();
+      reject(err);
+      return;
+    }
+    let output = '';
+    child.stdout?.on('data', data => { output += data.toString(); });
+    child.stderr?.on('data', data => { output += data.toString(); });
+    child.on('error', err => {
+      cancelCtrl.childProcesses.delete(child);
+      cancelCtrl.stopListening();
+      try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) { /* Best effort. */ }
+      reject(err);
+    });
+    child.on('close', code => {
+      cancelCtrl.childProcesses.delete(child);
+      cancelCtrl.stopListening();
+      if (cancelCtrl.cancelled) {
+        try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) { /* Best effort. */ }
+        return resolve({ success: false, cancelled: true, error: 'Cancelled' });
+      }
+      if (code !== 0 || !fs.existsSync(tempPath)) {
+        try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) { /* Best effort. */ }
+        return resolve({ success: false, error: output.trim() || `FFmpeg post-processing exited with code ${code}` });
+      }
+      try {
+        fs.renameSync(mediaFilePath, backupPath);
+        try { fs.renameSync(tempPath, mediaFilePath); }
+        catch (error) {
+          fs.renameSync(backupPath, mediaFilePath);
+          throw error;
+        }
+        try { fs.unlinkSync(backupPath); } catch (_) { /* Retain a recoverable backup if cleanup fails. */ }
+        resolve({ success: true });
+      } catch (error) {
+        try { if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath); } catch (_) { /* Best effort. */ }
+        resolve({ success: false, error: `ฝังปกไม่สำเร็จและคงไฟล์ต้นฉบับไว้: ${error.message}` });
+      }
+    });
+  });
+}
+
+function cleanupMediaInfoJson(infoJsonPath, mediaFilePath = '') {
+  let info;
+  try { info = JSON.parse(fs.readFileSync(infoJsonPath, 'utf8')); } catch (_) { info = null; }
+  for (const thumbnail of (Array.isArray(info?.thumbnails) ? info.thumbnails : [])) {
+    const thumbnailPath = thumbnail?.filepath;
+    if (!thumbnailPath) continue;
+    try {
+      const resolved = path.resolve(thumbnailPath);
+      if (path.dirname(resolved) === path.dirname(path.resolve(infoJsonPath)) && /\.(?:webp|jpe?g|png)$/i.test(resolved)) fs.unlinkSync(resolved);
+    } catch (_) { /* Best effort; completed media must remain untouched. */ }
+  }
+  if (mediaFilePath) {
+    const resolvedMedia = path.resolve(mediaFilePath);
+    const directory = path.dirname(resolvedMedia);
+    const stem = path.basename(resolvedMedia, path.extname(resolvedMedia));
+    const sidecars = new Set();
+    for (const extension of ['.jpg', '.jpeg', '.png', '.webp']) {
+      // yt-dlp may append the thumbnail extension after the final media name
+      // (for example "track.mp3.webp"), or use the extensionless stem.
+      sidecars.add(path.join(directory, `${stem}${extension}`));
+      sidecars.add(`${resolvedMedia}${extension}`);
+    }
+    for (const sidecar of sidecars) {
+      try { if (fs.existsSync(sidecar) && path.dirname(path.resolve(sidecar)) === directory) fs.unlinkSync(sidecar); } catch (_) { /* Best effort. */ }
+    }
+  }
+  try { fs.unlinkSync(infoJsonPath); } catch (_) { /* Keep the info file if it cannot be removed. */ }
+}
+
+async function chooseBatchMediaOptions(urls, chooser = promptInteractiveMenu) {
+  const mediaUrls = urls.filter(url => shouldUseMediaExtractor(url));
+  if (!mediaUrls.length) return null;
+
+  const formatType = await chooser([
+    { label: '🎬 MP4 (วิดีโอพร้อมเสียง)', value: 'mp4' },
+    { label: '🎵 MP3 (เสียงเท่านั้น)', value: 'mp3' }
+  ], `เลือกรูปแบบครั้งเดียวสำหรับ ${mediaUrls.length} ลิงก์สื่อ:`);
+  let selectedQuality = 'best';
+  if (formatType === 'mp4') {
+    selectedQuality = await chooser([
+      { label: '🌟 คุณภาพสูงสุด (Best Available)', value: 'best' },
+      { label: '🎬 1080p', value: '1080' },
+      { label: '🎬 720p', value: '720' },
+      { label: '🎬 480p', value: '480' }
+    ], 'เลือกความละเอียดครั้งเดียวสำหรับทั้งชุด:');
+  }
+  return { formatType, selectedQuality };
+}
+
+async function downloadMediaFile(url, mediaOptions = null) {
   print('      ' + info('\u27F3') + ' กำลังเตรียมระบบดาวน์โหลดสื่อ...');
 
   const ytdlpPath = await getYtDlpPath();
@@ -2520,16 +2881,19 @@ async function downloadMediaFile(url) {
 
   print('      ' + info('\u27F3') + ' กำลังตรวจสอบข้อมูลสื่อ...');
 
-  let isPlaylist = false;
+  let isPlaylist = isLikelyMediaPlaylist(url);
   let playlistTitle = '';
+  let playlistEntryIds = [];
   let entriesCount = 1;
   let metadata = null;
 
   try {
-    const getFlatMetadata = (ytdlp, targetUrl) => {
+    const getMetadata = (ytdlp, targetUrl, playlist) => {
       return new Promise((resolve, reject) => {
         const { execFile } = require('child_process');
-        const args = ['--dump-json', '--flat-playlist', '--js-runtimes', 'node', ...getCookiesArgs().arr, targetUrl];
+        const args = playlist
+          ? ['--dump-json', '--flat-playlist', '--js-runtimes', 'node', ...getCookiesArgs().arr, targetUrl]
+          : ['--dump-single-json', '--no-warnings', '--no-playlist', '--js-runtimes', 'node', ...getCookiesArgs().arr, targetUrl];
         execFile(ytdlp, args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
           if (err) return reject(err);
           resolve(stdout.trim());
@@ -2537,13 +2901,15 @@ async function downloadMediaFile(url) {
       });
     };
 
-    const flatStdout = await getFlatMetadata(ytdlpPath, url);
-    const lines = flatStdout.split('\n').filter(Boolean);
-    if (lines.length > 0) {
-      const firstEntry = JSON.parse(lines[0]);
-      playlistTitle = firstEntry.playlist_title || firstEntry.playlist;
-      if (playlistTitle || lines.length > 1) {
-        isPlaylist = true;
+    const metadataStdout = await getMetadata(ytdlpPath, url, isPlaylist);
+    if (isPlaylist) {
+      const lines = metadataStdout.split('\n').filter(Boolean);
+      if (lines.length > 0) {
+        const firstEntry = JSON.parse(lines[0]);
+        playlistEntryIds = lines.map(line => {
+          try { return JSON.parse(line).id; } catch (_) { return null; }
+        }).filter(Boolean);
+        playlistTitle = firstEntry.playlist_title || firstEntry.playlist;
         entriesCount = firstEntry.n_entries || lines.length;
         // จำกัดจำนวนเพลงใน playlist (ป้องกัน Mix playlist ที่มีเพลงเป็นพันๆ)
         if (entriesCount > MAX_PLAYLIST_ITEMS) {
@@ -2551,14 +2917,18 @@ async function downloadMediaFile(url) {
           entriesCount = MAX_PLAYLIST_ITEMS;
           print('      ' + warning(`⚠️  Playlist มี ${originalCount} รายการ — จำกัดไว้ที่ ${MAX_PLAYLIST_ITEMS} รายการ`));
         }
-      } else {
-        metadata = firstEntry;
       }
+    } else if (metadataStdout) {
+      metadata = JSON.parse(metadataStdout);
     }
   } catch (err) {
     print('      ' + error('\u2715') + ' ไม่สามารถตรวจสอบข้อมูลลิงก์ได้: ' + err.message);
     const mediaProvider = getMediaProviderName(url);
-    if (['TikTok', 'Facebook'].includes(mediaProvider)) {
+    if (mediaProvider === 'YouTube') {
+      print('      ' + dim('ถ้า YouTube ขอให้ยืนยันว่าไม่ใช่บอต ให้เปิด Extension ในแท็บ YouTube แล้วเลือกใช้ YouTube session สำหรับงานนี้'));
+      print('      ' + dim('ส่งเฉพาะ cookies ของ youtube.com มายังเครื่องนี้ชั่วคราว และลบไฟล์หลังจบงาน'));
+      print('      ' + dim('ใช้ได้เฉพาะเนื้อหาที่บัญชีของคุณเข้าถึงได้ ไม่ข้าม private, DRM หรือข้อจำกัดสิทธิ์'));
+    } else if (['TikTok', 'Facebook'].includes(mediaProvider)) {
       print('      ' + dim('ลองตั้งค่า MEDIA_COOKIES_BROWSER เป็น browser ที่ล็อกอินอยู่ หรือพิมพ์ update เพื่ออัปเดต yt-dlp'));
       print('      ' + dim('ใช้ได้เฉพาะเนื้อหาที่บัญชีของคุณเข้าถึงได้ ไม่ข้าม private, DRM หรือข้อจำกัดสิทธิ์'));
     }
@@ -2566,37 +2936,14 @@ async function downloadMediaFile(url) {
     return { success: false, error: err.message };
   }
 
-  // If it's a single video, fetch its full metadata for precise size/quality info
-  if (!isPlaylist) {
-    try {
-      const getFullMetadata = (ytdlp, targetUrl) => {
-        return new Promise((resolve, reject) => {
-          const { execFile } = require('child_process');
-          const args = ['--dump-json', '--js-runtimes', 'node', '--no-playlist', ...getCookiesArgs().arr, targetUrl];
-          execFile(ytdlp, args, { maxBuffer: 10 * 1024 * 1024 }, (err, stdout) => {
-            if (err) return reject(err);
-            try {
-              resolve(JSON.parse(stdout));
-            } catch (pe) {
-              reject(pe);
-            }
-          });
-        });
-      };
-      metadata = await getFullMetadata(ytdlpPath, url);
-    } catch (err) {
-      // Non-fatal fallback
-    }
-  }
-
-  // Ask format selection via interactive menu
-  const formatType = await promptInteractiveMenu([
+  // Batch downloads pass one shared selection so workers never race to own the keyboard.
+  const formatType = mediaOptions?.formatType || await promptInteractiveMenu([
     { label: '🎬 MP4 (วิดีโอพร้อมเสียง)', value: 'mp4' },
     { label: '🎵 MP3 (เสียงเท่านั้น)', value: 'mp3' }
   ], 'เลือกรูปแบบดาวน์โหลด:');
 
-  let selectedQuality = 'best';
-  if (formatType === 'mp4') {
+  let selectedQuality = mediaOptions?.selectedQuality || 'best';
+  if (!mediaOptions && formatType === 'mp4') {
     let qualOptions = [];
     if (metadata && metadata.formats) {
       const heights = new Set();
@@ -2735,6 +3082,8 @@ async function downloadMediaFile(url) {
 
   const startTime = Date.now();
   let finalDownloadedBytes = 0;
+  const downloadedMediaById = new Map();
+  const mediaPathMarker = '__ZELUX_MEDIA_FILE__';
 
   const args = [];
 
@@ -2769,7 +3118,15 @@ async function downloadMediaFile(url) {
     args.push('--playlist-end', String(MAX_PLAYLIST_ITEMS));
   }
 
-  if (ffmpegPath) {
+  const deferBatchEmbed = Boolean(mediaOptions?.deferEmbed && ffmpegPath);
+  const infoJsonBefore = deferBatchEmbed ? new Set(listInfoJsonFiles(targetDir)) : null;
+  const downloadStartedAt = Date.now();
+  if (deferBatchEmbed) {
+    // Fetch each thumbnail alongside its media, but defer the expensive media
+    // remux/embedding step until every link has finished. This keeps the later
+    // cover pass local instead of serially waiting on thumbnail network calls.
+    args.push('--write-info-json', '--write-thumbnail');
+  } else if (ffmpegPath) {
     args.push('--embed-metadata', '--embed-thumbnail', '--convert-thumbnails', 'jpg');
   }
 
@@ -2788,6 +3145,12 @@ async function downloadMediaFile(url) {
 
   const cookieArgs = getCookiesArgs().arr;
   if (cookieArgs.length > 0) args.push(...cookieArgs);
+  if (deferBatchEmbed) {
+    // yt-dlp may normalize/sanitize the final filename (or choose a different
+    // extension after extraction). Capture the actual after-move path instead
+    // of reconstructing it from the .info.json sidecar name.
+    args.push('--print', `after_move:${mediaPathMarker}%(id)s|%(filepath)s`, '--encoding', 'utf-8');
+  }
   args.push('--newline', '--progress', '--js-runtimes', 'node', '-o', filePath, url);
 
   const { spawn } = require('child_process');
@@ -2851,7 +3214,14 @@ async function downloadMediaFile(url) {
         const remainder = lines.pop() || '';
         if (isStderr) stderrBuffer = remainder;
         else stdoutBuffer = remainder;
-        for (const line of lines) handleProgressLine(line);
+        for (const line of lines) {
+          if (!isStderr && line.startsWith(mediaPathMarker)) {
+            const outputPath = parseYtDlpAfterMovePath(line, mediaPathMarker);
+            if (outputPath) downloadedMediaById.set(outputPath.id, path.resolve(outputPath.filePath));
+          } else {
+            handleProgressLine(line);
+          }
+        }
       };
 
       child.stdout.on('data', (data) => {
@@ -2865,7 +3235,11 @@ async function downloadMediaFile(url) {
 
       child.on('close', async (code) => {
         cancelCtrl.childProcesses.delete(child);
-        if (stdoutBuffer) handleProgressLine(stdoutBuffer);
+        if (stdoutBuffer) {
+          const finalLine = stdoutBuffer;
+          stdoutBuffer = '';
+          consumeLines(Buffer.from(`${finalLine}\n`));
+        }
         if (stderrBuffer) handleProgressLine(stderrBuffer);
         if (cancelCtrl.cancelled) {
           return reject(new Error('CANCELLED'));
@@ -2989,7 +3363,7 @@ async function downloadMediaFile(url) {
 
     // SHA256 (skip for playlist directory)
     let hash = '';
-    if (!isPlaylist) {
+    if (!isPlaylist && !deferBatchEmbed) {
       terminalWrite('      ' + dim('🔒 กำลังคำนวณ SHA256...'));
       hash = await calculateSHA256(filePath);
       terminalWrite('\r\x1b[K');
@@ -3003,6 +3377,8 @@ async function downloadMediaFile(url) {
     if (isPlaylist && warningMsg) {
       print('      ' + warning.bold('⚠️ ดาวน์โหลดเสร็จสิ้น (มีบางไฟล์ขัดข้อง)'));
       print('      ' + dim(warningMsg.length > 150 ? warningMsg.substring(0, 147) + '...' : warningMsg));
+    } else if (deferBatchEmbed) {
+      print('      ' + success.bold('✓ ดาวน์โหลดเสร็จแล้ว — รอฝังปกหลังจบทุกลิงก์'));
     } else {
       print('      ' + success.bold('✓ ดาวน์โหลดเสร็จสิ้น!'));
     }
@@ -3019,14 +3395,16 @@ async function downloadMediaFile(url) {
       const relativeSavedPath = path.join('downloads', subfolderName, filename);
       const displayFilePath = relativeSavedPath.length > 30 ? '...' + relativeSavedPath.substring(relativeSavedPath.length - 27) : relativeSavedPath;
       print('      ' + dim('บันทึก    : ') + chalk.cyan(displayFilePath));
-      const displayHash = hash.substring(0, 12) + '...' + hash.substring(hash.length - 12);
-      print('      ' + dim('SHA256    : ') + accent(displayHash));
+      if (hash) {
+        const displayHash = hash.substring(0, 12) + '...' + hash.substring(hash.length - 12);
+        print('      ' + dim('SHA256    : ') + accent(displayHash));
+      }
     }
     print('    ' + rainbowLine('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━', Date.now() / 5));
     print();
 
-    // Clean up thumbnail files left behind by yt-dlp after successful embed
-    try {
+    // Retain thumbnail + info JSON sidecars until batch post-processing.
+    if (!deferBatchEmbed) try {
       const dir = isPlaylist ? targetDir : path.dirname(filePath);
       if (fs.existsSync(dir)) {
         const files = fs.readdirSync(dir);
@@ -3045,7 +3423,41 @@ async function downloadMediaFile(url) {
       }
     } catch (e) { }
 
-    return { success: true, filePath: isPlaylist ? targetDir : filePath };
+    let postprocessInfoFiles = [];
+    if (deferBatchEmbed) {
+      const newInfoFiles = listInfoJsonFiles(targetDir).filter(infoPath => !infoJsonBefore.has(infoPath)
+        && (() => {
+          try {
+            if (fs.statSync(infoPath).mtimeMs < downloadStartedAt - 1000) return false;
+            if (!isPlaylist) {
+              const info = JSON.parse(fs.readFileSync(infoPath, 'utf8'));
+              return info.id === metadata?.id || info.filepath === filePath || info._filename === filePath;
+            }
+            if (playlistEntryIds.length) return playlistEntryIds.includes(JSON.parse(fs.readFileSync(infoPath, 'utf8')).id);
+            return true;
+          } catch (_) { return false; }
+        })());
+      // Some extractor formats omit id/path fields in cleaned info JSON. The
+      // exact conventional sidecar name is safe to use as a fallback.
+      if (!isPlaylist && newInfoFiles.length === 0) {
+        const stem = filePath.slice(0, -path.extname(filePath).length);
+        newInfoFiles.push(...[`${stem}.info.json`, `${filePath}.info.json`]
+          .filter(infoPath => fs.existsSync(infoPath) && !infoJsonBefore.has(infoPath)));
+      }
+      const downloadedPaths = [...downloadedMediaById.values()];
+      postprocessInfoFiles = newInfoFiles.map(infoJsonPath => {
+        let id = '';
+        try { id = String(JSON.parse(fs.readFileSync(infoJsonPath, 'utf8')).id || ''); } catch (_) { /* fallback below */ }
+        const mediaPath = downloadedMediaById.get(id)
+          || (!isPlaylist && downloadedPaths.length === 1 ? downloadedPaths[0] : '');
+        return { infoJsonPath, mediaFilePath: mediaPath };
+      });
+    }
+    return {
+      success: true,
+      filePath: isPlaylist ? targetDir : filePath,
+      ...(deferBatchEmbed ? { deferredEmbed: true, outputExtension: extension.slice(1), postprocessInfoFiles } : {}),
+    };
 
   } catch (err) {
     cancelCtrl.stopListening();
@@ -3300,7 +3712,7 @@ async function downloadGitHubRepository(url, repository) {
   }
 }
 
-async function performDownload(url) {
+async function performDownload(url, mediaOptions = null) {
   let provider;
   try {
     provider = await resolveDownloadProvider(url);
@@ -3318,7 +3730,7 @@ async function performDownload(url) {
   if (githubRepository) return downloadGitHubRepository(url, githubRepository);
   const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
   if (shouldUseMediaExtractor(url) || isM3u8) {
-    return downloadMediaFile(url);
+    return downloadMediaFile(url, mediaOptions);
   }
   print('      ' + info('\u27F3') + ' กำลังตรวจสอบลิงก์...');
 
@@ -3334,7 +3746,7 @@ async function performDownload(url) {
   const { finalUrl, acceptRanges, totalSize, contentType } = fileInfo;
   if (shouldUseMediaExtractor(finalUrl, contentType)) {
     print('      ' + info('\u27F3') + ' ลิงก์นี้เป็นหน้าเว็บ ไม่ใช่ไฟล์ตรง กำลังลองตัวดึงคลิปจากเว็บที่รองรับ...');
-    return downloadMediaFile(finalUrl);
+    return downloadMediaFile(finalUrl, mediaOptions);
   }
   const filename = safeFilename(fileInfo.filename);
 
@@ -3588,17 +4000,18 @@ async function performDownload(url) {
   }
 }
 
-async function downloadSingleFile(url) {
+async function downloadSingleFile(url, mediaOptions = null) {
   if (terminalUI?.operation?.cancelled) return { success: false, cancelled: true };
   const historyId = addHistory(url);
   let result;
   try {
-    result = await performDownload(url);
+    result = await performDownload(url, mediaOptions);
     if (!result) result = { success: false, error: 'Download did not complete' };
   } catch (err) {
     result = { success: false, cancelled: err.message === 'CANCELLED', error: err.message };
   }
-  finishHistory(historyId, result);
+  if (result?.deferredEmbed) result._historyId = historyId;
+  else finishHistory(historyId, result);
   return result;
 }
 
@@ -3625,18 +4038,113 @@ async function handleBatch(urls) {
   urls = extractUrlsFromText(urls);
   if (urls.length === 0) return [];
   if (urls.length === 1) return [await downloadSingleFile(urls[0])];
+
+  let mediaOptions = null;
+  try {
+    mediaOptions = await chooseBatchMediaOptions(urls);
+  } catch (err) {
+    if (err.message !== 'CANCELLED') throw err;
+    print('  ' + warning('Batch cancelled before downloads started.'));
+    return urls.map(() => ({ success: false, cancelled: true, error: 'Cancelled before batch start' }));
+  }
+
+  if (mediaOptions) mediaOptions = { ...mediaOptions, deferEmbed: true };
+
   print();
   print('  ' + info('\uD83D\uDCE6') + ` Batch Download — ${chalk.yellow(urls.length)} ไฟล์`);
+  terminalUI?.beginBatch(urls);
   const concurrency = Math.min(BATCH_CONCURRENCY, urls.length);
   const results = await runWithConcurrency(urls, concurrency, async (url, index) => {
-    print('  ' + info('>') + ` [${index + 1}/${urls.length}] ${dim(url.slice(0, 65))}`);
-    return downloadSingleFile(url);
+    const task = { index, logs: [] };
+    if (terminalUI?.active) terminalUI.startBatchItem(index);
+    const result = await batchTaskContext.run(task, async () => {
+      print('  ' + info('>') + ` [${index + 1}/${urls.length}] ${dim(url.slice(0, 65))}`);
+      return downloadSingleFile(url, mediaOptions);
+    });
+    if (result?.deferredEmbed) {
+      if (terminalUI?.active) terminalUI.markBatchItemFinalizing(index);
+      else if (task.logs.length) {
+        for (const line of task.logs) console.log(`[${index + 1}/${urls.length}] ${line}`);
+      }
+    } else if (terminalUI?.active) terminalUI.finishBatchItem(index, result);
+    else if (task.logs.length) {
+      for (const line of task.logs) console.log(`[${index + 1}/${urls.length}] ${line}`);
+    }
+    return result;
   });
+
+  const deferredItems = results
+    .map((result, index) => ({ result, index }))
+    .filter(item => item.result?.success && item.result.deferredEmbed);
+  if (deferredItems.length) {
+    print('  ' + info('🖼️') + ' ดาวน์โหลดครบแล้ว — เริ่มฝังปกและ metadata ทีละไฟล์...');
+    const ytdlpPath = await getYtDlpPath();
+    const ffmpegPath = await getFfmpegPath();
+    for (const { result, index } of deferredItems) {
+      const infoFiles = result.postprocessInfoFiles || [];
+      if (cancelCtrl.cancelled) {
+        result.coverEmbedded = false;
+        result.warning = 'ยกเลิกขั้นตอนฝังปกแล้ว (ไฟล์ที่ดาวน์โหลดเสร็จยังอยู่ครบ)';
+      } else if (!infoFiles.length) {
+        result.coverEmbedded = false;
+        result.warning = 'ไม่พบไฟล์ metadata/ปกชั่วคราวสำหรับฝัง';
+        print('  ' + warning(`⚠ [${index + 1}/${urls.length}] ไม่พบไฟล์ metadata/ปกชั่วคราว — ข้ามการฝังปก`));
+      } else {
+        let failedEmbeds = 0;
+        for (let itemIndex = 0; itemIndex < infoFiles.length; itemIndex++) {
+          if (cancelCtrl.cancelled) {
+            result.warning = 'ยกเลิกขั้นตอนฝังปกแล้ว (ไฟล์ที่ดาวน์โหลดเสร็จยังอยู่ครบ)';
+            break;
+          }
+          const infoEntry = infoFiles[itemIndex];
+          const infoJsonPath = typeof infoEntry === 'string' ? infoEntry : infoEntry.infoJsonPath;
+          const mediaFilePath = typeof infoEntry === 'string'
+            ? infoJsonPath.replace(/\.info\.json$/i, `.${result.outputExtension || 'mp4'}`)
+            : infoEntry.mediaFilePath;
+          if (terminalUI?.active) terminalUI.updateBatchItem(index, `ฝังปก ${itemIndex + 1}/${infoFiles.length}`);
+          print('  ' + info('🖼️') + ` [${index + 1}/${urls.length}] ฝังปก ${itemIndex + 1}/${infoFiles.length}`);
+          let postprocess;
+          try {
+            postprocess = await postprocessMediaInfoJson(ytdlpPath, infoJsonPath, ffmpegPath, mediaFilePath);
+            if (!postprocess.success) {
+              failedEmbeds++;
+              result.warning = postprocess.error;
+              print('    ' + warning('⚠ ฝังปกไม่สำเร็จ: ') + postprocess.error);
+            } else {
+              cleanupMediaInfoJson(infoJsonPath, mediaFilePath);
+            }
+          } catch (err) {
+            failedEmbeds++;
+            result.warning = err.message;
+            print('    ' + warning('⚠ ฝังปกไม่สำเร็จ: ') + err.message);
+          }
+          if (postprocess?.cancelled) {
+            result.warning = 'ยกเลิกขั้นตอนฝังปกแล้ว (ไฟล์ที่ดาวน์โหลดเสร็จยังอยู่ครบ)';
+            break;
+          }
+        }
+        result.coverEmbedded = failedEmbeds === 0 && !result.warning;
+      }
+      if (result._historyId) {
+        finishHistory(result._historyId, result);
+        delete result._historyId;
+      }
+      delete result.postprocessInfoFiles;
+      delete result.outputExtension;
+      if (terminalUI?.active) terminalUI.finishBatchItem(index, result);
+    }
+  }
+  terminalUI?.endBatch();
   print('  ' + rainbowLine(' \u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550\u2550', Date.now() / 5));
   const succeeded = results.filter(result => result?.success).length;
   const failed = results.filter(result => !result?.success && !result?.cancelled).length;
   const cancelled = results.filter(result => result?.cancelled).length;
   const summary = [`สำเร็จ ${succeeded}`];
+  const coverJobs = results.filter(result => result?.deferredEmbed);
+  if (coverJobs.length) {
+    const coversEmbedded = coverJobs.filter(result => result.coverEmbedded).length;
+    summary.push(`ฝังปก ${coversEmbedded}/${coverJobs.length}`);
+  }
   if (failed) summary.push(`ล้มเหลว ${failed}`);
   if (cancelled) summary.push(`ยกเลิก ${cancelled}`);
   print('  ' + success.bold(`\u2713 Batch เสร็จสิ้น — ${summary.join(' | ')}`));
@@ -3959,6 +4467,7 @@ async function runTerminalApp(initialUrls = [], initialCookieFile = '') {
       const entries = readHistory();
       return {
         directory: DOWNLOADS_DIR, connections: NUM_CONNECTIONS,
+        cookiesFile: path.basename(MEDIA_COOKIES_FILE), cookiesReady: hasNetscapeCookieEntries(MEDIA_COOKIES_FILE),
         completed: entries.filter(entry => entry.status === 'completed').length,
         failed: entries.filter(entry => entry.status === 'failed').length,
       };
@@ -4011,7 +4520,7 @@ async function runTerminalApp(initialUrls = [], initialCookieFile = '') {
     if (initialUrls.length) {
       const action = () => handleBatch(initialUrls);
       await run('DOWNLOAD', () => initialCookieFile
-        ? withTemporaryFacebookCookies(initialCookieFile, action)
+        ? withTemporaryMediaCookies(initialCookieFile, action)
         : action());
     }
     while (true) {
@@ -4142,6 +4651,7 @@ async function runTerminalApp(initialUrls = [], initialCookieFile = '') {
 
 async function main() {
   cleanupStaleTemporaryFacebookCookies();
+  cleanupStaleTemporaryYouTubeCookies();
   if (process.argv.includes('--version')) { console.log(APP_VERSION); return; }
   if (process.argv.includes('--check-ui')) {
     const probe = new TerminalUI({ version: APP_VERSION, snapshot: () => ({ completed: 0, failed: 0, connections: 0, directory: 'renderer-check' }) });
@@ -4152,6 +4662,13 @@ async function main() {
     console.log('Terminal renderer OK');
     return;
   }
+  const cookiesSetup = ensureMediaCookiesFile();
+  if (cookiesSetup.error) {
+    console.warn(`Could not prepare cookies file at ${cookiesSetup.path}: ${cookiesSetup.error.message}`);
+  } else if (cookiesSetup.created) {
+    console.log(`Created optional Netscape cookies file: ${cookiesSetup.path}`);
+    console.log('Add your own cookies there to use authenticated media downloads without the extension.');
+  }
   const rawArgs = process.argv.slice(2);
   const protocolArg = rawArgs.find(value => /^zelux:/i.test(String(value || '').trim()));
   const protocolRequest = protocolArg ? decodeZeluxProtocolRequest(protocolArg) : null;
@@ -4160,12 +4677,18 @@ async function main() {
   let initialCookieFile = '';
   try {
     if (protocolRequest?.cookieToken) {
-      if (!initialUrls.length || initialUrls.some(url => getMediaProviderName(url) !== 'Facebook')) {
-        throw new Error('Temporary Facebook cookies can only be used with Facebook links.');
-      }
-      console.log('Waiting for the ZELUX-DL extension to send a temporary Facebook session…');
-      const cookies = await receiveTemporaryFacebookCookies(protocolRequest.cookieToken);
-      initialCookieFile = writeTemporaryFacebookCookiesFromNetscape(cookies);
+      const providers = new Set(initialUrls.map(url => getMediaProviderName(url)));
+      const cookieProvider = providers.size === 1 && providers.has('YouTube')
+        ? 'youtube'
+        : providers.size === 1 && providers.has('Facebook')
+          ? 'facebook'
+          : '';
+      if (!cookieProvider) throw new Error('Temporary browser sessions can only be used with a single-provider YouTube or Facebook batch.');
+      console.log(`Waiting for the ZELUX-DL extension to send a temporary ${cookieProvider === 'youtube' ? 'YouTube' : 'Facebook'} session…`);
+      const cookies = await receiveTemporaryMediaCookies(protocolRequest.cookieToken, cookieProvider);
+      initialCookieFile = cookieProvider === 'youtube'
+        ? writeTemporaryYouTubeCookiesFromNetscape(cookies)
+        : writeTemporaryFacebookCookiesFromNetscape(cookies);
     }
 
     if (process.stdin.isTTY && process.stdout.isTTY && (process.platform === 'win32' || process.env.TERM !== 'dumb') && !process.argv.includes('--plain')) {
@@ -4200,14 +4723,14 @@ async function main() {
     currentView = 'download';
     renderScreen();
     const action = () => handleBatch(args);
-    if (initialCookieFile) await withTemporaryFacebookCookies(initialCookieFile, action);
+    if (initialCookieFile) await withTemporaryMediaCookies(initialCookieFile, action);
     else await action();
     currentView = 'download-done';
   }
 
   createReadline();
   } finally {
-    if (initialCookieFile) removeTemporaryFacebookCookies(initialCookieFile);
+    if (initialCookieFile) removeTemporaryMediaCookies(initialCookieFile);
   }
 }
 
@@ -4225,12 +4748,16 @@ if (require.main === module) {
 module.exports = {
   CancelController,
   buildMediaCookieArgs,
+  buildMediaPostprocessArgs,
+  chooseBatchMediaOptions,
   buildGitHubArchiveUrl,
   buildSmartLibrary,
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
   compareVersions,
   cleanupStaleTemporaryFacebookCookies,
+  cleanupStaleTemporaryYouTubeCookies,
+  cleanupMediaInfoJson,
   decodeZeluxProtocolRequest,
   decodeZeluxProtocolArg,
   decodeZeluxProtocolArgs,
@@ -4242,9 +4769,17 @@ module.exports = {
   formatGitHubProgressLines,
   extractUrlsFromText,
   formatFacebookCookies,
+  formatYouTubeCookies,
+  ensureMediaCookiesFile,
+  hasNetscapeCookieEntries,
+  receiveTemporaryMediaCookies,
   receiveTemporaryFacebookCookies,
+  receiveTemporaryYouTubeCookies,
   removeTemporaryFacebookCookies,
+  removeTemporaryYouTubeCookies,
+  removeTemporaryMediaCookies,
   writeTemporaryFacebookCookies,
+  writeTemporaryYouTubeCookies,
   isValidUrl,
   isAllowedCookieRelayOrigin,
   normalizeZeluxExePath,
@@ -4258,6 +4793,8 @@ module.exports = {
   planGitHubRangeTasks,
   resolveDownloadProvider,
   probeFileInfo,
+  postprocessMediaInfoJson,
+  parseYtDlpAfterMovePath,
   removeDirectoryIfEmpty,
   cleanupDownloadArtifacts,
   removeTreeWithRetries,
@@ -4265,9 +4802,12 @@ module.exports = {
   runWithConcurrency,
   safeFilename,
   shouldUseMediaExtractor,
+  isLikelyMediaPlaylist,
+  listInfoJsonFiles,
   summarizeGitHubTree,
   toBoundedInteger,
   verifyDownloadIntegrity,
   verifyZeluxExeIdentity,
   waitForUpdateHelperReady,
+  withTemporaryMediaCookies,
 };

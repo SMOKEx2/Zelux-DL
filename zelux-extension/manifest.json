@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "ZELUX-DL Integrator",
-  "version": "2.5.1",
-  "description": "Capture links and optionally use a temporary, local Facebook session for ZELUX-DL downloads.",
+  "version": "2.5.3",
+  "description": "Capture links and optionally use a temporary, local Facebook or YouTube session for ZELUX-DL downloads.",
   "permissions": [
     "contextMenus",
     "scripting",
@@ -13,6 +13,8 @@
   "optional_host_permissions": [
     "https://facebook.com/*",
     "https://*.facebook.com/*",
+    "https://youtube.com/*",
+    "https://*.youtube.com/*",
     "http://127.0.0.1/*"
   ],
   "background": {

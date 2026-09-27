@@ -29,7 +29,6 @@
           <strong id="page-title">Reading current page…</strong>
           <span id="page-host"></span>
         </div>
-        <button id="scanBtn" class="quiet-button" type="button" title="Find downloadable links on this page">Scan</button>
       </div>
     </section>
 
@@ -45,12 +44,19 @@
         <span id="linkCount" class="count">0 links</span>
       </div>
       <textarea id="urlInput" rows="5" placeholder="Paste one or more URLs&#10;One link per line" autocomplete="off" spellcheck="false"></textarea>
-      <div class="input-hint">Paste a link list, or scan this page to collect links.</div>
+      <div class="input-hint">Paste one or more links, one URL per line. The current tab link is added automatically.</div>
       <label id="facebookSessionControl" class="session-control" hidden>
         <input id="includeFacebookCookies" type="checkbox">
         <span class="session-copy">
           <strong>Use my Facebook session for this download</strong>
           <small>Only after you opt in. A temporary copy is sent to ZELUX-DL on this PC and deleted when the job ends; your browser login stays unchanged.</small>
+        </span>
+      </label>
+      <label id="youtubeSessionControl" class="session-control" hidden>
+        <input id="includeYouTubeCookies" type="checkbox">
+        <span class="session-copy">
+          <strong>Use my YouTube session for this download</strong>
+          <small>Optional, per download. Only YouTube cookies are sent to ZELUX-DL on this PC and removed from its temporary file after the job. Cookies are login credentials; use only for content your account can access.</small>
         </span>
       </label>
     </section>

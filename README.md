@@ -3,7 +3,7 @@
   <h1>🚀 ZELUX-DL</h1>
   <p><b>Lightning-fast, beautiful, and interactive terminal video downloader.</b></p>
   
-  [![Version](https://img.shields.io/badge/version-1.7.5-blue.svg)](#)
+  [![Version](https://img.shields.io/badge/version-1.8.0-blue.svg)](#)
   [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-lightgrey.svg)](#)
   [![License](https://img.shields.io/badge/license-MIT-green.svg)](#)
 </div>
@@ -99,18 +99,23 @@ chmod +x register-linux.sh
 - โปรแกรมจะตรวจเว็บที่รองรับและลองดึงข้อมูลจากหน้าเว็บให้โดยอัตโนมัติ เว็บที่ต้องล็อกอินสามารถเลือกส่ง cookies จากเบราว์เซอร์ได้ (ใช้เฉพาะโปรไฟล์ของคุณและเก็บ cookies เป็นความลับ)
 - เว็บที่ไม่รองรับ, ต้องผ่าน CAPTCHA, คลิปส่วนตัว หรือ DRM อาจโหลดไม่ได้; การรองรับขึ้นกับ yt-dlp และการเปลี่ยนแปลงของแต่ละเว็บ ไม่ได้รับประกันว่าทุกเว็บจะใช้งานได้
 
-#### Facebook session ผ่าน ZELUX-DL Extension (ไม่บังคับ)
+#### ใช้ session Facebook/YouTube ผ่าน ZELUX-DL Extension (ไม่บังคับ)
 
-ในหน้า Facebook ให้เปิด extension ของ ZELUX-DL วางลิงก์ Facebook แล้วเลือก **Use my Facebook session for this download** ก่อนส่ง
-extension จะขอสิทธิ์ cookies/เว็บไซต์เฉพาะเมื่อเลือกตัวเลือกนี้ เมื่ออนุญาตแล้วให้กด **Send to ZELUX-DL** เพื่อเปิดแอปโดยตรง อ่านเฉพาะ cookies ของ Facebook ในแท็บที่เปิดอยู่
+เปิดแท็บ Facebook หรือ YouTube ให้ตรงกับลิงก์ แล้วเปิด extension ของ ZELUX-DL เลือก **Use my Facebook/YouTube session for this download** เฉพาะเมื่อจำเป็น
+extension จะขอสิทธิ์ cookies/เว็บไซต์เฉพาะเมื่อเลือกตัวเลือกนี้ เมื่ออนุญาตแล้วให้กด **Send to ZELUX-DL** เพื่อเปิดแอปโดยตรง อ่านเฉพาะ cookies ของโดเมน Facebook หรือ YouTube ตามแท็บ/ลิงก์ที่เลือก
 แล้วส่งไปยัง ZELUX-DL บนเครื่องเดียวกันผ่าน localhost ด้วยโทเคนใช้ครั้งเดียว ตัว extension ไม่ส่ง cookies ไป cloud หรือบริการภายนอก
-ZELUX-DL สร้างไฟล์ชั่วคราวเพื่อให้ `yt-dlp` ใช้ และลบไฟล์หลังงานจบ รวมถึงเมื่อยกเลิกหรือล้มเหลว; หากโปรแกรมถูกปิดแบบ force-kill
+ZELUX-DL สร้างไฟล์ชั่วคราวเฉพาะโดเมนเพื่อให้ `yt-dlp` ใช้ และลบไฟล์หลังงานจบ รวมถึงเมื่อยกเลิกหรือล้มเหลว; หากโปรแกรมถูกปิดแบบ force-kill
 ไฟล์ตกค้างจะถูกเก็บกวาดในการเปิดโปรแกรมครั้งถัดไปเมื่อเก่ากว่า 24 ชั่วโมง การลบเป็นการ unlink ตามปกติ ไม่ใช่ secure erase
 และ cookies/session ต้นฉบับใน Brave จะไม่ถูกลบหรือทำให้ logout
 
-วิธีนี้ช่วยยืนยันตัวตนกับเนื้อหาที่บัญชีของคุณเข้าถึงได้เท่านั้น ไม่ข้าม private/DRM/ข้อจำกัดสิทธิ์ และ Facebook อาจเปลี่ยนระบบจน yt-dlp ใช้งานไม่ได้
+วิธีนี้ช่วยยืนยันตัวตนกับเนื้อหาที่บัญชีของคุณเข้าถึงได้เท่านั้น ไม่ข้าม private/DRM/ข้อจำกัดสิทธิ์ และผู้ให้บริการอาจเปลี่ยนระบบจน yt-dlp ใช้งานไม่ได้
+การใช้ session กับ yt-dlp อาจมีความเสี่ยงต่อบัญชี ควรเปิดใช้เฉพาะเมื่อจำเป็นและใช้กับสื่อที่คุณมีสิทธิ์เข้าถึง
 
 #### ใช้ cookies จากเบราว์เซอร์สำหรับเว็บที่ต้องล็อกอิน (ทางเลือกขั้นสูง)
+
+ZELUX-DL สร้าง `cookies.txt` ข้างไฟล์โปรแกรมเมื่อเปิดครั้งแรก หากใส่ cookies รูปแบบ Netscape ลงในไฟล์นี้ โปรแกรมจะส่งให้ `yt-dlp` ใช้อัตโนมัติเมื่อ `MEDIA_COOKIES_BROWSER` ตั้งเป็น `none` โดยไม่ต้องติดตั้งหรือเปิด Extension ไฟล์ว่างจะไม่ถูกส่งไปยัง `yt-dlp`
+
+ตรวจตำแหน่งไฟล์ได้จากหน้า `settings` และเปลี่ยนตำแหน่งได้ด้วย `set MEDIA_COOKIES_FILE <path>` ใช้เฉพาะ cookies ที่คุณมีสิทธิ์ใช้ และเก็บไฟล์นี้เป็นความลับ—อย่าแชร์หรืออัปโหลดขึ้น GitHub (ไฟล์ `cookies.txt` ถูก ignore ใน Git อยู่แล้ว)
 
 ถ้าไม่ได้ใช้ extension ยังเลือก browser profile แบบเดิมได้:
 เลือก browser ที่ล็อกอินอยู่ เช่น Edge:

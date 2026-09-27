@@ -1349,7 +1349,7 @@ test('Windows updater launcher actually starts its detached helper', { skip: pro
   });
   t.after(() => {
     try { fakeParent.kill(); } catch (_) { /* The process may already have exited. */ }
-    fs.rmSync(directory, { recursive: true, force: true });
+    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   await new Promise((resolve, reject) => {
     fakeParent.once('spawn', resolve);
@@ -1383,10 +1383,11 @@ test('Windows updater launcher actually starts its detached helper', { skip: pro
   assert.match(fs.readFileSync(logPath, 'utf8'), /Updater started; waiting for process/);
   fakeParent.kill();
   const deadline = Date.now() + 5000;
-  while (Date.now() < deadline && !fs.readFileSync(logPath, 'utf8').includes('The verified update file is missing.')) {
+  while (Date.now() < deadline && !fs.readFileSync(logPath, 'utf8').includes('Update/relaunch failed: The verified update file is missing.')) {
     await new Promise(resolve => setTimeout(resolve, 50));
   }
-  assert.match(fs.readFileSync(logPath, 'utf8'), /The verified update file is missing/);
+  assert.match(fs.readFileSync(logPath, 'utf8'), /Update\/relaunch failed: The verified update file is missing/);
+  await new Promise(resolve => setTimeout(resolve, 200));
 });
 
 test('Windows updater handoff does not proceed until the PowerShell helper reports ready', async t => {

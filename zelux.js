@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.1';
+const APP_VERSION = '1.8.2';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -319,6 +319,181 @@ function getCookiesArgs() {
   const cookiesPath = hasNetscapeCookieEntries(MEDIA_COOKIES_FILE) ? MEDIA_COOKIES_FILE : '';
   const arr = buildMediaCookieArgs(MEDIA_COOKIES_BROWSER, cookiesPath);
   return { str: arr.length ? ` ${arr.map(value => `"${value}"`).join(' ')}` : '', arr };
+}
+
+function getActiveMediaCookieFile() {
+  if (TEMP_MEDIA_COOKIES_FILE && fs.existsSync(TEMP_MEDIA_COOKIES_FILE)) return TEMP_MEDIA_COOKIES_FILE;
+  return hasNetscapeCookieEntries(MEDIA_COOKIES_FILE) ? MEDIA_COOKIES_FILE : '';
+}
+
+function buildCookieHeaderFromNetscape(cookieFilePath, hostname = 'www.facebook.com') {
+  if (!cookieFilePath || !fs.existsSync(cookieFilePath)) return '';
+  const host = String(hostname || '').toLowerCase().replace(/^\./, '');
+  const now = Math.floor(Date.now() / 1000);
+  const cookies = new Map();
+  for (const rawLine of fs.readFileSync(cookieFilePath, 'utf8').split(/\r?\n/)) {
+    if (!rawLine || rawLine.startsWith('#') && !rawLine.startsWith('#HttpOnly_')) continue;
+    const fields = rawLine.replace(/^#HttpOnly_/, '').split('\t');
+    if (fields.length < 7) continue;
+    const [rawDomain, includeSubdomains, cookiePath, , expiry, name, value] = fields;
+    const domain = rawDomain.toLowerCase().replace(/^\./, '');
+    if (!domain || !name || (Number(expiry) > 0 && Number(expiry) < now)) continue;
+    const matchesHost = host === domain || (includeSubdomains.toUpperCase() === 'TRUE' && host.endsWith(`.${domain}`));
+    if (!matchesHost || !String(cookiePath || '/').startsWith('/')) continue;
+    cookies.set(name, value);
+  }
+  return [...cookies].map(([name, value]) => `${name}=${value}`).join('; ');
+}
+
+function isFacebookPhotoPostUrl(rawUrl) {
+  try {
+    const parsed = new URL(rawUrl);
+    const host = parsed.hostname.toLowerCase();
+    if (!(host === 'facebook.com' || host.endsWith('.facebook.com'))) return false;
+    return /\/(?:posts?|photos?|photo\.php|media\/set|permalink|story\.php|share\/(?:p|r))(?:\/|$|\?)/i.test(parsed.pathname);
+  } catch (_) { return false; }
+}
+
+function normalizeFacebookEmbeddedUrl(value) {
+  return decodeHtmlEntities(String(value || ''))
+    .replace(/\\u0025/gi, '%').replace(/\\u0026/gi, '&').replace(/\\u003d/gi, '=')
+    .replace(/\\u002f/gi, '/').replace(/\\u003a/gi, ':')
+    .replace(/\\\//g, '/').replace(/\\\\/g, '\\');
+}
+
+function extractFacebookPostImageUrls(html, maxImages = 200) {
+  const normalized = normalizeFacebookEmbeddedUrl(html);
+  const candidates = normalized.match(/https?:\/\/[^\s"'<>\\]+/gi) || [];
+  const urls = [];
+  const seen = new Set();
+  for (const rawCandidate of candidates) {
+    let candidate = normalizeFacebookEmbeddedUrl(rawCandidate).replace(/[),;]+$/g, '');
+    let parsed;
+    try { parsed = new URL(candidate); } catch (_) { continue; }
+    const host = parsed.hostname.toLowerCase();
+    const isCdn = host.endsWith('.fbcdn.net') || host === 'fbcdn.net';
+    const isFacebookImage = host === 'facebook.com' || host.endsWith('.facebook.com');
+    const imagePath = /\.(?:jpe?g|png|webp|gif)(?:$|\?)/i.test(parsed.pathname);
+    if ((!isCdn && !isFacebookImage) || (!isCdn && !imagePath) || (!imagePath && !/\/v\/t\d+\./i.test(parsed.pathname))) continue;
+    // Facebook frequently emits the same photo in several escaped JSON fields.
+    parsed.hash = '';
+    candidate = parsed.href;
+    if (!seen.has(candidate)) {
+      seen.add(candidate);
+      urls.push(candidate);
+      if (urls.length >= maxImages) break;
+    }
+  }
+  return urls;
+}
+
+function extractFacebookPostTitle(html) {
+  const match = String(html || '').match(/<meta\b[^>]*(?:property|name)=["'](?:og:title|twitter:title)["'][^>]*content=["']([^"']+)/i)
+    || String(html || '').match(/<title[^>]*>([^<]+)/i);
+  return safeFilename(decodeHtmlEntities(match?.[1] || 'Facebook post')).slice(0, 120) || 'Facebook post';
+}
+
+function downloadFacebookImage(url, destination, referer = '') {
+  return new Promise((resolve, reject) => {
+    const headers = {
+      Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      Referer: referer || 'https://www.facebook.com/',
+    };
+    httpRequest(url, headers).then(({ res }) => {
+      if (res.statusCode < 200 || res.statusCode >= 300) {
+        res.resume();
+        return reject(new Error(`รูปภาพตอบกลับ HTTP ${res.statusCode}`));
+      }
+      const contentType = String(res.headers['content-type'] || '').toLowerCase();
+      if (contentType && !contentType.startsWith('image/')) {
+        res.resume();
+        return reject(new Error('ปลายทางไม่ส่งข้อมูลรูปภาพ'));
+      }
+      const output = fs.createWriteStream(destination, { flags: 'wx' });
+      activeWriteStreams.add(output);
+      output.once('close', () => activeWriteStreams.delete(output));
+      const removeCancel = cancelCtrl.onCancel(() => {
+        res.destroy(new Error('CANCELLED'));
+        output.destroy(new Error('CANCELLED'));
+      });
+      let settled = false;
+      const finish = (error) => {
+        if (settled) return;
+        settled = true;
+        removeCancel();
+        if (error) {
+          try { fs.unlinkSync(destination); } catch (_) { }
+          reject(error);
+        } else resolve(destination);
+      };
+      output.once('error', finish);
+      output.once('finish', () => finish(null));
+      res.once('error', finish);
+      res.pipe(output);
+    }).catch(reject);
+  });
+}
+
+async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage) {
+  print('      ' + info('🖼️') + ' กำลังตรวจสอบรูปทั้งหมดในโพสต์ Facebook...');
+  const cookiePath = getActiveMediaCookieFile();
+  const cookieHeader = buildCookieHeaderFromNetscape(cookiePath, 'www.facebook.com');
+  const response = await fetchPage(url, {
+    ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+    Referer: 'https://www.facebook.com/',
+    Accept: 'text/html,application/xhtml+xml',
+  });
+  const page = typeof response === 'string' ? { body: response, statusCode: 200, headers: {} } : response;
+  const responseIssue = diagnoseHttpResponse(page.statusCode, page.headers, page.body, 'Facebook');
+  if (responseIssue) throw new Error(responseIssue);
+  const imageUrls = extractFacebookPostImageUrls(page.body);
+  if (!imageUrls.length) {
+    throw new Error(cookiePath
+      ? 'ไม่พบรูปในโพสต์ Facebook; โพสต์อาจเป็นวิดีโอ ลิงก์หมดอายุ หรือจำเป็นต้องเปิดด้วย session ที่มีสิทธิ์'
+      : 'ไม่พบรูปในโพสต์ Facebook; ใส่ cookies.txt หรือเปิดใช้ Facebook session จาก Extension แล้วลองใหม่');
+  }
+
+  const title = extractFacebookPostTitle(page.body);
+  const targetDir = getUniqueDirectoryPath(path.join(DOWNLOADS_DIR, 'Images'), `Facebook - ${title}`);
+  fs.mkdirSync(targetDir, { recursive: true });
+  print('      ' + success('✓') + ` พบรูป ${chalk.yellow(imageUrls.length)} รูป`);
+  print('      ' + white('📁 โฟลเดอร์: ') + chalk.yellow.bold(path.relative(DOWNLOADS_DIR, targetDir)));
+  cancelCtrl.startListening();
+  try {
+    const results = await runWithConcurrency(imageUrls, Math.min(4, imageUrls.length), async (imageUrl, index) => {
+      if (cancelCtrl.cancelled) throw new Error('CANCELLED');
+      let extension = '.jpg';
+      try {
+        extension = path.extname(new URL(imageUrl).pathname).match(/^\.(?:jpe?g|png|webp|gif)$/i)?.[0] || extension;
+      } catch (_) { }
+      const destination = path.join(targetDir, `${String(index + 1).padStart(3, '0')}${extension}`);
+      try {
+        await imageDownloader(imageUrl, destination, url);
+        print('      ' + success('✓') + ` รูปที่ ${index + 1}/${imageUrls.length} เสร็จแล้ว`);
+        return { success: true, filePath: destination };
+      } catch (error) {
+        try { fs.unlinkSync(destination); } catch (_) { }
+        if (error.message === 'CANCELLED' || cancelCtrl.cancelled) throw new Error('CANCELLED');
+        print('      ' + warning(`⚠ รูปที่ ${index + 1} โหลดไม่สำเร็จ: ${error.message}`));
+        return { success: false, error: error.message };
+      }
+    });
+    const successful = results.filter(result => result?.success);
+    if (!successful.length) {
+      try { removeDirectoryIfEmpty(targetDir, DOWNLOADS_DIR); } catch (_) { }
+      return { success: false, error: 'ดาวน์โหลดรูปจากโพสต์ไม่สำเร็จ' };
+    }
+    return {
+      success: true,
+      filePath: successful[0].filePath,
+      filePaths: successful.map(result => result.filePath),
+      totalImages: imageUrls.length,
+      downloadedImages: successful.length,
+      failedImages: imageUrls.length - successful.length,
+    };
+  } finally {
+    cancelCtrl.stopListening();
+  }
 }
 
 function formatFacebookCookies(cookies) {
@@ -2904,7 +3079,7 @@ function cleanupMediaInfoJson(infoJsonPath, mediaFilePath = '') {
 }
 
 async function chooseBatchMediaOptions(urls, chooser = promptInteractiveMenu) {
-  const mediaUrls = urls.filter(url => shouldUseMediaExtractor(url));
+  const mediaUrls = urls.filter(url => shouldUseMediaExtractor(url) && !isFacebookPhotoPostUrl(url));
   if (!mediaUrls.length) return null;
 
   const formatType = await chooser([
@@ -3790,6 +3965,16 @@ async function performDownload(url, mediaOptions = null) {
   }
   const githubRepository = parseGitHubRepositoryUrl(url);
   if (githubRepository) return downloadGitHubRepository(url, githubRepository);
+  if (isFacebookPhotoPostUrl(url)) {
+    try {
+      return await downloadFacebookPhotoPost(url);
+    } catch (err) {
+      if (err.message === 'CANCELLED') return { success: false, cancelled: true, error: 'Cancelled' };
+      print('      ' + error('\u2715') + ' Facebook รูปภาพ: ' + err.message);
+      print();
+      return { success: false, error: err.message };
+    }
+  }
   const isM3u8 = url.toLowerCase().includes('.m3u8') || url.includes('zelux_m3u8=true');
   if (shouldUseMediaExtractor(url) || isM3u8) {
     return downloadMediaFile(url, mediaOptions);
@@ -4810,8 +4995,13 @@ if (require.main === module) {
 module.exports = {
   CancelController,
   buildMediaCookieArgs,
+  buildCookieHeaderFromNetscape,
   buildMediaPostprocessArgs,
   chooseBatchMediaOptions,
+  downloadFacebookPhotoPost,
+  extractFacebookPostImageUrls,
+  extractFacebookPostTitle,
+  isFacebookPhotoPostUrl,
   buildGitHubArchiveUrl,
   buildSmartLibrary,
   buildGitHubRawUrl,

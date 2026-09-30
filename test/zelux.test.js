@@ -11,11 +11,15 @@ const { EventEmitter } = require('node:events');
 const {
   CancelController,
   buildMediaCookieArgs,
+  buildCookieHeaderFromNetscape,
   chooseBatchMediaOptions,
+  downloadFacebookPhotoPost,
   buildMediaPostprocessArgs,
   buildSmartLibrary,
   cleanupDownloadArtifacts,
   cleanupMediaInfoJson,
+  extractFacebookPostImageUrls,
+  isFacebookPhotoPostUrl,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
   buildWindowsUpdateScript,
@@ -97,6 +101,51 @@ test('media extraction covers known providers, short links and generic video pag
   assert.equal(shouldUseMediaExtractor('https://unlisted-video-site.example/archive.zip', 'application/zip'), false);
   assert.equal(shouldUseMediaExtractor('https://cdn.example/stream.m3u8', 'application/vnd.apple.mpegurl'), true);
   assert.equal(shouldUseMediaExtractor('https://example.com/page', 'application/xhtml+xml'), true);
+});
+
+test('Facebook photo posts are separated from video links and image URLs are deduplicated', () => {
+  assert.equal(isFacebookPhotoPostUrl('https://www.facebook.com/example/posts/123'), true);
+  assert.equal(isFacebookPhotoPostUrl('https://www.facebook.com/share/p/abc123'), true);
+  assert.equal(isFacebookPhotoPostUrl('https://www.facebook.com/reel/123'), false);
+  const html = String.raw`<meta property="og:title" content="Album"><script>
+    {"image":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-a.jpg?_nc=1",
+     "duplicate":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-a.jpg?_nc=1",
+     "second":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-b.png?_nc=2"}
+  </script>`;
+  assert.deepEqual(extractFacebookPostImageUrls(html), [
+    'https://scontent.xx.fbcdn.net/v/t39.30808-6/photo-a.jpg?_nc=1',
+    'https://scontent.xx.fbcdn.net/v/t39.30808-6/photo-b.png?_nc=2',
+  ]);
+});
+
+test('Facebook page cookies are scoped to facebook hosts when sent for post inspection', () => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'zelux-facebook-cookie-header-'));
+  const cookiePath = path.join(directory, 'cookies.txt');
+  fs.writeFileSync(cookiePath, '# Netscape HTTP Cookie File\n.facebook.com\tTRUE\t/\tTRUE\t0\tc_user\t123\nexample.com\tTRUE\t/\tTRUE\t0\tbad\tnope\n');
+  try {
+    assert.equal(buildCookieHeaderFromNetscape(cookiePath, 'www.facebook.com'), 'c_user=123');
+    assert.equal(buildCookieHeaderFromNetscape(cookiePath, 'scontent.xx.fbcdn.net'), '');
+  } finally { fs.rmSync(directory, { recursive: true, force: true }); }
+});
+
+test('Facebook photo post downloader saves every discovered image in one folder', async () => {
+  const html = '<meta property="og:title" content="Weekend album">'
+    + 'https://scontent.xx.fbcdn.net/v/t39.30808-6/a.jpg?x=1 '
+    + 'https://scontent.xx.fbcdn.net/v/t39.30808-6/b.png?x=2';
+  const downloaded = [];
+  const result = await downloadFacebookPhotoPost(
+    'https://www.facebook.com/example/posts/123',
+    async () => ({ statusCode: 200, headers: { 'content-type': 'text/html' }, body: html }),
+    async (url, destination) => { downloaded.push({ url, destination }); fs.writeFileSync(destination, 'image'); return destination; },
+  );
+  try {
+    assert.equal(result.success, true);
+    assert.equal(result.downloadedImages, 2);
+    assert.equal(downloaded.length, 2);
+    assert.ok(downloaded.every(item => fs.existsSync(item.destination)));
+  } finally {
+    if (result.filePath) fs.rmSync(path.dirname(result.filePath), { recursive: true, force: true });
+  }
 });
 
 test('media batches ask once for format and quality, then share the selection across links', async () => {
@@ -187,7 +236,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.8.1');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.2');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -1368,7 +1417,7 @@ test('Windows updater launcher actually starts its detached helper', { skip: pro
     '-BackupPath', path.join(directory, 'not-used.backup'),
     '-WorkDir', directory,
     '-LogPath', logPath,
-    '-ExpectedVersion', '1.8.1',
+    '-ExpectedVersion', '1.8.2',
   ];
   const launcher = require('child_process').spawn(powershellPath, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',

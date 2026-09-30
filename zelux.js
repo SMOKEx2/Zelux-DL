@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.3';
+const APP_VERSION = '1.8.4';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -2631,7 +2631,8 @@ async function selfUpdate() {
 
     if (process.platform === 'win32') {
       // Windows locks the running EXE. The detached helper waits for this PID,
-      // retries replacement, verifies the installed version, then relaunches.
+      // retries replacement, verifies the installed version, then leaves the
+      // app closed for a manual restart.
       const helperDir = path.join(process.env.LOCALAPPDATA || BASE_DIR, 'ZELUX-DL');
       fs.mkdirSync(helperDir, { recursive: true });
       const scriptPath = path.join(helperDir, '_update.ps1');
@@ -2643,8 +2644,8 @@ async function selfUpdate() {
 
       print();
       print('    ' + success('✓') + chalk.green.bold(' ดาวน์โหลดสำเร็จ! กำลังอัปเดต...'));
-      print('    ' + dim('    โปรแกรมจะรอปิดตัวเดิม ตรวจ EXE ใหม่ แล้วเปิดขึ้นอีกครั้ง'));
-      print('    ' + dim('    หากเปิดไม่สำเร็จ ตรวจ log ใน %LOCALAPPDATA%\\ZELUX-DL\\_update.log'));
+      print('    ' + dim('    โปรแกรมจะนับถอยหลัง 3 วินาที แล้วปิดเพื่อแทนที่ EXE'));
+      print('    ' + dim('    เปิด ZELUX-DL เองอีกครั้งหลังหน้าต่างปิด; log: %LOCALAPPDATA%\\ZELUX-DL\\_update.log'));
       print();
 
       const { spawn } = require('child_process');
@@ -2685,6 +2686,12 @@ async function selfUpdate() {
       });
 
       // Releasing our PID is what allows PowerShell to replace the EXE safely.
+      for (let seconds = 3; seconds >= 1; seconds--) {
+        print('    ' + chalk.hex('#fbbf24')(`ปิดโปรแกรมใน ${seconds}...`));
+        await sleep(1000);
+      }
+      print('    ' + success('✓') + ' อัปเดตถูกติดตั้งแล้ว — เปิดโปรแกรมใหม่เองอีกครั้ง');
+      await sleep(200);
       process.exit(0);
     } else {
       // On Linux/macOS, we can replace the file directly
@@ -2693,26 +2700,15 @@ async function selfUpdate() {
       fs.renameSync(tempPath, exePath);
       fs.chmodSync(exePath, '755');
 
-      const { spawn } = require('child_process');
-      try {
-        await new Promise((resolve, reject) => {
-          const child = spawn(exePath, [], { cwd: BASE_DIR, detached: true, stdio: 'ignore' });
-          child.once('error', reject);
-          child.once('spawn', () => { child.unref(); resolve(); });
-        });
-      } catch (launchError) {
-        try {
-          fs.unlinkSync(exePath);
-          fs.renameSync(backupPath, exePath);
-        } catch (_) { }
-        throw new Error(`อัปเดตแล้วแต่เปิดโปรแกรมใหม่ไม่สำเร็จ: ${launchError.message}`);
-      }
       try { fs.unlinkSync(backupPath); } catch (_) { }
 
       print();
-      print('    ' + success('✓') + chalk.green.bold(' อัปเดตสำเร็จ! กำลังเปิดโปรแกรมใหม่...'));
-      print();
-      await sleep(500);
+      for (let seconds = 3; seconds >= 1; seconds--) {
+        print('    ' + chalk.hex('#fbbf24')(`ปิดโปรแกรมใน ${seconds}...`));
+        await sleep(1000);
+      }
+      print('    ' + success('✓') + chalk.green.bold(' อัปเดตสำเร็จแล้ว — เปิดโปรแกรมใหม่เองอีกครั้ง'));
+      await sleep(200);
       process.exit(0);
     }
   } catch (e) {
@@ -2845,25 +2841,18 @@ try {
   if ($LASTEXITCODE -ne 0 -or $ActualVersion -ne $ExpectedVersion) {
     throw "Installed executable version check failed. Expected $ExpectedVersion, got $ActualVersion."
   }
-  Write-UpdateLog "Installed and verified version $ActualVersion. Launching."
-  $NewProcess = Start-Process -FilePath $ExePath -WorkingDirectory $WorkDir -PassThru
-  Start-Sleep -Seconds 2
-  if (-not (Get-Process -Id $NewProcess.Id -ErrorAction SilentlyContinue)) {
-    throw 'The updated program exited shortly after launch.'
-  }
   if (Test-Path -LiteralPath $BackupPath) {
     try { Remove-Item -LiteralPath $BackupPath -Force } catch { Write-UpdateLog "Could not remove backup: $($_.Exception.Message)" }
   }
-  Write-UpdateLog "Version $ActualVersion is running."
+  Write-UpdateLog "Installed and verified version $ActualVersion. Update complete; waiting for manual restart."
 } catch {
-  Write-UpdateLog "Update/relaunch failed: $($_.Exception.Message)"
+  Write-UpdateLog "Update failed: $($_.Exception.Message)"
   if (Test-Path -LiteralPath $BackupPath) {
     try {
       if (Test-Path -LiteralPath $ExePath) { Remove-Item -LiteralPath $ExePath -Force }
       Move-Item -LiteralPath $BackupPath -Destination $ExePath -Force
-      Write-UpdateLog 'Restored the previous executable and reopening it.'
-      Start-Process -FilePath $ExePath -WorkingDirectory $WorkDir
-    } catch { Write-UpdateLog "Rollback/relaunch failed: $($_.Exception.Message)" }
+      Write-UpdateLog 'Restored the previous executable. Manual restart is required.'
+    } catch { Write-UpdateLog "Rollback failed: $($_.Exception.Message)" }
   }
 }`;
 }

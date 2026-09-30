@@ -315,12 +315,20 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Facebook changes the tab route when `+N` is opened. Inject one short,
     // synchronous step at a time so a navigation cannot cancel a long script.
     let unchangedPasses = 0;
+    let idlePasses = 0;
+    let galleryStarted = false;
     for (let pass = 0; pass < 24; pass++) {
       const batch = await captureFacebookPostImages(activeTab.id);
       const previousCount = capturedFacebookImageUrls.length;
       capturedFacebookImageUrls = dedupeFacebookImageUrls([...capturedFacebookImageUrls, ...batch.urls]);
       unchangedPasses = capturedFacebookImageUrls.length === previousCount ? unchangedPasses + 1 : 0;
-      if (batch.action === 'idle' || unchangedPasses >= 2) break;
+      if (batch.action !== 'idle') {
+        galleryStarted = true;
+        idlePasses = 0;
+      } else {
+        idlePasses += 1;
+      }
+      if ((!galleryStarted && batch.action === 'idle') || unchangedPasses >= 3 || (galleryStarted && idlePasses >= 3)) break;
       await new Promise(resolve => setTimeout(resolve, 900));
     }
     if (capturedFacebookImageUrls.length > 1) {

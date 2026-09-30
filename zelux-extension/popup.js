@@ -113,7 +113,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     try {
       const response = await chrome.scripting.executeScript({
         target: { tabId },
-        func: () => {
+        func: async () => {
           // Prefer the visible post viewer. Do not combine the whole page with
           // the dialog: that would bring avatars, recommendations and other
           // feed cards into the download set.
@@ -144,6 +144,13 @@ document.addEventListener('DOMContentLoaded', async () => {
               return { url: pieces[0], width };
             })
             .sort((a, b) => b.width - a.width)[0]?.url;
+          const addEmbeddedUrls = html => {
+            const normalized = String(html || '')
+              .replace(/\\u0025/gi, '%').replace(/\\u0026/gi, '&')
+              .replace(/\\u003d/gi, '=').replace(/\\u002f/gi, '/')
+              .replace(/\\\//g, '/').replace(/&amp;/gi, '&');
+            for (const match of normalized.matchAll(/https?:\/\/[^\s"'<>\\]+/gi)) add(match[0].replace(/[),;]+$/g, ''));
+          };
           // Facebook keeps the rest of a gallery in lazy/hidden img nodes.
           // Read those nodes too; the CDN/size checks above remove avatars and UI assets.
           for (const image of root.querySelectorAll?.('img') || []) {
@@ -157,15 +164,49 @@ document.addEventListener('DOMContentLoaded', async () => {
             const href = element.getAttribute?.('href') || '';
             if (/scontent\.|fbsbx\.com/i.test(href)) add(href);
           }
+          addEmbeddedUrls(root.outerHTML);
+          const collectVisibleImages = scope => {
+            for (const image of scope?.querySelectorAll?.('img') || []) {
+              const source = image.currentSrc || image.src || image.getAttribute('data-src') || image.getAttribute('data-original');
+              const width = Number(image.naturalWidth || image.width || 0);
+              const height = Number(image.naturalHeight || image.height || 0);
+              const alt = String(image.alt || '');
+              // Gallery images are large and carry Facebook's image alt text.
+              // This excludes avatars, reaction icons and comment GIFs.
+              if (width >= 300 && height >= 300 && (alt.includes('รูปภาพ') || alt.includes('image'))) add(source);
+            }
+          };
+          collectVisibleImages(root);
           // A `+6` overlay is the gallery's explicit affordance for hidden items.
-          // Clicking only that overlay lets Facebook mount the full viewer; the
-          // second capture pass (after a short repaint) collects its image nodes.
-          const more = [...(root.querySelectorAll?.('div,span,a,button') || [])].find(element => {
+          // Open Facebook's viewer, then walk its next-image control. The viewer
+          // is the only reliable place where Facebook exposes every gallery item.
+          const more = [...(root.querySelectorAll?.('div,span,a,button,[role="button"]') || [])].find(element => {
             const text = String(element.textContent || '').trim();
             const rect = element.getBoundingClientRect?.();
             return /^\+\s*\d+$/.test(text) && rect && rect.width > 0 && rect.height > 0;
           });
-          if (more) more.click();
+          if (more) {
+            (more.closest?.('a,button,[role="button"]') || more.parentElement || more).click();
+            const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+            await wait(700);
+            const seenViewerImages = new Set();
+            for (let step = 0; step < 24; step++) {
+              const viewer = document.querySelector('[role="dialog"]');
+              collectVisibleImages(viewer || document);
+              const current = [...(viewer?.querySelectorAll?.('img') || [])]
+                .find(image => Number(image.naturalWidth || image.width || 0) >= 300 && Number(image.naturalHeight || image.height || 0) >= 300 && (String(image.alt || '').includes('รูปภาพ') || String(image.alt || '').includes('image')));
+              const currentSource = current?.currentSrc || current?.src || '';
+              if (currentSource) {
+                if (seenViewerImages.has(currentSource)) break;
+                seenViewerImages.add(currentSource);
+              }
+              const next = [...(viewer?.querySelectorAll?.('[role="button"],[aria-label]') || [])]
+                .find(element => String(element.getAttribute?.('aria-label') || '').includes('รูปภาพถัดไป'));
+              if (!next) break;
+              next.click();
+              await wait(800);
+            }
+          }
           return [...new Set(candidates)];
         },
       });
@@ -271,12 +312,14 @@ document.addEventListener('DOMContentLoaded', async () => {
   renderCount();
   updateSessionOption();
   if (activeTab?.url && isFacebookUrl(activeTab.url) && Number.isInteger(activeTab.id)) {
-    capturedFacebookImageUrls = await captureFacebookPostImages(activeTab.id);
-    // Facebook often inserts the remaining gallery thumbnails just after the
-    // viewer opens. Give that DOM one short repaint window before falling back.
-    if (capturedFacebookImageUrls.length < 2) {
-      await new Promise(resolve => setTimeout(resolve, 350));
-      capturedFacebookImageUrls = await captureFacebookPostImages(activeTab.id);
+    capturedFacebookImageUrls = [];
+    // The first pass may click the `+N` gallery affordance. Facebook then
+    // mounts the remaining images asynchronously, so always take two more
+    // passes and merge them instead of stopping at the first visible tiles.
+    for (let pass = 0; pass < 3; pass++) {
+      const batch = await captureFacebookPostImages(activeTab.id);
+      capturedFacebookImageUrls = dedupeFacebookImageUrls([...capturedFacebookImageUrls, ...batch]);
+      if (pass < 2) await new Promise(resolve => setTimeout(resolve, 650));
     }
     if (capturedFacebookImageUrls.length > 1) {
       setStatus(`พบรูปจริงในกรอบโพสต์ ${capturedFacebookImageUrls.length} รูป พร้อมส่งให้ ZELUX-DL`, 'success');

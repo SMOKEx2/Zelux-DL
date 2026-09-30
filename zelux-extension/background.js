@@ -69,14 +69,25 @@ function isFacebookImageUrl(value) {
     for (const match of hints.matchAll(/(\d{1,5})x(\d{1,5})/g)) {
       if (Number(match[1]) < 200 || Number(match[2]) < 200) return false;
     }
+    if (/\/v\/t39\.30808-1\//i.test(parsed.pathname) && !/\d{3,5}x\d{3,5}/.test(hints)) return false;
     parsed.hash = '';
     return parsed.href;
   } catch (_) { return false; }
 }
 
 function normalizeFacebookImageUrls(values) {
-  return [...new Set((Array.isArray(values) ? values : [])
-    .map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+  const best = new Map();
+  for (const value of Array.isArray(values) ? values : []) {
+    const url = isFacebookImageUrl(value);
+    if (!url) continue;
+    const parsed = new URL(url);
+    const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+    const score = [...hints.matchAll(/(\d{2,5})x(\d{2,5})/g)]
+      .reduce((max, match) => Math.max(max, Number(match[1]) * Number(match[2])), 0);
+    const key = `${parsed.hostname.toLowerCase()}${parsed.pathname}`;
+    if (!best.has(key) || score > best.get(key).score) best.set(key, { url, score });
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, 200).map(item => item.url);
 }
 
 function buildProtocolUrl(urls, cookieToken = '', exePath = '', imageUrls = []) {

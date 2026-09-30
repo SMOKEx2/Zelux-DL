@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.7';
+const APP_VERSION = '1.8.8';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -367,9 +367,26 @@ function isFacebookImageUrl(rawUrl) {
     for (const match of sizeHints.matchAll(/(\d{1,5})x(\d{1,5})/g)) {
       if (Number(match[1]) < 200 || Number(match[2]) < 200) return false;
     }
+    if (/\/v\/t39\.30808-1\//i.test(parsed.pathname) && !/\d{3,5}x\d{3,5}/.test(sizeHints)) return false;
     parsed.hash = '';
     return parsed.href;
   } catch (_) { return false; }
+}
+
+function dedupeFacebookImageUrls(values, maxImages = 200) {
+  const best = new Map();
+  for (const value of Array.isArray(values) ? values : []) {
+    const url = isFacebookImageUrl(value);
+    if (!url) continue;
+    let parsed;
+    try { parsed = new URL(url); } catch (_) { continue; }
+    const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+    const score = [...hints.matchAll(/(\d{2,5})x(\d{2,5})/g)]
+      .reduce((max, match) => Math.max(max, Number(match[1]) * Number(match[2])), 0);
+    const key = `${parsed.hostname.toLowerCase()}${parsed.pathname}`;
+    if (!best.has(key) || score > best.get(key).score) best.set(key, { url, score });
+  }
+  return [...best.values()].sort((a, b) => b.score - a.score).slice(0, maxImages).map(item => item.url);
 }
 
 function normalizeFacebookEmbeddedUrl(value) {
@@ -457,9 +474,7 @@ function downloadFacebookImage(url, destination, referer = '') {
 async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage, imageUrlsOverride = null) {
   print('      ' + info('🖼️') + ' กำลังตรวจสอบรูปทั้งหมดในโพสต์ Facebook...');
   const cookiePath = getActiveMediaCookieFile();
-  const overrideUrls = Array.isArray(imageUrlsOverride)
-    ? [...new Set(imageUrlsOverride.map(isFacebookImageUrl).filter(Boolean))].slice(0, 200)
-    : [];
+  const overrideUrls = dedupeFacebookImageUrls(imageUrlsOverride, 200);
   let page = { body: '', statusCode: 200, headers: {} };
   let imageUrls = overrideUrls;
   if (!imageUrls.length) {
@@ -1586,7 +1601,7 @@ function decodeZeluxProtocolRequest(value) {
         try {
           const parsedImages = JSON.parse(encodedImages);
           if (Array.isArray(parsedImages)) {
-            facebookImageUrls = [...new Set(parsedImages.map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+            facebookImageUrls = dedupeFacebookImageUrls(parsedImages, 200);
           }
         } catch (_) { /* Ignore malformed optional capture data and use the page fallback. */ }
       }
@@ -5048,6 +5063,7 @@ module.exports = {
   extractFacebookPostImageUrls,
   extractFacebookPostTitle,
   isFacebookImageUrl,
+  dedupeFacebookImageUrls,
   isFacebookPhotoPostUrl,
   buildGitHubArchiveUrl,
   buildSmartLibrary,

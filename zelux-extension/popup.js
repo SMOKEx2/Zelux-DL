@@ -87,9 +87,25 @@ document.addEventListener('DOMContentLoaded', async () => {
       for (const match of hints.matchAll(/(\d{1,5})x(\d{1,5})/g)) {
         if (Number(match[1]) < 200 || Number(match[2]) < 200) return false;
       }
+      if (/\/v\/t39\.30808-1\//i.test(parsed.pathname) && !/\d{3,5}x\d{3,5}/.test(hints)) return false;
       parsed.hash = '';
       return parsed.href;
     } catch (_) { return false; }
+  }
+
+  function dedupeFacebookImageUrls(values) {
+    const best = new Map();
+    for (const value of Array.isArray(values) ? values : []) {
+      const url = isFacebookImageUrl(value);
+      if (!url) continue;
+      const parsed = new URL(url);
+      const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+      const score = [...hints.matchAll(/(\d{2,5})x(\d{2,5})/g)]
+        .reduce((max, match) => Math.max(max, Number(match[1]) * Number(match[2])), 0);
+      const key = `${parsed.hostname.toLowerCase()}${parsed.pathname}`;
+      if (!best.has(key) || score > best.get(key).score) best.set(key, { url, score });
+    }
+    return [...best.values()].sort((a, b) => b.score - a.score).slice(0, 200).map(item => item.url);
   }
 
   async function captureFacebookPostImages(tabId) {
@@ -116,6 +132,7 @@ document.addEventListener('DOMContentLoaded', async () => {
               if (!/\.(?:jpe?g|png|webp|gif)(?:$|\/)/i.test(parsed.pathname) && !/\/v\/t\d+\./i.test(parsed.pathname)) return;
               const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
               for (const match of hints.matchAll(/(\d{1,5})x(\d{1,5})/g)) if (Number(match[1]) < 200 || Number(match[2]) < 200) return;
+              if (/\/v\/t39\.30808-1\//i.test(parsed.pathname) && !/\d{3,5}x\d{3,5}/.test(hints)) return;
               parsed.hash = '';
               candidates.push(parsed.href);
             } catch (_) { /* Ignore malformed DOM attributes. */ }
@@ -127,18 +144,32 @@ document.addEventListener('DOMContentLoaded', async () => {
               return { url: pieces[0], width };
             })
             .sort((a, b) => b.width - a.width)[0]?.url;
+          // Facebook keeps the rest of a gallery in lazy/hidden img nodes.
+          // Read those nodes too; the CDN/size checks above remove avatars and UI assets.
           for (const image of root.querySelectorAll?.('img') || []) {
-            const rect = image.getBoundingClientRect?.();
-            const width = Math.max(image.naturalWidth || 0, image.width || 0, rect?.width || 0);
-            const height = Math.max(image.naturalHeight || 0, image.height || 0, rect?.height || 0);
-            if (width < 200 || height < 200) continue;
             add(largestSrcset(image.getAttribute('srcset') || image.getAttribute('data-srcset')));
             add(image.currentSrc || image.src || image.getAttribute('data-src') || image.getAttribute('data-original'));
+            add(image.getAttribute('data-image-url'));
           }
+          for (const element of root.querySelectorAll?.('[style*="background-image"],a[href]') || []) {
+            const style = element.getAttribute?.('style') || '';
+            for (const match of style.matchAll(/url\(["']?([^"')]+)["']?\)/gi)) add(match[1]);
+            const href = element.getAttribute?.('href') || '';
+            if (/scontent\.|fbsbx\.com/i.test(href)) add(href);
+          }
+          // A `+6` overlay is the gallery's explicit affordance for hidden items.
+          // Clicking only that overlay lets Facebook mount the full viewer; the
+          // second capture pass (after a short repaint) collects its image nodes.
+          const more = [...(root.querySelectorAll?.('div,span,a,button') || [])].find(element => {
+            const text = String(element.textContent || '').trim();
+            const rect = element.getBoundingClientRect?.();
+            return /^\+\s*\d+$/.test(text) && rect && rect.width > 0 && rect.height > 0;
+          });
+          if (more) more.click();
           return [...new Set(candidates)];
         },
       });
-      return [...new Set((response?.[0]?.result || []).map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+      return dedupeFacebookImageUrls(response?.[0]?.result || []);
     } catch (_) {
       return [];
     }
@@ -425,7 +456,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   function buildProtocolUrl(urls, cookieToken, exePath, imageUrls = []) {
     const query = new URLSearchParams({ urls: JSON.stringify(urls), cookieToken, exePath });
-    const safeImages = [...new Set((Array.isArray(imageUrls) ? imageUrls : []).map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+    const safeImages = dedupeFacebookImageUrls(imageUrls);
     if (safeImages.length) query.set('imageUrls', JSON.stringify(safeImages));
     return `zelux://download?${query.toString()}`;
   }

@@ -243,7 +243,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.8.5');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.6');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -1378,7 +1378,8 @@ test('Windows update handoff waits, verifies the replacement, and leaves restart
   assert.match(script, /Updater started; waiting for process/);
   assert.match(script, /Get-Process -Id \$ParentPid/);
   assert.match(script, /for \(\$Attempt = 1; \$Attempt -le 20/);
-  assert.match(script, /\$ActualVersion -ne \$ExpectedVersion/);
+  assert.match(script, /FileVersionInfo\]::GetVersionInfo\(\$ExePath\)\.FileVersion/);
+  assert.match(script, /\$NormalizedVersion -ne \$ExpectedVersion/);
   assert.doesNotMatch(script, /Start-Process -FilePath \$ExePath -WorkingDirectory \$WorkDir -PassThru/);
   assert.match(script, /Update complete; waiting for manual restart/);
   assert.match(script, /Restored the previous executable\. Manual restart is required/);
@@ -1425,7 +1426,7 @@ test('Windows updater launcher actually starts its detached helper', { skip: pro
     '-BackupPath', path.join(directory, 'not-used.backup'),
     '-WorkDir', directory,
     '-LogPath', logPath,
-    '-ExpectedVersion', '1.8.5',
+    '-ExpectedVersion', '1.8.6',
   ];
   const launcher = require('child_process').spawn(powershellPath, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',

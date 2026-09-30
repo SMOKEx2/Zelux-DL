@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.5';
+const APP_VERSION = '1.8.6';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -2852,9 +2852,10 @@ try {
     }
   }
   if (-not $Replaced) { throw 'Could not replace the executable.' }
-  Write-UpdateLog 'Executable replaced; checking installed version.'
-  $ActualVersion = (& $ExePath --version 2>&1 | Out-String).Trim()
-  if ($LASTEXITCODE -ne 0 -or $ActualVersion -ne $ExpectedVersion) {
+  Write-UpdateLog 'Executable replaced; checking installed version metadata.'
+  $ActualVersion = [Diagnostics.FileVersionInfo]::GetVersionInfo($ExePath).FileVersion
+  $NormalizedVersion = ($ActualVersion -replace '\.0+$', '')
+  if ($NormalizedVersion -ne $ExpectedVersion) {
     throw "Installed executable version check failed. Expected $ExpectedVersion, got $ActualVersion."
   }
   if (Test-Path -LiteralPath $BackupPath) {

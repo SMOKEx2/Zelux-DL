@@ -135,12 +135,17 @@ test('Facebook photo post downloader saves every discovered image in one folder'
     + 'https://scontent.xx.fbcdn.net/v/t39.30808-6/a.jpg?x=1 '
     + 'https://scontent.xx.fbcdn.net/v/t39.30808-6/b.png?x=2';
   const downloaded = [];
+  let fetchOptions;
   const result = await downloadFacebookPhotoPost(
     'https://www.facebook.com/example/posts/123',
-    async () => ({ statusCode: 200, headers: { 'content-type': 'text/html' }, body: html }),
+    async (url, headers, options) => {
+      fetchOptions = options;
+      return { statusCode: 200, headers: { 'content-type': 'text/html' }, body: html };
+    },
     async (url, destination) => { downloaded.push({ url, destination }); fs.writeFileSync(destination, 'image'); return destination; },
   );
   try {
+    assert.equal(fetchOptions.maxBodyBytes, 16 * 1024 * 1024);
     assert.equal(result.success, true);
     assert.equal(result.downloadedImages, 2);
     assert.equal(downloaded.length, 2);
@@ -238,7 +243,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.8.4');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.5');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -1420,7 +1425,7 @@ test('Windows updater launcher actually starts its detached helper', { skip: pro
     '-BackupPath', path.join(directory, 'not-used.backup'),
     '-WorkDir', directory,
     '-LogPath', logPath,
-    '-ExpectedVersion', '1.8.4',
+    '-ExpectedVersion', '1.8.5',
   ];
   const launcher = require('child_process').spawn(powershellPath, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',

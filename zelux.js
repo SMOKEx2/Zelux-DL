@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.4';
+const APP_VERSION = '1.8.5';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -447,7 +447,7 @@ async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, i
     ...(cookieHeader ? { Cookie: cookieHeader } : {}),
     Referer: 'https://www.facebook.com/',
     Accept: 'text/html,application/xhtml+xml',
-  });
+  }, { maxBodyBytes: 16 * 1024 * 1024 });
   const page = typeof response === 'string' ? { body: response, statusCode: 200, headers: {} } : response;
   const responseIssue = diagnoseHttpResponse(page.statusCode, page.headers, page.body, 'Facebook');
   if (responseIssue) throw new Error(responseIssue);
@@ -1213,19 +1213,35 @@ function extractGoogleFileId(parsed) {
   return fileId && /^[a-z0-9_-]{10,}$/i.test(fileId) ? fileId : null;
 }
 
-async function requestProviderPage(rawUrl, extraHeaders = {}) {
+async function requestProviderPage(rawUrl, extraHeaders = {}, options = {}) {
   const { res, finalUrl } = await httpRequest(rawUrl, extraHeaders);
   return new Promise((resolve, reject) => {
     let body = '';
+    let bodyBytes = 0;
+    let settled = false;
+    const maxBodyBytes = Number.isSafeInteger(options.maxBodyBytes) && options.maxBodyBytes > 0
+      ? options.maxBodyBytes
+      : 2 * 1024 * 1024;
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
     res.on('data', chunk => {
-      body += chunk;
-      if (body.length > 2 * 1024 * 1024) {
+      bodyBytes += Buffer.byteLength(chunk);
+      if (bodyBytes > maxBodyBytes) {
         res.destroy();
-        reject(new Error('หน้าแชร์มีขนาดใหญ่เกินไป'));
+        fail(new Error('หน้าแชร์มีขนาดใหญ่เกินไป'));
+        return;
       }
+      body += chunk;
     });
-    res.on('end', () => resolve({ body, headers: res.headers, finalUrl, statusCode: res.statusCode }));
-    res.on('error', reject);
+    res.on('end', () => {
+      if (settled) return;
+      settled = true;
+      resolve({ body, headers: res.headers, finalUrl, statusCode: res.statusCode });
+    });
+    res.on('error', fail);
   });
 }
 

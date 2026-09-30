@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.2';
+const APP_VERSION = '1.8.3';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -364,27 +364,32 @@ function normalizeFacebookEmbeddedUrl(value) {
 function extractFacebookPostImageUrls(html, maxImages = 200) {
   const normalized = normalizeFacebookEmbeddedUrl(html);
   const candidates = normalized.match(/https?:\/\/[^\s"'<>\\]+/gi) || [];
-  const urls = [];
-  const seen = new Set();
+  const bestByPhotoPath = new Map();
   for (const rawCandidate of candidates) {
     let candidate = normalizeFacebookEmbeddedUrl(rawCandidate).replace(/[),;]+$/g, '');
     let parsed;
     try { parsed = new URL(candidate); } catch (_) { continue; }
     const host = parsed.hostname.toLowerCase();
-    const isCdn = host.endsWith('.fbcdn.net') || host === 'fbcdn.net';
+    // static.xx.fbcdn.net contains Facebook UI icons and reaction assets, not
+    // photos attached to the post. Only scontent CDN paths are post media.
+    const isCdn = host.startsWith('scontent.') && host.endsWith('.fbcdn.net');
     const isFacebookImage = host === 'facebook.com' || host.endsWith('.facebook.com');
     const imagePath = /\.(?:jpe?g|png|webp|gif)(?:$|\?)/i.test(parsed.pathname);
     if ((!isCdn && !isFacebookImage) || (!isCdn && !imagePath) || (!imagePath && !/\/v\/t\d+\./i.test(parsed.pathname))) continue;
+    const thumbnailSize = parsed.searchParams.get('ctp') || '';
+    if (/^s\d+x\d+$/i.test(thumbnailSize)) continue;
+    if (isCdn && /\/v\/t39\.30808-1\//i.test(parsed.pathname) && /^s/i.test(thumbnailSize)) continue;
     // Facebook frequently emits the same photo in several escaped JSON fields.
     parsed.hash = '';
     candidate = parsed.href;
-    if (!seen.has(candidate)) {
-      seen.add(candidate);
-      urls.push(candidate);
-      if (urls.length >= maxImages) break;
-    }
+    const key = `${parsed.hostname.toLowerCase()}${parsed.pathname}`;
+    const dimensions = [...`${parsed.searchParams.get('cstp') || ''} ${thumbnailSize}`.matchAll(/(\d{2,5})x(\d{2,5})/g)]
+      .reduce((score, match) => Math.max(score, Number(match[1]) * Number(match[2])), 0);
+    const previous = bestByPhotoPath.get(key);
+    if (!previous || dimensions > previous.dimensions) bestByPhotoPath.set(key, { candidate, dimensions });
   }
-  return urls;
+  return [...bestByPhotoPath.values()].sort((a, b) => b.dimensions - a.dimensions)
+    .slice(0, maxImages).map(item => item.candidate);
 }
 
 function extractFacebookPostTitle(html) {

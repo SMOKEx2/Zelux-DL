@@ -110,7 +110,9 @@ test('Facebook photo posts are separated from video links and image URLs are ded
   const html = String.raw`<meta property="og:title" content="Album"><script>
     {"image":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-a.jpg?_nc=1",
      "duplicate":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-a.jpg?_nc=1",
-     "second":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-b.png?_nc=2"}
+     "second":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-6\/photo-b.png?_nc=2",
+     "thumbnail":"https:\/\/scontent.xx.fbcdn.net\/v\/t39.30808-1\/avatar.jpg?ctp=s50x50",
+     "icon":"https:\/\/static.xx.fbcdn.net\/rsrc.php\/v4\/y1\/r\/icon.gif"}
   </script>`;
   assert.deepEqual(extractFacebookPostImageUrls(html), [
     'https://scontent.xx.fbcdn.net/v/t39.30808-6/photo-a.jpg?_nc=1',
@@ -236,7 +238,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.8.2');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.3');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -1417,7 +1419,7 @@ test('Windows updater launcher actually starts its detached helper', { skip: pro
     '-BackupPath', path.join(directory, 'not-used.backup'),
     '-WorkDir', directory,
     '-LogPath', logPath,
-    '-ExpectedVersion', '1.8.2',
+    '-ExpectedVersion', '1.8.3',
   ];
   const launcher = require('child_process').spawn(powershellPath, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',

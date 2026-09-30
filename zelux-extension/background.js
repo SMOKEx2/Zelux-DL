@@ -59,10 +59,32 @@ async function getConfiguredZeluxExePath() {
   return exePath;
 }
 
-function buildProtocolUrl(urls, cookieToken = '', exePath = '') {
+function isFacebookImageUrl(value) {
+  try {
+    const parsed = new URL(String(value || '').trim());
+    const host = parsed.hostname.toLowerCase();
+    if (!(host.startsWith('scontent.') && host.endsWith('.fbcdn.net')) && !host.endsWith('.fbsbx.com')) return false;
+    if (!/\.(?:jpe?g|png|webp|gif)(?:$|\/)/i.test(parsed.pathname) && !/\/v\/t\d+\./i.test(parsed.pathname)) return false;
+    const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+    for (const match of hints.matchAll(/(\d{1,5})x(\d{1,5})/g)) {
+      if (Number(match[1]) < 200 || Number(match[2]) < 200) return false;
+    }
+    parsed.hash = '';
+    return parsed.href;
+  } catch (_) { return false; }
+}
+
+function normalizeFacebookImageUrls(values) {
+  return [...new Set((Array.isArray(values) ? values : [])
+    .map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+}
+
+function buildProtocolUrl(urls, cookieToken = '', exePath = '', imageUrls = []) {
   const query = new URLSearchParams({ urls: JSON.stringify(urls) });
   if (cookieToken) query.set('cookieToken', cookieToken);
   if (exePath) query.set('exePath', exePath);
+  const safeImages = normalizeFacebookImageUrls(imageUrls);
+  if (safeImages.length) query.set('imageUrls', JSON.stringify(safeImages));
   return `zelux://download?${query.toString()}`;
 }
 
@@ -252,7 +274,7 @@ async function launchDownload(message) {
       reportDownloadProgress('The ZELUX-DL launch was requested. Waiting for its identity-verified local bridge…');
     } else {
       if (cookieToken) reportDownloadProgress('Opening ZELUX-DL and connecting to its local bridge…');
-      count = await triggerZeluxProtocol(values, tabId, cookieToken, exePath);
+      count = await triggerZeluxProtocol(values, tabId, cookieToken, exePath, message.imageUrls);
     }
     if (cookieToken) await sendCookiesToLocalApp(cookieToken, cookies, cookieProvider);
     return { count, usedTemporaryCookies: Boolean(cookieToken) };
@@ -272,14 +294,14 @@ async function launchDownload(message) {
   }
 }
 
-async function triggerZeluxProtocol(values, tabId, cookieToken = '', configuredExePath = '') {
+async function triggerZeluxProtocol(values, tabId, cookieToken = '', configuredExePath = '', imageUrls = []) {
   const urls = normalizeUrls(values);
   if (!urls.length) throw new Error('No valid HTTP or HTTPS URLs');
   if (urls.length > 200) throw new Error('A batch can contain up to 200 URLs');
   if (!Number.isInteger(tabId)) throw new Error('No active browser tab');
 
   const exePath = configuredExePath || await getConfiguredZeluxExePath();
-  const protocolUrl = buildProtocolUrl(urls, cookieToken, exePath);
+  const protocolUrl = buildProtocolUrl(urls, cookieToken, exePath, imageUrls);
   if (protocolUrl.length > 30000) throw new Error('The URL list is too long; use a .txt batch file instead');
   await chrome.scripting.executeScript({
     target: { tabId },

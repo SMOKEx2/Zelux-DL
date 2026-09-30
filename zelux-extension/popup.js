@@ -22,6 +22,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   let activeTab = null;
   let configuredExePath = '';
+  let capturedFacebookImageUrls = [];
   let facebookCookiePermissionGranted = false;
   let youtubeCookiePermissionGranted = false;
   const facebookPermission = {
@@ -74,6 +75,73 @@ document.addEventListener('DOMContentLoaded', async () => {
       const host = new URL(value).hostname.toLowerCase();
       return host === 'youtube.com' || host.endsWith('.youtube.com') || host === 'youtu.be';
     } catch (_) { return false; }
+  }
+
+  function isFacebookImageUrl(value) {
+    try {
+      const parsed = new URL(String(value || '').trim());
+      const host = parsed.hostname.toLowerCase();
+      if (!(host.startsWith('scontent.') && host.endsWith('.fbcdn.net')) && !host.endsWith('.fbsbx.com')) return false;
+      if (!/\.(?:jpe?g|png|webp|gif)(?:$|\/)/i.test(parsed.pathname) && !/\/v\/t\d+\./i.test(parsed.pathname)) return false;
+      const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+      for (const match of hints.matchAll(/(\d{1,5})x(\d{1,5})/g)) {
+        if (Number(match[1]) < 200 || Number(match[2]) < 200) return false;
+      }
+      parsed.hash = '';
+      return parsed.href;
+    } catch (_) { return false; }
+  }
+
+  async function captureFacebookPostImages(tabId) {
+    if (!Number.isInteger(tabId) || !isFacebookUrl(activeTab?.url || '')) return [];
+    try {
+      const response = await chrome.scripting.executeScript({
+        target: { tabId },
+        func: () => {
+          // Prefer the visible post viewer. Do not combine the whole page with
+          // the dialog: that would bring avatars, recommendations and other
+          // feed cards into the download set.
+          const root = document.querySelector('[role="dialog"]')
+            || document.querySelector('article')
+            || document.querySelector('[data-pagelet*="FeedUnit"]')
+            || document.querySelector('[role="main"]')
+            || document;
+          const candidates = [];
+          const add = value => {
+            if (!value) return;
+            try {
+              const parsed = new URL(value, location.href);
+              const host = parsed.hostname.toLowerCase();
+              if (!(host.startsWith('scontent.') && host.endsWith('.fbcdn.net')) && !host.endsWith('.fbsbx.com')) return;
+              if (!/\.(?:jpe?g|png|webp|gif)(?:$|\/)/i.test(parsed.pathname) && !/\/v\/t\d+\./i.test(parsed.pathname)) return;
+              const hints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+              for (const match of hints.matchAll(/(\d{1,5})x(\d{1,5})/g)) if (Number(match[1]) < 200 || Number(match[2]) < 200) return;
+              parsed.hash = '';
+              candidates.push(parsed.href);
+            } catch (_) { /* Ignore malformed DOM attributes. */ }
+          };
+          const largestSrcset = value => String(value || '').split(',')
+            .map(part => {
+              const pieces = part.trim().split(/\s+/);
+              const width = Number((pieces[1] || '').replace(/w$/i, '')) || 0;
+              return { url: pieces[0], width };
+            })
+            .sort((a, b) => b.width - a.width)[0]?.url;
+          for (const image of root.querySelectorAll?.('img') || []) {
+            const rect = image.getBoundingClientRect?.();
+            const width = Math.max(image.naturalWidth || 0, image.width || 0, rect?.width || 0);
+            const height = Math.max(image.naturalHeight || 0, image.height || 0, rect?.height || 0);
+            if (width < 200 || height < 200) continue;
+            add(largestSrcset(image.getAttribute('srcset') || image.getAttribute('data-srcset')));
+            add(image.currentSrc || image.src || image.getAttribute('data-src') || image.getAttribute('data-original'));
+          }
+          return [...new Set(candidates)];
+        },
+      });
+      return [...new Set((response?.[0]?.result || []).map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+    } catch (_) {
+      return [];
+    }
   }
 
   function updateSessionOption() {
@@ -171,6 +239,18 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderCount();
   updateSessionOption();
+  if (activeTab?.url && isFacebookUrl(activeTab.url) && Number.isInteger(activeTab.id)) {
+    capturedFacebookImageUrls = await captureFacebookPostImages(activeTab.id);
+    // Facebook often inserts the remaining gallery thumbnails just after the
+    // viewer opens. Give that DOM one short repaint window before falling back.
+    if (capturedFacebookImageUrls.length < 2) {
+      await new Promise(resolve => setTimeout(resolve, 350));
+      capturedFacebookImageUrls = await captureFacebookPostImages(activeTab.id);
+    }
+    if (capturedFacebookImageUrls.length > 1) {
+      setStatus(`พบรูปจริงในกรอบโพสต์ ${capturedFacebookImageUrls.length} รูป พร้อมส่งให้ ZELUX-DL`, 'success');
+    }
+  }
 
   settingsToggle.addEventListener('click', () => showSettings(settingsView.hidden));
   document.getElementById('openSettingsBtn').addEventListener('click', () => showSettings(true));
@@ -294,7 +374,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const permissionGranted = isYouTube ? youtubeCookiePermissionGranted : facebookCookiePermissionGranted;
         if (!permissionGranted) throw new Error(`First enable the ${providerLabel} session option and approve the permission prompt. No cookies were read.`);
         const cookieToken = createCookieToken();
-        const protocolUrl = buildProtocolUrl(urls, cookieToken, configuredExePath);
+        const protocolUrl = buildProtocolUrl(urls, cookieToken, configuredExePath, capturedFacebookImageUrls);
         if (protocolUrl.length > 30000) throw new Error('The URL list is too long to open directly. Send a smaller batch.');
         resultPromise = chrome.runtime.sendMessage({
           type: 'launch-download',
@@ -303,6 +383,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           includeFacebookCookies: !isYouTube,
           includeYouTubeCookies: isYouTube,
           cookieToken,
+          imageUrls: capturedFacebookImageUrls,
           protocolAlreadyLaunched: true,
         });
         launchProtocolFromPopup(protocolUrl);
@@ -313,6 +394,7 @@ document.addEventListener('DOMContentLoaded', async () => {
           tabId: activeTab?.id,
           includeFacebookCookies: false,
           includeYouTubeCookies: false,
+          imageUrls: capturedFacebookImageUrls,
         });
       }
       const result = await resultPromise;
@@ -341,8 +423,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     return [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
   }
 
-  function buildProtocolUrl(urls, cookieToken, exePath) {
+  function buildProtocolUrl(urls, cookieToken, exePath, imageUrls = []) {
     const query = new URLSearchParams({ urls: JSON.stringify(urls), cookieToken, exePath });
+    const safeImages = [...new Set((Array.isArray(imageUrls) ? imageUrls : []).map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+    if (safeImages.length) query.set('imageUrls', JSON.stringify(safeImages));
     return `zelux://download?${query.toString()}`;
   }
 

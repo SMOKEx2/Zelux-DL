@@ -19,6 +19,7 @@ const {
   cleanupDownloadArtifacts,
   cleanupMediaInfoJson,
   extractFacebookPostImageUrls,
+  isFacebookImageUrl,
   isFacebookPhotoPostUrl,
   buildGitHubArchiveUrl,
   buildGitHubRawUrl,
@@ -155,6 +156,29 @@ test('Facebook photo post downloader saves every discovered image in one folder'
   }
 });
 
+test('Facebook extension captures are validated and bypass the noisy page scraper', async () => {
+  const valid = [
+    'https://scontent.xx.fbcdn.net/v/t39.30808-6/post-a.jpg?cstp=1200x900',
+    'https://scontent.xx.fbcdn.net/v/t39.30808-6/post-b.jpg?cstp=1200x900',
+  ];
+  assert.equal(Boolean(isFacebookImageUrl(valid[0])), true);
+  assert.equal(isFacebookImageUrl('https://scontent.xx.fbcdn.net/v/t39.30808-1/avatar.jpg?ctp=s50x50'), false);
+  assert.equal(isFacebookImageUrl('https://static.xx.fbcdn.net/rsrc.php/icon.gif'), false);
+  let fetchCalled = false;
+  const downloaded = [];
+  const result = await downloadFacebookPhotoPost(
+    'https://www.facebook.com/share/p/1F5BkZh6xF/',
+    async () => { fetchCalled = true; throw new Error('the page fallback should not run for captured images'); },
+    async (url, destination) => { downloaded.push(url); fs.writeFileSync(destination, 'image'); return destination; },
+    [...valid, valid[0]],
+  );
+  try {
+    assert.equal(fetchCalled, false);
+    assert.equal(result.downloadedImages, 2);
+    assert.deepEqual(downloaded, valid);
+  } finally { if (result.filePath) fs.rmSync(path.dirname(result.filePath), { recursive: true, force: true }); }
+});
+
 test('media batches ask once for format and quality, then share the selection across links', async () => {
   const prompts = [];
   const urls = Array.from({ length: 10 }, (_, index) => `https://www.youtube.com/watch?v=video${index}`);
@@ -243,7 +267,7 @@ test('temporary Facebook cookie relay accepts one extension-origin request and s
   });
   assert.equal(rejectedOrigin.status, 403);
   assert.equal(rejectedOrigin.body.code, 'extension_origin_not_allowed');
-  assert.equal(rejectedOrigin.body.appVersion, '1.8.6');
+  assert.equal(rejectedOrigin.body.appVersion, '1.8.7');
   assert.equal(rejectedOrigin.body.origin, 'https://www.facebook.com');
 
   const nonce = crypto.randomBytes(32).toString('hex');
@@ -433,6 +457,17 @@ test('ZELUX protocol keeps the one-time cookie token separate from download URLs
   assert.deepEqual(decodeZeluxProtocolRequest('zelux://download?url=https%3A%2F%2Fexample.com%2Ffile.zip&cookieToken=invalid'), {
     urls: ['https://example.com/file.zip'], cookieToken: '', exePath: '',
   });
+});
+
+test('ZELUX protocol accepts only validated Facebook image captures', () => {
+  const images = [
+    'https://scontent.xx.fbcdn.net/v/t39.30808-6/a.jpg?cstp=1200x900',
+    'https://scontent.xx.fbcdn.net/v/t39.30808-6/b.jpg?cstp=1200x900',
+    'https://static.xx.fbcdn.net/rsrc.php/icon.gif',
+  ];
+  const encoded = encodeURIComponent(JSON.stringify(images));
+  const request = decodeZeluxProtocolRequest(`zelux://download?urls=${encodeURIComponent(JSON.stringify(['https://www.facebook.com/share/p/1F5BkZh6xF/']))}&imageUrls=${encoded}`);
+  assert.deepEqual(request.facebookImageUrls, images.slice(0, 2));
 });
 
 test('configured executable path accepts only an absolute Windows ZELUX-DL.exe path', () => {

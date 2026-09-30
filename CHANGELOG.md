@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.8.7 - 2026-09-30
+- แก้การดาวน์โหลดรูปจากโพสต์ Facebook โดยให้ Extension อ่านเฉพาะรูปจริงที่แสดงอยู่ในกรอบโพสต์ ไม่กวาดรูป avatar/icon/รูปจากส่วนอื่นของหน้า
+- ส่ง URL รูปที่ตรวจสอบแล้วผ่าน `zelux://` ให้แอปดาวน์โหลดครบชุด และใช้ตัวอ่านหน้าเดิมเป็น fallback เมื่อไม่มีรูปจาก Extension
+- รองรับ session/cookies กับ CDN รูป Facebook และอัปเดต Extension เป็น 2.5.4
+
 ## 1.8.6 - 2026-09-30
 - แก้ตัวตรวจสอบ EXE หลังอัปเดตบน Windows ให้ตรวจจาก FileVersion metadata โดยตรง ไม่เรียก EXE ระหว่างที่ helper ยังทำงานอยู่
 - ป้องกันข้อผิดพลาด `node:internal/modules/cjs/loader` ทำให้ updater rollback กลับไปใช้รุ่นเดิม

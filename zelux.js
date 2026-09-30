@@ -64,7 +64,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.6';
+const APP_VERSION = '1.8.7';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -354,6 +354,24 @@ function isFacebookPhotoPostUrl(rawUrl) {
   } catch (_) { return false; }
 }
 
+function isFacebookImageUrl(rawUrl) {
+  try {
+    const parsed = new URL(String(rawUrl || '').trim());
+    const host = parsed.hostname.toLowerCase();
+    const isCdn = host.startsWith('scontent.') && host.endsWith('.fbcdn.net');
+    const isFbsbx = host.endsWith('.fbsbx.com');
+    if (!isCdn && !isFbsbx) return false;
+    const imagePath = /\.(?:jpe?g|png|webp|gif)(?:$|\/)/i.test(parsed.pathname);
+    if (!imagePath && !/\/v\/t\d+\./i.test(parsed.pathname)) return false;
+    const sizeHints = `${parsed.searchParams.get('cstp') || ''} ${parsed.searchParams.get('ctp') || ''}`;
+    for (const match of sizeHints.matchAll(/(\d{1,5})x(\d{1,5})/g)) {
+      if (Number(match[1]) < 200 || Number(match[2]) < 200) return false;
+    }
+    parsed.hash = '';
+    return parsed.href;
+  } catch (_) { return false; }
+}
+
 function normalizeFacebookEmbeddedUrl(value) {
   return decodeHtmlEntities(String(value || ''))
     .replace(/\\u0025/gi, '%').replace(/\\u0026/gi, '&').replace(/\\u003d/gi, '=')
@@ -369,19 +387,12 @@ function extractFacebookPostImageUrls(html, maxImages = 200) {
     let candidate = normalizeFacebookEmbeddedUrl(rawCandidate).replace(/[),;]+$/g, '');
     let parsed;
     try { parsed = new URL(candidate); } catch (_) { continue; }
-    const host = parsed.hostname.toLowerCase();
-    // static.xx.fbcdn.net contains Facebook UI icons and reaction assets, not
-    // photos attached to the post. Only scontent CDN paths are post media.
-    const isCdn = host.startsWith('scontent.') && host.endsWith('.fbcdn.net');
-    const isFacebookImage = host === 'facebook.com' || host.endsWith('.facebook.com');
-    const imagePath = /\.(?:jpe?g|png|webp|gif)(?:$|\?)/i.test(parsed.pathname);
-    if ((!isCdn && !isFacebookImage) || (!isCdn && !imagePath) || (!imagePath && !/\/v\/t\d+\./i.test(parsed.pathname))) continue;
+    const normalizedImageUrl = isFacebookImageUrl(parsed.href);
+    if (!normalizedImageUrl) continue;
     const thumbnailSize = parsed.searchParams.get('ctp') || '';
     if (/^s\d+x\d+$/i.test(thumbnailSize)) continue;
-    if (isCdn && /\/v\/t39\.30808-1\//i.test(parsed.pathname) && /^s/i.test(thumbnailSize)) continue;
     // Facebook frequently emits the same photo in several escaped JSON fields.
-    parsed.hash = '';
-    candidate = parsed.href;
+    candidate = normalizedImageUrl;
     const key = `${parsed.hostname.toLowerCase()}${parsed.pathname}`;
     const dimensions = [...`${parsed.searchParams.get('cstp') || ''} ${thumbnailSize}`.matchAll(/(\d{2,5})x(\d{2,5})/g)]
       .reduce((score, match) => Math.max(score, Number(match[1]) * Number(match[2])), 0);
@@ -404,6 +415,10 @@ function downloadFacebookImage(url, destination, referer = '') {
       Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
       Referer: referer || 'https://www.facebook.com/',
     };
+    const cookieHeader = buildCookieHeaderFromNetscape(getActiveMediaCookieFile(), (() => {
+      try { return new URL(url).hostname; } catch (_) { return ''; }
+    })());
+    if (cookieHeader) headers.Cookie = cookieHeader;
     httpRequest(url, headers).then(({ res }) => {
       if (res.statusCode < 200 || res.statusCode >= 300) {
         res.resume();
@@ -439,26 +454,33 @@ function downloadFacebookImage(url, destination, referer = '') {
   });
 }
 
-async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage) {
+async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage, imageUrlsOverride = null) {
   print('      ' + info('🖼️') + ' กำลังตรวจสอบรูปทั้งหมดในโพสต์ Facebook...');
   const cookiePath = getActiveMediaCookieFile();
-  const cookieHeader = buildCookieHeaderFromNetscape(cookiePath, 'www.facebook.com');
-  const response = await fetchPage(url, {
-    ...(cookieHeader ? { Cookie: cookieHeader } : {}),
-    Referer: 'https://www.facebook.com/',
-    Accept: 'text/html,application/xhtml+xml',
-  }, { maxBodyBytes: 16 * 1024 * 1024 });
-  const page = typeof response === 'string' ? { body: response, statusCode: 200, headers: {} } : response;
-  const responseIssue = diagnoseHttpResponse(page.statusCode, page.headers, page.body, 'Facebook');
-  if (responseIssue) throw new Error(responseIssue);
-  const imageUrls = extractFacebookPostImageUrls(page.body);
+  const overrideUrls = Array.isArray(imageUrlsOverride)
+    ? [...new Set(imageUrlsOverride.map(isFacebookImageUrl).filter(Boolean))].slice(0, 200)
+    : [];
+  let page = { body: '', statusCode: 200, headers: {} };
+  let imageUrls = overrideUrls;
+  if (!imageUrls.length) {
+    const cookieHeader = buildCookieHeaderFromNetscape(cookiePath, 'www.facebook.com');
+    const response = await fetchPage(url, {
+      ...(cookieHeader ? { Cookie: cookieHeader } : {}),
+      Referer: 'https://www.facebook.com/',
+      Accept: 'text/html,application/xhtml+xml',
+    }, { maxBodyBytes: 16 * 1024 * 1024 });
+    page = typeof response === 'string' ? { body: response, statusCode: 200, headers: {} } : response;
+    const responseIssue = diagnoseHttpResponse(page.statusCode, page.headers, page.body, 'Facebook');
+    if (responseIssue) throw new Error(responseIssue);
+    imageUrls = extractFacebookPostImageUrls(page.body);
+  }
   if (!imageUrls.length) {
     throw new Error(cookiePath
       ? 'ไม่พบรูปในโพสต์ Facebook; โพสต์อาจเป็นวิดีโอ ลิงก์หมดอายุ หรือจำเป็นต้องเปิดด้วย session ที่มีสิทธิ์'
       : 'ไม่พบรูปในโพสต์ Facebook; ใส่ cookies.txt หรือเปิดใช้ Facebook session จาก Extension แล้วลองใหม่');
   }
 
-  const title = extractFacebookPostTitle(page.body);
+  const title = extractFacebookPostTitle(page.body) || 'Facebook post';
   const targetDir = getUniqueDirectoryPath(path.join(DOWNLOADS_DIR, 'Images'), `Facebook - ${title}`);
   fs.mkdirSync(targetDir, { recursive: true });
   print('      ' + success('✓') + ` พบรูป ${chalk.yellow(imageUrls.length)} รูป`);
@@ -1558,11 +1580,23 @@ function decodeZeluxProtocolRequest(value) {
         if (targetUrl && isValidUrl(targetUrl)) urls = [targetUrl];
       }
       const token = String(protocolUrl.searchParams.get('cookieToken') || '');
-      return {
+      let facebookImageUrls = [];
+      const encodedImages = protocolUrl.searchParams.get('imageUrls');
+      if (encodedImages) {
+        try {
+          const parsedImages = JSON.parse(encodedImages);
+          if (Array.isArray(parsedImages)) {
+            facebookImageUrls = [...new Set(parsedImages.map(isFacebookImageUrl).filter(Boolean))].slice(0, 200);
+          }
+        } catch (_) { /* Ignore malformed optional capture data and use the page fallback. */ }
+      }
+      const request = {
         urls,
         cookieToken: /^[a-f0-9]{64}$/i.test(token) ? token : '',
         exePath: String(protocolUrl.searchParams.get('exePath') || ''),
       };
+      if (facebookImageUrls.length) request.facebookImageUrls = facebookImageUrls;
+      return request;
     }
   } catch (_) { }
 
@@ -3960,7 +3994,7 @@ async function downloadGitHubRepository(url, repository) {
   }
 }
 
-async function performDownload(url, mediaOptions = null) {
+async function performDownload(url, mediaOptions = null, options = {}) {
   let provider;
   try {
     provider = await resolveDownloadProvider(url);
@@ -3978,7 +4012,7 @@ async function performDownload(url, mediaOptions = null) {
   if (githubRepository) return downloadGitHubRepository(url, githubRepository);
   if (isFacebookPhotoPostUrl(url)) {
     try {
-      return await downloadFacebookPhotoPost(url);
+      return await downloadFacebookPhotoPost(url, requestProviderPage, downloadFacebookImage, options.facebookImageUrls);
     } catch (err) {
       if (err.message === 'CANCELLED') return { success: false, cancelled: true, error: 'Cancelled' };
       print('      ' + error('\u2715') + ' Facebook รูปภาพ: ' + err.message);
@@ -4258,12 +4292,12 @@ async function performDownload(url, mediaOptions = null) {
   }
 }
 
-async function downloadSingleFile(url, mediaOptions = null) {
+async function downloadSingleFile(url, mediaOptions = null, options = {}) {
   if (terminalUI?.operation?.cancelled) return { success: false, cancelled: true };
   const historyId = addHistory(url);
   let result;
   try {
-    result = await performDownload(url, mediaOptions);
+    result = await performDownload(url, mediaOptions, options);
     if (!result) result = { success: false, error: 'Download did not complete' };
   } catch (err) {
     result = { success: false, cancelled: err.message === 'CANCELLED', error: err.message };
@@ -4292,10 +4326,10 @@ async function runWithConcurrency(items, limit, handler) {
 //  BATCH
 // ═══════════════════════════════════════════
 
-async function handleBatch(urls) {
+async function handleBatch(urls, options = {}) {
   urls = extractUrlsFromText(urls);
   if (urls.length === 0) return [];
-  if (urls.length === 1) return [await downloadSingleFile(urls[0])];
+  if (urls.length === 1) return [await downloadSingleFile(urls[0], null, options)];
 
   let mediaOptions = null;
   try {
@@ -4317,7 +4351,7 @@ async function handleBatch(urls) {
     if (terminalUI?.active) terminalUI.startBatchItem(index);
     const result = await batchTaskContext.run(task, async () => {
       print('  ' + info('>') + ` [${index + 1}/${urls.length}] ${dim(url.slice(0, 65))}`);
-      return downloadSingleFile(url, mediaOptions);
+      return downloadSingleFile(url, mediaOptions, options);
     });
     if (result?.deferredEmbed) {
       if (terminalUI?.active) terminalUI.markBatchItemFinalizing(index);
@@ -4717,7 +4751,7 @@ async function runUpdate() {
   print('      ' + success.bold('✓ อัปเดตเสร็จสิ้น!'));
 }
 
-async function runTerminalApp(initialUrls = [], initialCookieFile = '') {
+async function runTerminalApp(initialUrls = [], initialCookieFile = '', protocolOptions = {}) {
   terminalUI = new TerminalUI({
     version: APP_VERSION,
     motion: !process.argv.includes('--no-animation') && process.env.ZELUX_REDUCED_MOTION !== '1',
@@ -4776,7 +4810,7 @@ async function runTerminalApp(initialUrls = [], initialCookieFile = '') {
       }
     }
     if (initialUrls.length) {
-      const action = () => handleBatch(initialUrls);
+      const action = () => handleBatch(initialUrls, protocolOptions);
       await run('DOWNLOAD', () => initialCookieFile
         ? withTemporaryMediaCookies(initialCookieFile, action)
         : action());
@@ -4932,6 +4966,7 @@ async function main() {
   const protocolRequest = protocolArg ? decodeZeluxProtocolRequest(protocolArg) : null;
   if (protocolRequest?.exePath && await handoffToConfiguredZeluxExe(protocolRequest.exePath, protocolArg)) return;
   const initialUrls = protocolRequest?.urls?.length ? protocolRequest.urls : extractUrlsFromText(rawArgs);
+  const protocolOptions = { facebookImageUrls: protocolRequest?.facebookImageUrls || [] };
   let initialCookieFile = '';
   try {
     if (protocolRequest?.cookieToken) {
@@ -4951,7 +4986,7 @@ async function main() {
 
     if (process.stdin.isTTY && process.stdout.isTTY && (process.platform === 'win32' || process.env.TERM !== 'dumb') && !process.argv.includes('--plain')) {
       if (process.stdout.columns < 60 || process.stdout.rows < 26) resizeTerminal(90, 32);
-      await runTerminalApp(initialUrls, initialCookieFile);
+      await runTerminalApp(initialUrls, initialCookieFile, protocolOptions);
       return;
     }
   if (process.stdout.isTTY) {
@@ -4980,7 +5015,7 @@ async function main() {
   if (args.length > 0) {
     currentView = 'download';
     renderScreen();
-    const action = () => handleBatch(args);
+    const action = () => handleBatch(args, protocolOptions);
     if (initialCookieFile) await withTemporaryMediaCookies(initialCookieFile, action);
     else await action();
     currentView = 'download-done';
@@ -5012,6 +5047,7 @@ module.exports = {
   downloadFacebookPhotoPost,
   extractFacebookPostImageUrls,
   extractFacebookPostTitle,
+  isFacebookImageUrl,
   isFacebookPhotoPostUrl,
   buildGitHubArchiveUrl,
   buildSmartLibrary,

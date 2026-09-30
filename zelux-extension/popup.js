@@ -109,11 +109,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   async function captureFacebookPostImages(tabId) {
-    if (!Number.isInteger(tabId) || !isFacebookUrl(activeTab?.url || '')) return [];
+    if (!Number.isInteger(tabId) || !isFacebookUrl(activeTab?.url || '')) return { urls: [], action: 'idle' };
     try {
       const response = await chrome.scripting.executeScript({
         target: { tabId },
-        func: async () => {
+        func: () => {
           // Prefer the visible post viewer. Do not combine the whole page with
           // the dialog: that would bring avatars, recommendations and other
           // feed cards into the download set.
@@ -186,33 +186,32 @@ document.addEventListener('DOMContentLoaded', async () => {
             return /^\+\s*\d+$/.test(text) && rect && rect.width > 0 && rect.height > 0;
           });
           if (more) {
+            // Return immediately after this click. Facebook may navigate the
+            // tab to /photo; awaiting here would destroy this execution world.
             (more.closest?.('a,button,[role="button"]') || more.parentElement || more).click();
-            const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
-            await wait(700);
-            const seenViewerImages = new Set();
-            for (let step = 0; step < 24; step++) {
-              const viewer = document.querySelector('[role="dialog"]');
-              collectVisibleImages(viewer || document);
-              const current = [...(viewer?.querySelectorAll?.('img') || [])]
-                .find(image => Number(image.naturalWidth || image.width || 0) >= 300 && Number(image.naturalHeight || image.height || 0) >= 300 && (String(image.alt || '').includes('รูปภาพ') || String(image.alt || '').includes('image')));
-              const currentSource = current?.currentSrc || current?.src || '';
-              if (currentSource) {
-                if (seenViewerImages.has(currentSource)) break;
-                seenViewerImages.add(currentSource);
-              }
-              const next = [...(viewer?.querySelectorAll?.('[role="button"],[aria-label]') || [])]
-                .find(element => String(element.getAttribute?.('aria-label') || '').includes('รูปภาพถัดไป'));
-              if (!next) break;
-              next.click();
-              await wait(800);
-            }
+            return { urls: [...new Set(candidates)], action: 'open-gallery' };
           }
-          return [...new Set(candidates)];
+          // Once the viewer is mounted, capture its current image and advance
+          // exactly one item. The caller waits for Facebook to repaint before
+          // injecting the next step, so route changes cannot lose the result.
+          const viewer = document.querySelector('[role="dialog"]');
+          collectVisibleImages(viewer || document);
+          const next = [...(viewer?.querySelectorAll?.('[role="button"],[aria-label]') || [])]
+            .find(element => String(element.getAttribute?.('aria-label') || '').includes('รูปภาพถัดไป'));
+          if (next) {
+            next.click();
+            return { urls: [...new Set(candidates)], action: 'next' };
+          }
+          return { urls: [...new Set(candidates)], action: 'idle' };
         },
       });
-      return dedupeFacebookImageUrls(response?.[0]?.result || []);
+      const result = response?.[0]?.result || {};
+      return {
+        urls: dedupeFacebookImageUrls(result.urls || []),
+        action: result.action || 'idle',
+      };
     } catch (_) {
-      return [];
+      return { urls: [], action: 'idle' };
     }
   }
 
@@ -313,13 +312,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   updateSessionOption();
   if (activeTab?.url && isFacebookUrl(activeTab.url) && Number.isInteger(activeTab.id)) {
     capturedFacebookImageUrls = [];
-    // The first pass may click the `+N` gallery affordance. Facebook then
-    // mounts the remaining images asynchronously, so always take two more
-    // passes and merge them instead of stopping at the first visible tiles.
-    for (let pass = 0; pass < 3; pass++) {
+    // Facebook changes the tab route when `+N` is opened. Inject one short,
+    // synchronous step at a time so a navigation cannot cancel a long script.
+    let unchangedPasses = 0;
+    for (let pass = 0; pass < 24; pass++) {
       const batch = await captureFacebookPostImages(activeTab.id);
-      capturedFacebookImageUrls = dedupeFacebookImageUrls([...capturedFacebookImageUrls, ...batch]);
-      if (pass < 2) await new Promise(resolve => setTimeout(resolve, 650));
+      const previousCount = capturedFacebookImageUrls.length;
+      capturedFacebookImageUrls = dedupeFacebookImageUrls([...capturedFacebookImageUrls, ...batch.urls]);
+      unchangedPasses = capturedFacebookImageUrls.length === previousCount ? unchangedPasses + 1 : 0;
+      if (batch.action === 'idle' || unchangedPasses >= 2) break;
+      await new Promise(resolve => setTimeout(resolve, 900));
     }
     if (capturedFacebookImageUrls.length > 1) {
       setStatus(`พบรูปจริงในกรอบโพสต์ ${capturedFacebookImageUrls.length} รูป พร้อมส่งให้ ZELUX-DL`, 'success');

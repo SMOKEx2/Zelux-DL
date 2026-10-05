@@ -90,12 +90,14 @@ function normalizeFacebookImageUrls(values) {
   return [...best.values()].sort((a, b) => b.score - a.score).slice(0, 200).map(item => item.url);
 }
 
-function buildProtocolUrl(urls, cookieToken = '', exePath = '', imageUrls = []) {
+function buildProtocolUrl(urls, cookieToken = '', exePath = '', imageUrls = [], tikTokPost = null, photoSelection = null) {
   const query = new URLSearchParams({ urls: JSON.stringify(urls) });
   if (cookieToken) query.set('cookieToken', cookieToken);
   if (exePath) query.set('exePath', exePath);
   const safeImages = normalizeFacebookImageUrls(imageUrls);
   if (safeImages.length) query.set('imageUrls', JSON.stringify(safeImages));
+  if (tikTokPost) query.set('tikTokPost', JSON.stringify(tikTokPost));
+  if (photoSelection) query.set('photoSelection', JSON.stringify(photoSelection));
   return `zelux://download?${query.toString()}`;
 }
 
@@ -285,7 +287,7 @@ async function launchDownload(message) {
       reportDownloadProgress('The ZELUX-DL launch was requested. Waiting for its identity-verified local bridge…');
     } else {
       if (cookieToken) reportDownloadProgress('Opening ZELUX-DL and connecting to its local bridge…');
-      count = await triggerZeluxProtocol(values, tabId, cookieToken, exePath, message.imageUrls);
+      count = await triggerZeluxProtocol(values, tabId, cookieToken, exePath, message.imageUrls, message.tikTokPost, message.photoSelection);
     }
     if (cookieToken) await sendCookiesToLocalApp(cookieToken, cookies, cookieProvider);
     return { count, usedTemporaryCookies: Boolean(cookieToken) };
@@ -305,14 +307,14 @@ async function launchDownload(message) {
   }
 }
 
-async function triggerZeluxProtocol(values, tabId, cookieToken = '', configuredExePath = '', imageUrls = []) {
+async function triggerZeluxProtocol(values, tabId, cookieToken = '', configuredExePath = '', imageUrls = [], tikTokPost = null, photoSelection = null) {
   const urls = normalizeUrls(values);
   if (!urls.length) throw new Error('No valid HTTP or HTTPS URLs');
   if (urls.length > 200) throw new Error('A batch can contain up to 200 URLs');
   if (!Number.isInteger(tabId)) throw new Error('No active browser tab');
 
   const exePath = configuredExePath || await getConfiguredZeluxExePath();
-  const protocolUrl = buildProtocolUrl(urls, cookieToken, exePath, imageUrls);
+  const protocolUrl = buildProtocolUrl(urls, cookieToken, exePath, imageUrls, tikTokPost, photoSelection);
   if (protocolUrl.length > 30000) throw new Error('The URL list is too long; use a .txt batch file instead');
   await chrome.scripting.executeScript({
     target: { tabId },

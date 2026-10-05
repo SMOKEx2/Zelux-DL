@@ -19,6 +19,8 @@ const { AsyncLocalStorage } = require('async_hooks');
 const { once } = require('events');
 const { execSync, execFileSync, spawn } = require('child_process');
 const { TerminalUI, clean: cleanTerminalText } = require('./lib/terminal-ui');
+const tikTokPhotos = require('./zelux-extension/tiktok-photos');
+const photoSelection = require('./zelux-extension/photo-selection');
 let terminalUI = null;
 const batchTaskContext = new AsyncLocalStorage();
 
@@ -64,7 +66,7 @@ function createProgressBar(label, options) {
 }
 
 // ── App Version & Update Config ──
-const APP_VERSION = '1.8.11';
+const APP_VERSION = '1.8.12';
 const GITHUB_REPO = 'SMOKEx2/Zelux-DL';
 const COOKIE_RELAY_PORT = 47821;
 const COOKIE_RELAY_MAX_BYTES = 512 * 1024;
@@ -471,10 +473,33 @@ function downloadFacebookImage(url, destination, referer = '') {
   });
 }
 
-async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage, imageUrlsOverride = null) {
+async function promptPhotoSelection(count, provider) {
+  if (terminalUI?.active) return terminalUI.choosePhotos(count, `${provider.toUpperCase()} / SELECT PHOTOS`);
+  // Non-interactive callers retain the old download-all behavior. The explicit
+  // extension selection is validated separately, before any network request.
+  if (!process.stdin.isTTY || !process.stdout.isTTY || !process.stdin.setRawMode) return Array.from({ length: count }, (_, i) => i + 1);
+  const ui = new TerminalUI({ version: APP_VERSION, snapshot: () => ({}), motion: false });
+  ui.start();
+  try { return await ui.choosePhotos(count, `${provider.toUpperCase()} / SELECT PHOTOS`); }
+  finally { ui.close(); }
+}
+
+async function resolvePhotoSelection(images, metadata, selector, provider) {
+  if (metadata) {
+    const selection = photoSelection.validate(metadata, images.length);
+    return { total: selection.total, images, positions: selection.positions };
+  }
+  const positions = await selector(images.length, provider);
+  const selection = photoSelection.validate({ total: images.length, positions }, positions?.length);
+  return { total: images.length, positions: selection.positions, images: selection.positions.map(n => images[n - 1]) };
+}
+
+async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage, imageUrlsOverride = null, selectionMetadata = null, selector = promptPhotoSelection) {
+  if (selectionMetadata) photoSelection.validate(selectionMetadata, Array.isArray(imageUrlsOverride) ? imageUrlsOverride.length : 0);
   print('      ' + info('🖼️') + ' กำลังตรวจสอบรูปทั้งหมดในโพสต์ Facebook...');
   const cookiePath = getActiveMediaCookieFile();
   const overrideUrls = dedupeFacebookImageUrls(imageUrlsOverride, 200);
+  if (selectionMetadata) photoSelection.validate(selectionMetadata, overrideUrls.length);
   let page = { body: '', statusCode: 200, headers: {} };
   let imageUrls = overrideUrls;
   if (!imageUrls.length) {
@@ -495,10 +520,12 @@ async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, i
       : 'ไม่พบรูปในโพสต์ Facebook; ใส่ cookies.txt หรือเปิดใช้ Facebook session จาก Extension แล้วลองใหม่');
   }
 
+  const selected = await resolvePhotoSelection(imageUrls, selectionMetadata, selector, 'Facebook');
+  imageUrls = selected.images;
   const title = extractFacebookPostTitle(page.body) || 'Facebook post';
   const targetDir = getUniqueDirectoryPath(path.join(DOWNLOADS_DIR, 'Images'), `Facebook - ${title}`);
   fs.mkdirSync(targetDir, { recursive: true });
-  print('      ' + success('✓') + ` พบรูป ${chalk.yellow(imageUrls.length)} รูป`);
+  print('      ' + success('✓') + ` เลือก ${imageUrls.length}/${selected.total} รูป`);
   print('      ' + white('📁 โฟลเดอร์: ') + chalk.yellow.bold(path.relative(DOWNLOADS_DIR, targetDir)));
   cancelCtrl.startListening();
   try {
@@ -508,10 +535,10 @@ async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, i
       try {
         extension = path.extname(new URL(imageUrl).pathname).match(/^\.(?:jpe?g|png|webp|gif)$/i)?.[0] || extension;
       } catch (_) { }
-      const destination = path.join(targetDir, `${String(index + 1).padStart(3, '0')}${extension}`);
+      const destination = path.join(targetDir, `${String(selected.positions[index]).padStart(3, '0')}${extension}`);
       try {
         await imageDownloader(imageUrl, destination, url);
-        print('      ' + success('✓') + ` รูปที่ ${index + 1}/${imageUrls.length} เสร็จแล้ว`);
+        print('      ' + success('✓') + ` รูปที่ ${selected.positions[index]}/${selected.total} เสร็จแล้ว`);
         return { success: true, filePath: destination };
       } catch (error) {
         try { fs.unlinkSync(destination); } catch (_) { }
@@ -530,12 +557,83 @@ async function downloadFacebookPhotoPost(url, fetchPage = requestProviderPage, i
       filePath: successful[0].filePath,
       filePaths: successful.map(result => result.filePath),
       totalImages: imageUrls.length,
+      postImages: selected.total,
       downloadedImages: successful.length,
       failedImages: imageUrls.length - successful.length,
     };
   } finally {
     cancelCtrl.stopListening();
   }
+}
+
+async function inspectTikTokPost(url, fetchPage = requestProviderPage) {
+  if (!tikTokPhotos.isTikTokUrl(url)) throw new Error('ลิงก์นี้ไม่ใช่ TikTok');
+  const cookies = buildCookieHeaderFromNetscape(getActiveMediaCookieFile(), new URL(url).hostname);
+  const headers = { Accept: 'text/html,application/xhtml+xml', Referer: 'https://www.tiktok.com/', ...(cookies ? { Cookie: cookies } : {}) };
+  const response = await fetchPage(url, headers, { maxBodyBytes: 16 * 1024 * 1024 });
+  const page = typeof response === 'string' ? { body: response, statusCode: 200, finalUrl: url } : response;
+  const finalUrl = page.finalUrl || url;
+  if (!tikTokPhotos.isTikTokUrl(finalUrl)) throw new Error('ลิงก์ TikTok เปลี่ยนไปยังเว็บไซต์ที่ไม่รองรับ');
+  let post = tikTokPhotos.parsePost(page.body, finalUrl);
+  if (!post && tikTokPhotos.isTikTokPhotoUrl(finalUrl)) {
+    // TikTok sometimes serves its itemStruct only on the equivalent /video route.
+    const fallback = await fetchPage(finalUrl.replace('/photo/', '/video/'), headers, { maxBodyBytes: 16 * 1024 * 1024 });
+    post = tikTokPhotos.parsePost(typeof fallback === 'string' ? fallback : fallback.body, finalUrl);
+  }
+  if (post) return { ...post, sourceUrl: finalUrl };
+  if (tikTokPhotos.isTikTokPhotoUrl(finalUrl)) {
+    const issue = diagnoseHttpResponse(page.statusCode, page.headers, page.body, 'TikTok');
+    throw new Error(`${issue || 'TikTok ยังไม่ส่งรายการรูปครบ'}; เปิดโพสต์นี้ในเบราว์เซอร์แล้วกด Send to ZELUX-DL ใน Extension หรือใส่ cookies.txt แล้วลองใหม่`);
+  }
+  return { sourceUrl: finalUrl, images: [] };
+}
+
+async function downloadTikTokPhotoPost(url, fetchPage = requestProviderPage, imageDownloader = downloadFacebookImage, capturedPost = null, selectionMetadata = null, selector = promptPhotoSelection) {
+  if (selectionMetadata) photoSelection.validate(selectionMetadata, capturedPost?.images?.length || 0);
+  if (selectionMetadata && !tikTokPhotos.normalizeCapture(capturedPost, [url])) throw new Error('รายการรูปที่เลือกไม่ถูกต้อง กรุณาเปิด Extension แล้วเลือกใหม่');
+  print('      ' + info('🖼️') + ' กำลังตรวจสอบรูปทั้งหมดในโพสต์ TikTok...');
+  const post = tikTokPhotos.normalizeCapture(capturedPost, [url]) || await inspectTikTokPost(url, fetchPage);
+  if (!post.images.length) throw new Error('ลิงก์นี้ไม่ใช่โพสต์รูป TikTok');
+  const selected = await resolvePhotoSelection(post.images, selectionMetadata, selector, 'TikTok');
+  const title = safeFilename(post.title).slice(0, 100) || post.id;
+  const targetDir = getUniqueDirectoryPath(path.join(DOWNLOADS_DIR, 'Images'), `TikTok - ${title}`);
+  fs.mkdirSync(targetDir, { recursive: true });
+  print('      ' + success('✓') + ` พบรูป ${selected.total} รูป · เลือก ${selected.images.length} รูป`);
+  print('      ' + white('📁 โฟลเดอร์: ') + chalk.yellow.bold(path.relative(DOWNLOADS_DIR, targetDir)));
+  cancelCtrl.startListening();
+  try {
+    const results = await runWithConcurrency(selected.images, Math.min(4, selected.images.length), async (image, index) => {
+      let lastError;
+      for (const imageUrl of image.urls) {
+        if (cancelCtrl.cancelled) return { success: false, cancelled: true };
+        const extension = new URL(imageUrl).pathname.match(/\.(jpe?g|png|webp|gif)(?:~|$)/i)?.[1] || 'jpg';
+        const destination = path.join(targetDir, `${String(selected.positions[index]).padStart(3, '0')}.${extension}`);
+        try {
+          await imageDownloader(imageUrl, destination, post.sourceUrl);
+          print('      ' + success('✓') + ` รูปที่ ${selected.positions[index]}/${selected.total} เสร็จแล้ว`);
+          return { success: true, filePath: destination };
+        } catch (error) {
+          try { fs.unlinkSync(destination); } catch (_) { }
+          if (cancelCtrl.cancelled || error.message === 'CANCELLED') return { success: false, cancelled: true };
+          lastError = error.message;
+        }
+      }
+      print('      ' + warning(`⚠ รูปที่ ${index + 1} โหลดไม่สำเร็จ: ${lastError}`));
+      return { success: false, error: lastError };
+    });
+    const saved = results.filter(result => result?.success);
+    const failedImages = selected.images.length - saved.length;
+    if (!saved.length) removeDirectoryIfEmpty(targetDir, DOWNLOADS_DIR);
+    // All workers have settled before leaving, so no background image writes
+    // continue after the user cancels and starts another download.
+    if (results.some(result => result?.cancelled)) throw new Error('CANCELLED');
+    return {
+      success: failedImages === 0, filePath: saved[0]?.filePath,
+      filePaths: saved.map(result => result.filePath), totalImages: selected.images.length, postImages: selected.total,
+      downloadedImages: saved.length, failedImages,
+      ...(failedImages ? { error: `ดาวน์โหลดรูปได้ ${saved.length}/${selected.images.length} รูป; โหลดไม่สำเร็จ ${failedImages} รูป` } : {}),
+    };
+  } finally { cancelCtrl.stopListening(); }
 }
 
 function formatFacebookCookies(cookies) {
@@ -1611,6 +1709,19 @@ function decodeZeluxProtocolRequest(value) {
         exePath: String(protocolUrl.searchParams.get('exePath') || ''),
       };
       if (facebookImageUrls.length) request.facebookImageUrls = facebookImageUrls;
+      try {
+        const capture = tikTokPhotos.normalizeCapture(JSON.parse(protocolUrl.searchParams.get('tikTokPost') || 'null'), urls);
+        if (capture) request.tikTokPost = capture;
+      } catch (_) { /* Ignore invalid optional capture data. */ }
+      if (protocolUrl.searchParams.has('photoSelection')) {
+        try {
+          if (urls.length !== 1 || Boolean(request.tikTokPost) === Boolean(request.facebookImageUrls) || request.facebookImageUrls && !isFacebookPhotoPostUrl(urls[0])) throw new Error('Selection must be bound to one captured post');
+          request.photoSelection = photoSelection.validate(JSON.parse(protocolUrl.searchParams.get('photoSelection')), request.tikTokPost?.images.length || request.facebookImageUrls?.length || 0);
+        } catch (_) {
+          // Never silently fall back to downloading the whole post.
+          return { urls: [], cookieToken: '', exePath: '', error: 'รายการรูปที่เลือกไม่ถูกต้อง กรุณาเปิด Extension แล้วเลือกใหม่' };
+        }
+      }
       return request;
     }
   } catch (_) { }
@@ -3139,7 +3250,7 @@ function cleanupMediaInfoJson(infoJsonPath, mediaFilePath = '') {
 }
 
 async function chooseBatchMediaOptions(urls, chooser = promptInteractiveMenu) {
-  const mediaUrls = urls.filter(url => shouldUseMediaExtractor(url) && !isFacebookPhotoPostUrl(url));
+  const mediaUrls = urls.filter(url => shouldUseMediaExtractor(url) && !isFacebookPhotoPostUrl(url) && !tikTokPhotos.isTikTokPhotoUrl(url));
   if (!mediaUrls.length) return null;
 
   const formatType = await chooser([
@@ -4025,9 +4136,21 @@ async function performDownload(url, mediaOptions = null, options = {}) {
   }
   const githubRepository = parseGitHubRepositoryUrl(url);
   if (githubRepository) return downloadGitHubRepository(url, githubRepository);
+  if (tikTokPhotos.isTikTokPhotoUrl(url) || tikTokPhotos.isTikTokShortUrl(url) || tikTokPhotos.isTikTokUrl(url) && options.tikTokPost) {
+    try {
+      const captured = tikTokPhotos.normalizeCapture(options.tikTokPost, [url]);
+      const post = captured || await inspectTikTokPost(url);
+      if (post.images.length) return await downloadTikTokPhotoPost(post.sourceUrl, requestProviderPage, downloadFacebookImage, post, options.photoSelection);
+      url = post.sourceUrl;
+    } catch (err) {
+      if (err.message === 'CANCELLED') return { success: false, cancelled: true, error: 'Cancelled' };
+      print('      ' + error('✕') + ' TikTok รูปภาพ: ' + err.message);
+      return { success: false, error: err.message };
+    }
+  }
   if (isFacebookPhotoPostUrl(url)) {
     try {
-      return await downloadFacebookPhotoPost(url, requestProviderPage, downloadFacebookImage, options.facebookImageUrls);
+      return await downloadFacebookPhotoPost(url, requestProviderPage, downloadFacebookImage, options.facebookImageUrls, options.photoSelection);
     } catch (err) {
       if (err.message === 'CANCELLED') return { success: false, cancelled: true, error: 'Cancelled' };
       print('      ' + error('\u2715') + ' Facebook รูปภาพ: ' + err.message);
@@ -4965,6 +5088,9 @@ async function main() {
     for (const size of [[60, 26], [90, 32]]) {
       const frame = probe.buildFrame(...size);
       if (!frame.lines.length) throw new Error('Terminal renderer produced an empty frame');
+      probe.state = { type: 'photos', title: 'SELECT PHOTOS', model: photoSelection.create(19), cursor: 10 };
+      probe.state.model.page = 1;
+      if (!probe.buildFrame(...size).lines.length) throw new Error('Photo picker produced an empty frame');
     }
     console.log('Terminal renderer OK');
     return;
@@ -4979,9 +5105,10 @@ async function main() {
   const rawArgs = process.argv.slice(2);
   const protocolArg = rawArgs.find(value => /^zelux:/i.test(String(value || '').trim()));
   const protocolRequest = protocolArg ? decodeZeluxProtocolRequest(protocolArg) : null;
+  if (protocolRequest?.error) throw new Error(protocolRequest.error);
   if (protocolRequest?.exePath && await handoffToConfiguredZeluxExe(protocolRequest.exePath, protocolArg)) return;
   const initialUrls = protocolRequest?.urls?.length ? protocolRequest.urls : extractUrlsFromText(rawArgs);
-  const protocolOptions = { facebookImageUrls: protocolRequest?.facebookImageUrls || [] };
+  const protocolOptions = { facebookImageUrls: protocolRequest?.facebookImageUrls || [], tikTokPost: protocolRequest?.tikTokPost || null, photoSelection: protocolRequest?.photoSelection || null };
   let initialCookieFile = '';
   try {
     if (protocolRequest?.cookieToken) {
@@ -5059,6 +5186,8 @@ module.exports = {
   buildCookieHeaderFromNetscape,
   buildMediaPostprocessArgs,
   chooseBatchMediaOptions,
+  inspectTikTokPost,
+  downloadTikTokPhotoPost,
   downloadFacebookPhotoPost,
   extractFacebookPostImageUrls,
   extractFacebookPostTitle,

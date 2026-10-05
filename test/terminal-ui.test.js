@@ -22,6 +22,31 @@ function fixture() {
   return { ui, input, output, key, text: () => text, cancelled: () => cancelled };
 }
 
+test('terminal photo picker paginates without renumbering or losing choices', async () => {
+  const { ui, key } = fixture();
+  const choice = ui.choosePhotos(19);
+  await Promise.resolve();
+  key('c', 'c'); key('space', ' '); key('pagedown'); key('space', ' ');
+  assert.equal(ui.state.cursor, 10);
+  assert.equal(ui.state.model.page, 1);
+  const frame = ui.buildFrame(90, 32);
+  const text = frame.lines.flat().map(p => clean(p.text)).join('\n');
+  assert.match(text, /✔  10/); assert.match(text, /Page 2\/3/);
+  key('pagedown'); key('space', ' '); key('pageup'); key('pageup');
+  assert.equal(ui.state.model.selected.has(1), true);
+  key('return'); assert.deepEqual(await choice, [1, 10, 19]);
+});
+
+test('photo picker refuses an empty selection, fits minimum viewport and cancels safely', async () => {
+  const { ui, key } = fixture();
+  const choice = ui.choosePhotos(19); await Promise.resolve();
+  key('c', 'c'); key('return');
+  assert.ok(ui.resolve); assert.equal(ui.state.error, 'Select at least one photo');
+  const frame = ui.buildFrame(60, 26);
+  for (const line of frame.lines) for (const part of line) assert.ok(part.x + cellWidth(part.text) <= frame.width);
+  key('escape'); await assert.rejects(choice, /CANCELLED/);
+});
+
 test('terminal text removes control sequences and clips by display cells', () => {
   assert.equal(clean('\x1b[2Jname\x07'), 'name');
   assert.equal(cellWidth('กี่'), 1);

@@ -23,6 +23,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   let activeTab = null;
   let configuredExePath = '';
   let capturedFacebookImageUrls = [];
+  let capturedTikTokPost = null;
+  let photoModel = null;
+  let photoSources = [];
+  let photoSourceKey = '';
+  let photoCaptureGeneration = 0;
+  let capturingPhotos = false;
+  let sending = false;
+  const photoPicker = document.getElementById('photoPicker');
+  const photoGrid = document.getElementById('photoGrid');
+  const linksEditor = document.getElementById('linksEditor');
   let facebookCookiePermissionGranted = false;
   let youtubeCookiePermissionGranted = false;
   const facebookPermission = {
@@ -238,7 +248,83 @@ document.addEventListener('DOMContentLoaded', async () => {
   function renderCount() {
     const count = extractUrls(input.value).length;
     linkCount.textContent = `${count} ${count === 1 ? 'link' : 'links'}`;
-    sendButton.disabled = count === 0 || !configuredExePath;
+    sendButton.disabled = count === 0 || !configuredExePath || capturingPhotos || sending || Boolean(photoModel && !photoModel.selected.size);
+    sendButton.querySelector('span').textContent = photoModel ? `ดาวน์โหลด ${photoModel.selected.size} รูปที่เลือก` : 'Send to ZELUX-DL';
+  }
+
+  function renderPhotos() {
+    photoPicker.hidden = !photoModel;
+    document.body.classList.toggle('photo-mode', Boolean(photoModel));
+    if (!photoModel) { linksEditor.hidden = false; renderCount(); return; }
+    const m = photoModel;
+    document.getElementById('photoTotal').textContent = `${m.total} รูป`;
+    document.getElementById('photoSelectionCount').textContent = `เลือก ${m.selected.size} จาก ${m.total} รูป · รวมทุกหน้า`;
+    const visible = m.visible();
+    document.getElementById('photoPage').textContent = `หน้า ${m.page + 1}/${m.pages} · รูป ${visible[0]}–${visible.at(-1)}`;
+    document.getElementById('previousPhotos').disabled = m.page === 0;
+    document.getElementById('nextPhotos').disabled = m.page === m.pages - 1;
+    photoGrid.replaceChildren();
+    for (const n of visible) {
+      const tile = document.createElement('button');
+      tile.type = 'button'; tile.className = 'photo-tile';
+      tile.dataset.photo = String(n);
+      tile.setAttribute('aria-label', `รูปที่ ${n}`);
+      tile.setAttribute('aria-pressed', String(m.selected.has(n)));
+      const fallback = document.createElement('span');
+      fallback.className = 'photo-fallback'; fallback.textContent = 'กำลังโหลด…';
+      const img = document.createElement('img');
+      img.alt = `รูปที่ ${n}`; img.referrerPolicy = 'no-referrer'; img.hidden = true;
+      img.addEventListener('load', () => { img.hidden = false; });
+      img.addEventListener('error', () => { img.hidden = true; fallback.textContent = 'ไม่มีภาพตัวอย่าง'; });
+      img.src = photoSources[n - 1];
+      const number = document.createElement('span'); number.className = 'photo-number'; number.textContent = n;
+      const check = document.createElement('span'); check.className = 'photo-check'; check.textContent = m.selected.has(n) ? '✔' : '○';
+      check.setAttribute('aria-hidden', 'true');
+      tile.append(fallback, img, number, check);
+      tile.addEventListener('click', () => {
+        m.toggle(n);
+        tile.setAttribute('aria-pressed', String(m.selected.has(n)));
+        check.textContent = m.selected.has(n) ? '✔' : '○';
+        document.getElementById('photoSelectionCount').textContent = `เลือก ${m.selected.size} จาก ${m.total} รูป · รวมทุกหน้า`;
+        renderCount();
+      });
+      photoGrid.append(tile);
+    }
+    renderCount();
+  }
+
+  async function preparePhotos() {
+    const generation = ++photoCaptureGeneration;
+    const urls = extractUrls(input.value);
+    photoModel = null; photoSources = []; capturedTikTokPost = null;
+    photoSourceKey = JSON.stringify(urls);
+    renderPhotos();
+    if (urls.length !== 1) return;
+    if (isFacebookUrl(urls[0]) && /\/(?:posts\/|share\/p\/|photos\/)|\/photo(?:\.php|\/|\?)/i.test(new URL(urls[0]).pathname + new URL(urls[0]).search) && capturedFacebookImageUrls.length) {
+      photoSources = [...capturedFacebookImageUrls];
+    } else if (ZeluxTikTokPhotos.isTikTokUrl(urls[0]) && ZeluxTikTokPhotos.isTikTokUrl(activeTab?.url) && Number.isInteger(activeTab?.id)) {
+      capturingPhotos = true; renderCount();
+      setStatus('กำลังตรวจสอบรูปในโพสต์ TikTok…', 'busy');
+      let capture = null;
+      try {
+        await chrome.scripting.executeScript({ target: { tabId: activeTab.id }, world: 'MAIN', files: ['tiktok-photos.js'] });
+        const results = await chrome.scripting.executeScript({ target: { tabId: activeTab.id }, world: 'MAIN', func: () => globalThis.ZeluxTikTokPhotos.captureDocument(document, location.href) });
+        capture = ZeluxTikTokPhotos.normalizeCapture(results?.[0]?.result, urls);
+      } catch (_) { /* App can inspect links that cannot be captured in this tab. */ }
+      if (generation !== photoCaptureGeneration) return;
+      capturedTikTokPost = capture;
+      photoSources = capture?.images.map(image => image.urls[0]) || [];
+      capturingPhotos = false;
+    }
+    if (generation !== photoCaptureGeneration) return;
+    if (photoSources.length) {
+      photoModel = ZeluxPhotoSelection.create(photoSources.length);
+      linksEditor.hidden = true;
+      setStatus('กดที่รูปเพื่อเลือกหรือเอาออกก่อนดาวน์โหลด', 'idle');
+    } else if (ZeluxTikTokPhotos.isTikTokPhotoUrl(urls[0])) {
+      setStatus('ยังอ่านรูปไม่ได้ รอหน้าโพสต์โหลดแล้วเปิด Extension ใหม่ หรือเลือกเลขรูปในแอป', 'error');
+    } else setStatus('Ready to capture links.', 'idle');
+    renderPhotos();
   }
 
   function renderConfiguration() {
@@ -310,7 +396,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
   renderCount();
   updateSessionOption();
-  if (activeTab?.url && isFacebookUrl(activeTab.url) && Number.isInteger(activeTab.id)) {
+  async function prepareFacebookPhotos() {
+    if (!(activeTab?.url && isFacebookUrl(activeTab.url) && Number.isInteger(activeTab.id))) return;
+    const sourceKey = JSON.stringify(extractUrls(input.value));
+    capturingPhotos = true; renderCount();
+    setStatus('กำลังตรวจสอบรูปในโพสต์ Facebook…', 'busy');
     capturedFacebookImageUrls = [];
     // Facebook changes the tab route when `+N` is opened. Inject one short,
     // synchronous step at a time so a navigation cannot cancel a long script.
@@ -331,6 +421,8 @@ document.addEventListener('DOMContentLoaded', async () => {
       if ((!galleryStarted && batch.action === 'idle') || unchangedPasses >= 3 || (galleryStarted && idlePasses >= 3)) break;
       await new Promise(resolve => setTimeout(resolve, 900));
     }
+    capturingPhotos = false;
+    if (sourceKey !== JSON.stringify(extractUrls(input.value))) capturedFacebookImageUrls = [];
     if (capturedFacebookImageUrls.length > 1) {
       setStatus(`พบรูปจริงในกรอบโพสต์ ${capturedFacebookImageUrls.length} รูป พร้อมส่งให้ ZELUX-DL`, 'success');
     }
@@ -418,14 +510,24 @@ document.addEventListener('DOMContentLoaded', async () => {
   includeYouTubeCookies.addEventListener('change', () => requestSessionPermission('youtube', includeYouTubeCookies));
 
   input.addEventListener('input', () => {
+    capturingPhotos = false;
+    photoCaptureGeneration++;
+    photoModel = null;
+    capturedTikTokPost = null;
+    // Captured images belong to the original tab, never to a pasted different post.
+    if (extractUrls(input.value)[0] !== activeTab?.url) capturedFacebookImageUrls = [];
+    renderPhotos();
     renderCount();
     updateSessionOption();
+    clearTimeout(input.photoTimer);
+    input.photoTimer = setTimeout(preparePhotos, 250);
   });
   input.addEventListener('keydown', event => {
     if ((event.ctrlKey || event.metaKey) && event.key === 'Enter' && !sendButton.disabled) sendLinks();
   });
 
   async function sendLinks() {
+    if (sendButton.disabled || sending) return;
     if (!configuredExePath) {
       setStatus('ต้องระบุพาธ ZELUX-DL.exe ในการตั้งค่าก่อนใช้งาน', 'error');
       showSettings(true);
@@ -436,7 +538,12 @@ document.addEventListener('DOMContentLoaded', async () => {
       setStatus('Paste at least one valid HTTP or HTTPS link.', 'error');
       return;
     }
+    sending = true;
     sendButton.disabled = true;
+    const selection = photoModel && photoSourceKey === JSON.stringify(urls) ? photoModel.payload() : null;
+    const imageUrls = selection && !capturedTikTokPost ? selection.positions.map(n => capturedFacebookImageUrls[n - 1]) : [];
+    const tikTokPost = selection && capturedTikTokPost ? { ...capturedTikTokPost, images: selection.positions.map(n => capturedTikTokPost.images[n - 1]) } : null;
+    const countPhotos = selection?.positions.length || 0;
     const cookieProvider = includeYouTubeCookies.checked ? 'youtube'
       : includeFacebookCookies.checked ? 'facebook' : '';
     const useCookies = Boolean(cookieProvider);
@@ -458,7 +565,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const permissionGranted = isYouTube ? youtubeCookiePermissionGranted : facebookCookiePermissionGranted;
         if (!permissionGranted) throw new Error(`First enable the ${providerLabel} session option and approve the permission prompt. No cookies were read.`);
         const cookieToken = createCookieToken();
-        const protocolUrl = buildProtocolUrl(urls, cookieToken, configuredExePath, capturedFacebookImageUrls);
+        const protocolUrl = buildProtocolUrl(urls, cookieToken, configuredExePath, imageUrls, tikTokPost, selection);
         if (protocolUrl.length > 30000) throw new Error('The URL list is too long to open directly. Send a smaller batch.');
         resultPromise = chrome.runtime.sendMessage({
           type: 'launch-download',
@@ -467,7 +574,9 @@ document.addEventListener('DOMContentLoaded', async () => {
           includeFacebookCookies: !isYouTube,
           includeYouTubeCookies: isYouTube,
           cookieToken,
-          imageUrls: capturedFacebookImageUrls,
+          imageUrls,
+          tikTokPost,
+          photoSelection: selection,
           protocolAlreadyLaunched: true,
         });
         launchProtocolFromPopup(protocolUrl);
@@ -478,20 +587,25 @@ document.addEventListener('DOMContentLoaded', async () => {
           tabId: activeTab?.id,
           includeFacebookCookies: false,
           includeYouTubeCookies: false,
-          imageUrls: capturedFacebookImageUrls,
+          imageUrls,
+          tikTokPost,
+          photoSelection: selection,
         });
       }
       const result = await resultPromise;
       if (!result?.ok) throw new Error(result?.error || 'Could not hand links to ZELUX-DL.');
       setStatus(result.usedTemporaryCookies
         ? `Sent a temporary ${providerLabel} session locally for ${result.count} link${result.count === 1 ? '' : 's'}. ZELUX-DL removes its temporary file after the job.`
-        : `Requested Windows to open ${result.count} link${result.count === 1 ? '' : 's'} with ZELUX-DL. If nothing opens, check protocol registration.`, 'success');
+        : countPhotos
+          ? `ส่ง ${countPhotos} รูปที่เลือกไปยัง ZELUX-DL แล้ว · เก็บเลขรูปตามโพสต์เดิม`
+          : `Requested Windows to open ${result.count} link${result.count === 1 ? '' : 's'} with ZELUX-DL. If nothing opens, check protocol registration.`, 'success');
     } catch (error) {
       const detail = error.message || 'Could not send the link to ZELUX-DL.';
       setStatus(/no cookies were sent|cookie bridge|identity verification|local ZELUX-DL/i.test(detail)
         ? detail
         : `${detail} Check that ZELUX-DL is installed and its zelux:// handler is registered.`, 'error');
     } finally {
+      sending = false;
       if (useCookies) {
         facebookCookiePermissionGranted = false;
         youtubeCookiePermissionGranted = false;
@@ -507,10 +621,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     return [...bytes].map(value => value.toString(16).padStart(2, '0')).join('');
   }
 
-  function buildProtocolUrl(urls, cookieToken, exePath, imageUrls = []) {
+  function buildProtocolUrl(urls, cookieToken, exePath, imageUrls = [], tikTokPost = null, photoSelection = null) {
     const query = new URLSearchParams({ urls: JSON.stringify(urls), cookieToken, exePath });
     const safeImages = dedupeFacebookImageUrls(imageUrls);
     if (safeImages.length) query.set('imageUrls', JSON.stringify(safeImages));
+    if (tikTokPost) query.set('tikTokPost', JSON.stringify(tikTokPost));
+    if (photoSelection) query.set('photoSelection', JSON.stringify(photoSelection));
     return `zelux://download?${query.toString()}`;
   }
 
@@ -526,4 +642,11 @@ document.addEventListener('DOMContentLoaded', async () => {
   }
 
   sendButton.addEventListener('click', sendLinks);
+  document.getElementById('selectAllPhotos').addEventListener('click', () => { photoModel?.all(); renderPhotos(); });
+  document.getElementById('clearPhotos').addEventListener('click', () => { photoModel?.clear(); renderPhotos(); });
+  document.getElementById('previousPhotos').addEventListener('click', () => { photoModel?.turn(-1); renderPhotos(); });
+  document.getElementById('nextPhotos').addEventListener('click', () => { photoModel?.turn(1); renderPhotos(); });
+  document.getElementById('editLinks').addEventListener('click', () => { linksEditor.hidden = !linksEditor.hidden; if (!linksEditor.hidden) input.focus(); });
+  await prepareFacebookPhotos();
+  await preparePhotos();
 });

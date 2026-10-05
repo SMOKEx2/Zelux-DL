@@ -39,12 +39,14 @@
     </div>
 
     <section class="capture-section" aria-labelledby="links-label">
+      <div id="linksEditor">
       <div class="section-heading">
         <label id="links-label" for="urlInput">Links to send</label>
         <span id="linkCount" class="count">0 links</span>
       </div>
       <textarea id="urlInput" rows="5" placeholder="Paste one or more URLs&#10;One link per line" autocomplete="off" spellcheck="false"></textarea>
       <div class="input-hint">Paste one or more links, one URL per line. The current tab link is added automatically.</div>
+      </div>
       <label id="facebookSessionControl" class="session-control" hidden>
         <input id="includeFacebookCookies" type="checkbox">
         <span class="session-copy">
@@ -59,6 +61,22 @@
           <small>Optional, per download. Only YouTube cookies are sent to ZELUX-DL on this PC and removed from its temporary file after the job. Cookies are login credentials; use only for content your account can access.</small>
         </span>
       </label>
+    </section>
+
+    <section id="photoPicker" class="photo-picker" aria-labelledby="photoTitle" hidden>
+      <div class="photo-heading"><h2 id="photoTitle">เลือกรูปที่จะโหลด</h2><span id="photoTotal" class="count"></span></div>
+      <div class="photo-tools">
+        <button id="selectAllPhotos" class="quiet-button" type="button">เลือกทั้งหมด</button>
+        <button id="clearPhotos" class="quiet-button" type="button">ล้างการเลือก</button>
+        <button id="editLinks" class="text-button" type="button">แก้ลิงก์</button>
+      </div>
+      <div id="photoGrid" class="photo-grid" aria-label="รูปในโพสต์"></div>
+      <nav class="photo-pagination" aria-label="หน้ารูปภาพ">
+        <button id="previousPhotos" class="quiet-button" type="button" aria-label="รูปหน้าก่อน">←</button>
+        <span id="photoPage" aria-live="polite"></span>
+        <button id="nextPhotos" class="quiet-button" type="button" aria-label="รูปหน้าถัดไป">→</button>
+      </nav>
+      <div id="photoSelectionCount" class="selection-count" role="status" aria-live="polite"></div>
     </section>
 
     <div id="status" class="status" role="status" aria-live="polite">
@@ -92,6 +110,8 @@
       <footer>พาธจะถูกเก็บในพื้นที่จัดเก็บของ Extension บนเบราว์เซอร์นี้</footer>
     </section>
   </main>
+  <script src="tiktok-photos.js"></script>
+  <script src="photo-selection.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

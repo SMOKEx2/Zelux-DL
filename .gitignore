@@ -3,6 +3,7 @@ downloads/
 cache/
 dist/
 scratch/
+output/playwright/
 *.exe
 *.old
 *.log

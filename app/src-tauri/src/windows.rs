@@ -53,9 +53,9 @@ fn spec(kind: &str) -> Spec {
             ..s(760.0, 680.0, false, true, "Download Model")
         },
         "addurl" => s(600.0, 300.0, true, false, "Add URL"),
-        "mini" => s(360.0, 220.0, true, false, "Prism Mini"),
-        "dropzone" => s(112.0, 112.0, true, false, "Prism Drop Zone"),
-        _ => s(720.0, 560.0, false, true, "Prism"),
+        "mini" => s(360.0, 220.0, true, false, "ZeluxDL Mini"),
+        "dropzone" => s(112.0, 112.0, true, false, "ZeluxDL Drop Zone"),
+        _ => s(720.0, 560.0, false, true, "ZeluxDL"),
     }
 }
 

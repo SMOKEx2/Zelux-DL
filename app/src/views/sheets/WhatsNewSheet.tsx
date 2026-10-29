@@ -70,7 +70,6 @@ const PREVIOUS = { version: "1.1.6", changes: [
 export function WhatsNewSheet() {
   const version = useApp((s) => s.version);
   const { status, connected } = useExtensionStatus();
-  const fromStore = connected && status?.extensionInstallType === "normal";
   return (
     <div className="whatsnew">
       <header className="whatsnew__head">
@@ -85,24 +84,10 @@ export function WhatsNewSheet() {
         <div className="whatsnew__storehead">
           <Icon name="puzzle" size={18} className="text-accent" />
           <div>
-            <b>{t("Add Prism to your browser in one click")}</b>
-            <div className="t-small text-secondary">
-              {t("From the Chrome Web Store, for Chrome, Edge, Brave, Opera, Vivaldi and Helium. It updates by itself, so there's nothing to reload after a Prism update.")}
-            </div>
+            <b>{t("Browser integration")}</b>
           </div>
         </div>
-        {fromStore ? (
-          <div className="bstatus bstatus--ok" role="status">
-            <span className="bstatus__icon">
-              <Icon name="check" size={16} strokeWidth={2.4} />
-            </span>
-            <div>
-              <b>{t("You're all set.")}</b> {t("Your browser runs Prism from the Chrome Web Store.")}
-            </div>
-          </div>
-        ) : (
-          <BrowserConnect status={status} connected={connected} />
-        )}
+        <BrowserConnect status={status} connected={connected} />
       </section>
 
       <ChangeList changes={CHANGES} />

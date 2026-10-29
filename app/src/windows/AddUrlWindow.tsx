@@ -65,7 +65,7 @@ export default function AddUrlWindow() {
             onEnter={submit}
           />
           <span className={`field__hint${error ? " text-danger" : ""}`}>
-            {error || (torrent ? t("Torrent — you will choose the files next.") : t("Prism checks the address and shows the Download File dialog."))}
+            {error || (torrent ? t("Torrent — you will choose the files next.") : t("ZeluxDL checks the address and shows the Download File dialog."))}
           </span>
         </div>
         <button type="button" className="disclose" aria-expanded={auth} onClick={() => setAuth(!auth)}>

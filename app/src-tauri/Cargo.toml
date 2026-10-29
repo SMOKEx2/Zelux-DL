@@ -5,10 +5,10 @@ edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
 description = "Prism Download Manager"
-default-run = "prism"
+default-run = "ZeluxDL"
 
 [[bin]]
-name = "prism"
+name = "ZeluxDL"
 path = "src/main.rs"
 
 [build-dependencies]

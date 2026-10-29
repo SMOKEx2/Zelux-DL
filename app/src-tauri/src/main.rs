@@ -69,7 +69,7 @@ fn main() {
         .setup(move |app| {
             let handle = app.handle().clone();
             let core = tauri::async_runtime::block_on(Core::start(CoreOptions::default()))
-                .map_err(|e| format!("Prism failed to start: {e:#}"))?;
+                .map_err(|e| format!("ZeluxDL failed to start: {e:#}"))?;
             app.manage(core.clone());
             tray::create(&handle)?;
             #[cfg(target_os = "macos")]
@@ -240,17 +240,16 @@ fn main() {
             updates::install_update,
         ])
         .build(tauri::generate_context!())
-        .expect("error while building Prism");
+        .expect("error while building ZeluxDL");
 
     app.run(|app, event| {
-        // Prism lives in the tray: closing the last window must not exit.
-        if let RunEvent::ExitRequested { api, code, .. } = &event
-            && code.is_none()
+        // ZeluxDL lives in the tray: closing the last window must not exit.
+        if let RunEvent::ExitRequested { api, .. } = &event
             && !QUITTING.load(Ordering::SeqCst)
         {
             api.prevent_exit();
         }
-        // macOS: clicking the Dock icon (or `open -a Prism`) brings back the hidden main window.
+        // macOS: clicking the Dock icon (or `open -a ZeluxDL`) brings back the hidden main window.
         #[cfg(target_os = "macos")]
         if let RunEvent::Reopen { .. } = &event {
             windows::show_main(app);
@@ -268,7 +267,7 @@ fn mac_menu(app: &AppHandle) -> tauri::Result<()> {
     if let Some(first) = menu.items()?.into_iter().next()
         && let Some(sub) = first.as_submenu()
     {
-        let show = MenuItem::with_id(app, "show-main", "Show Prism", true, Some("CmdOrCtrl+0"))?;
+        let show = MenuItem::with_id(app, "show-main", "Show ZeluxDL", true, Some("CmdOrCtrl+0"))?;
         sub.insert(&show, 1)?;
         sub.insert(&PredefinedMenuItem::separator(app)?, 2)?;
     }
@@ -656,17 +655,19 @@ fn init_logging() -> Option<tracing_appender::non_blocking::WorkerGuard> {
     std::fs::create_dir_all(&dir).ok()?;
     let appender = tracing_appender::rolling::Builder::new()
         .rotation(tracing_appender::rolling::Rotation::DAILY)
-        .filename_prefix("prism")
+        .filename_prefix("zeluxdl")
         .filename_suffix("log")
         .max_log_files(7)
         .build(&dir)
         .ok()?;
     let (writer, guard) = tracing_appender::non_blocking(appender);
-    let filter = EnvFilter::try_from_env("PRISM_LOG").unwrap_or_else(|_| {
-        EnvFilter::new(
-            "info,prism_core=info,prism_engine=info,hyper=warn,reqwest=warn,librqbit=warn",
-        )
-    });
+    let filter = EnvFilter::try_from_env("ZELUXDL_LOG")
+        .or_else(|_| EnvFilter::try_from_env("PRISM_LOG"))
+        .unwrap_or_else(|_| {
+            EnvFilter::new(
+                "info,prism_core=info,prism_engine=info,hyper=warn,reqwest=warn,librqbit=warn",
+            )
+        });
     tracing_subscriber::registry()
         .with(filter)
         .with(fmt::layer().with_writer(writer).with_ansi(false))

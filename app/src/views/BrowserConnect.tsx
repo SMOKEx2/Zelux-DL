@@ -35,7 +35,7 @@ const PAGE: Record<string, string> = {
 const FIREFOX_FAMILY = ["firefox", "zen"];
 
 /** Prism's extension in the Chrome Web Store: Chrome, Edge, Brave, Opera, Vivaldi, Helium and Chromium install it from there. */
-export const EXTENSION_STORE_URL = "https://chromewebstore.google.com/detail/prism-download-manager/mmcdeiglkbfbicdjboocmhehodogilfl";
+export const EXTENSION_STORE_URL = "https://github.com/SMOKEx2/Zelux-DL/releases";
 /** The store's install button as each browser labels it (Chrome's label elsewhere). */
 const ADD_LABEL: Record<string, string> = { brave: "Add to Brave", opera: "Add to Opera" };
 
@@ -87,11 +87,14 @@ export function BrowserConnect({ status, connected, hideOwnStatus }: { status: I
   const [byHand, setByHand] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   useEffect(() => {
-    if (firefox || byHand) void api.extensionFolder(firefox).then(setFolder, () => setFolder(null));
-  }, [firefox, byHand]);
+    let active = true;
+    setFolder(null);
+    void api.extensionFolder(firefox).then((path) => { if (active) setFolder(path); }, () => { if (active) setFolder(null); });
+    return () => { active = false; };
+  }, [firefox]);
   // A Prism extension someone loaded by hand earlier ("Load unpacked"): the store version
   // updates by itself, but the browser won't add it while the old one is still installed.
-  const manual = !firefox && !byHand && status?.extensionInstallType === "development";
+  const manual = false;
   // Store steps start after the "remove the copy added by hand" step when that one shows.
   const step = manual ? 1 : 0;
 
@@ -209,7 +212,7 @@ export function BrowserConnect({ status, connected, hideOwnStatus }: { status: I
             </div>
           </li>
         </ol>
-      ) : (
+      ) : false ? (
         <ol className="bsteps">
           {manual && (
             <li className="bstep">
@@ -272,6 +275,12 @@ export function BrowserConnect({ status, connected, hideOwnStatus }: { status: I
             </div>
             <FakeButton label={t("Pin")} icon="pin" />
           </li>
+        </ol>
+      ) : (
+        <ol className="bsteps">
+          <li className="bstep"><span className="bstep__n">1</span><div className="bstep__txt"><div className="bstep__t">{t("Open the extensions page")}</div><div className="bstep__d"><code>{PAGE[current]}</code></div></div><button type="button" className="btn btn--sm" onClick={openPage}>{t("Copy & open {browser}", { browser: name })}</button></li>
+          <li className="bstep"><span className="bstep__n">2</span><div className="bstep__txt"><div className="bstep__t">{t("Turn on {toggle}", { toggle: "Developer mode" })}</div></div><FakeToggle /></li>
+          <li className="bstep bstep--wide"><span className="bstep__n">3</span><div className="bstep__txt"><div className="bstep__t">{t("Click “{button}” and choose the Prism folder", { button: "Load unpacked" })}</div><div className="bstep__d">{pasteHint}</div></div><div className="howto__path bstep__full"><span className="t-mono ellipsis selectable">{folder ?? "…"}</span><button type="button" className="btn btn--sm" disabled={!folder} onClick={copyFolder}>{t("Copy path")}</button><button type="button" className="btn btn--sm btn--ghost" disabled={!folder} onClick={() => folder && void api.openPath(folder)}>{t("Show")}</button></div></li>
         </ol>
       )}
 
@@ -450,7 +459,7 @@ export function ConnectBanner({ onOpen }: { onOpen: () => void }) {
                 <Icon name="browser" size={16} />
               </span>
               {outdated ? (
-                status?.extensionInstallType === "development" ? (
+                false && status?.extensionInstallType === "development" ? (
                   <span className="cbanner__txt">
                     <b>{t("Prism's extension is now in the Chrome Web Store.")}</b>{" "}
                     {t("Yours ({version}) was added by hand and won't update by itself: switch to the store version, it takes a minute.", { version: status?.extensionVersion ?? "" })}
@@ -473,7 +482,7 @@ export function ConnectBanner({ onOpen }: { onOpen: () => void }) {
                 </span>
               )}
               <button type="button" className="btn btn--primary btn--sm" onClick={onOpen}>
-                {outdated ? (status?.extensionInstallType === "development" ? t("Switch") : t("Show how")) : t("Connect browser")}
+                {outdated ? (false && status?.extensionInstallType === "development" ? t("Switch") : t("Show how")) : t("Connect browser")}
               </button>
               <button type="button" className="tb-btn" aria-label={t("Hide this reminder")} data-tip={t("Hide")} onClick={dismiss}>
                 <Icon name="close" size={14} />

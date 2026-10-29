@@ -9,7 +9,7 @@ import { api, type HfContext, type IntegrationStatus, type ToolStatus } from "..
 import { formatDate } from "../../lib/format";
 import { LANGUAGES, t, tk } from "../../lib/i18n";
 import { needsRepair } from "../../lib/integration";
-import { openUrl, REPO_URL } from "../../lib/links";
+import { openUrl } from "../../lib/links";
 import { categoryIcon, displayName } from "../../lib/present";
 import { COMPLETE_SOUNDS } from "../../lib/sounds";
 import { playSound, useApp } from "../../lib/store";
@@ -62,15 +62,15 @@ export function SettingsSheet({ section }: { section?: string }) {
               {x.group && !q && <div className="grp" />}
               <button type="button" className="side-item" aria-current={x.id === cur ? "true" : undefined} onClick={() => setCur(x.id)}>
                 <Icon name={x.icon} size={16} />
-                <span className="side-item__label">{t(x.label)}</span>
+                <span className="side-item__label">{x.id === "about" ? t(x.label).replace("Prism", "ZeluxDL") : t(x.label)}</span>
               </button>
             </div>
           ))}
         </nav>
       </aside>
-      <section className="scontent" aria-label={t(meta.label)}>
+      <section className="scontent" aria-label={cur === "about" ? t(meta.label).replace("Prism", "ZeluxDL") : t(meta.label)}>
         <div className="sbody" key={cur}>
-          <h1>{t(meta.label)}</h1>
+          <h1>{cur === "about" ? t(meta.label).replace("Prism", "ZeluxDL") : t(meta.label)}</h1>
           <SectionBody id={cur} s={s} />
         </div>
       </section>
@@ -394,7 +394,8 @@ function SectionBody({ id, s }: { id: string; s: Settings }) {
 // ---- sections with more logic -------------------------------------------------------
 
 const ACCENTS = [
-  ["prism", "Prism", "#6461f2", "#5653ea"],
+  ["pulse", "Zelux Pulse", "#8b5bff", "#703bf7"],
+  ["prism", "Zelux Classic", "#6461f2", "#5653ea"],
   ["cyan", tk("Cyan"), "#36c5e6", "#0b7fa0"],
   ["emerald", tk("Emerald"), "#2fc489", "#087f53"],
   ["amber", tk("Amber"), "#f2b54a", "#a86200"],
@@ -597,7 +598,7 @@ function BrowserIntegration() {
           </b>
           <div className="t-small">
             {status?.extensionOutdated
-              ? status.extensionInstallType === "development"
+              ? false && status?.extensionInstallType === "development"
                 ? t("This one was added by hand and doesn't update by itself. Prism's extension is now in the Chrome Web Store: remove this one and add it from the store (steps below).")
                 : t("Browsers don't reload an unpacked extension's files by themselves. Click ↻ Reload next to Prism on the extensions page, or restart the browser; if it stays old, remove it and load it again from the folder below.")
               : status?.lastSeen
@@ -827,7 +828,7 @@ function Advanced({ s }: { s: Settings }) {
   const date = new Date().toISOString().slice(0, 10);
   const json = [{ name: "JSON", extensions: ["json"] }];
   const exp = async (kind: "list" | "settings" | "diagnostics") => {
-    const name = kind === "list" ? `prism-downloads-${date}.json` : kind === "settings" ? `prism-settings-${date}.json` : `prism-diagnostics-${date}.zip`;
+    const name = kind === "list" ? `zeluxdl-downloads-${date}.json` : kind === "settings" ? `zeluxdl-settings-${date}.json` : `zeluxdl-diagnostics-${date}.zip`;
     const path = await pickSavePath(name, kind === "diagnostics" ? [{ name: "Zip", extensions: ["zip"] }] : json);
     if (!path) return;
     const job = kind === "list" ? api.exportList(path) : kind === "settings" ? api.exportSettings(path) : api.exportDiagnostics(path);
@@ -947,7 +948,7 @@ function About() {
   return (
     <div className="about">
       <BrandTile size={72} />
-      <h2>Prism</h2>
+      <h2>ZeluxDL</h2>
       <p className="text-secondary">{t("Version {version}", { version })}</p>
       <div className="inline" style={{ justifyContent: "center" }}>
         <button type="button" className="btn" onClick={() => void checkForUpdates(true)}>
@@ -958,8 +959,8 @@ function About() {
         </button>
       </div>
       <p className="lead">{t("One beam, many rays. A fast multi-connection download manager with browser integration, video downloading, queues, a scheduler and a site grabber.")}</p>
-      <button type="button" className="linkbtn about__star" onClick={() => void openUrl(REPO_URL)}>
-        {t("Prism is open source. Star it on GitHub")}
+      <button type="button" className="linkbtn about__star" onClick={() => void openUrl("https://github.com/FortoGraphy/prism-download-manager")}>
+        {t("Prism is open source. Star it on GitHub").replace("ZeluxDL", "Prism")}
       </button>
       <p className="t-small text-tertiary">{t("Inter and JetBrains Mono are used under the SIL Open Font License. yt-dlp, ffmpeg and librqbit are separate projects under their own licenses.")}</p>
     </div>

@@ -29,24 +29,24 @@ function toast(text: string, bad = false): void {
 }
 
 function chip(c: ConnectionInfo): string {
-  if (c.state === 'connected') return `<span class="chip ok" id="conn" data-state="connected"><span class="dot"></span>Connected${c.appVersion ? ` · v${esc(c.appVersion)}` : ''}</span>`;
-  if (c.state === 'unknown') return `<span class="chip unknown" id="conn" data-state="unknown"><span class="dot"></span>Checking…</span>`;
-  return `<span class="chip bad" id="conn" data-state="${c.state}"><span class="dot"></span>Not connected</span>`;
+  if (c.state === 'connected') return `<span class="chip ok" id="conn" data-state="connected"><span class="dot"></span>เชื่อมต่อแล้ว${c.appVersion ? ` · v${esc(c.appVersion)}` : ''}</span>`;
+  if (c.state === 'unknown') return `<span class="chip unknown" id="conn" data-state="unknown"><span class="dot"></span>กำลังตรวจสอบ…</span>`;
+  return `<span class="chip bad" id="conn" data-state="${c.state}"><span class="dot"></span>ไม่ได้เชื่อมต่อ</span>`;
 }
 
 function alertCard(c: ConnectionInfo): string {
   if (c.state === 'connected' || c.state === 'unknown') return '';
   const missing = c.state === 'host_missing';
-  const title = missing ? 'Browser integration isn’t installed' : 'Prism isn’t reachable';
+  const title = missing ? 'ยังไม่ได้ติดตั้งส่วนเชื่อมต่อเบราว์เซอร์' : 'ไม่สามารถเชื่อมต่อ ZeluxDL ได้';
   const hint = missing
-    ? 'Fix: open Prism › Settings › Browser integration and click Repair.'
-    : 'Start Prism, or open Prism › Settings › Browser integration › Repair. Downloads stay in the browser meanwhile.';
+    ? 'วิธีแก้ไข: เปิด ZeluxDL › การตั้งค่า › ส่วนเชื่อมต่อเบราว์เซอร์ แล้วคลิก "ซ่อมแซม"'
+    : 'โปรดเปิดโปรแกรม ZeluxDL หรือไปที่ ZeluxDL › การตั้งค่า › ส่วนเชื่อมต่อเบราว์เซอร์ › ซ่อมแซม ระหว่างนี้จะดาวน์โหลดผ่านเบราว์เซอร์ตามปกติ';
   return `<section class="alert glass" id="fix">
     <span class="ic">${icons.alert(18)}</span><b>${title}</b>
-    <p>${hint}${c.error ? `<br><span class="small">Details: ${esc(c.error)}</span>` : ''}</p>
+    <p>${hint}${c.error ? `<br><span class="small">รายละเอียด: ${esc(c.error)}</span>` : ''}</p>
     <div class="actions">
-      ${missing ? '' : `<button class="btn primary" data-act="launch">${icons.external(14)}Start Prism</button>`}
-      <button class="btn" data-act="retry">${icons.refresh(14)}Retry</button>
+      ${missing ? '' : `<button class="btn primary" data-act="launch">${icons.external(14)}เปิด ZeluxDL</button>`}
+      <button class="btn" data-act="retry">${icons.refresh(14)}ลองใหม่</button>
     </div>
   </section>`;
 }
@@ -69,20 +69,20 @@ function render(): void {
   app.innerHTML = `
     <header class="top">
       <span class="tile">${prismMark(24)}</span>
-      <div class="brand"><b>Prism</b><span class="muted">Download manager</span></div>
+      <div class="brand"><b>ZeluxDL</b><span class="muted">โปรแกรมช่วยดาวน์โหลด</span></div>
       ${chip(connection)}
     </header>
     ${alertCard(connection)}
     <section class="row glass">
-      <div class="tx"><b>Capture downloads</b><span>${
-        !st.settings.captureEnabled ? 'Disabled in settings' : st.paused ? 'Paused — the browser downloads files itself' : 'Matching files open in Prism'
+      <div class="tx"><b>จับการดาวน์โหลด</b><span>${
+        !st.settings.captureEnabled ? 'ปิดใช้งานในการตั้งค่า' : st.paused ? 'หยุดชั่วคราว — เบราว์เซอร์จะดาวน์โหลดเอง' : 'ส่งไฟล์ที่ตรงกันไปยัง ZeluxDL'
       }</span></div>
-      <label class="switch" title="Pause capture"><input type="checkbox" id="capture" ${capturing ? 'checked' : ''} ${
+      <label class="switch" title="หยุดจับการดาวน์โหลดชั่วคราว"><input type="checkbox" id="capture" ${capturing ? 'checked' : ''} ${
         st.settings.captureEnabled ? '' : 'disabled'
-      } aria-label="Capture downloads"><span></span></label>
+      } aria-label="จับการดาวน์โหลด"><span></span></label>
     </section>
     <section class="section glass">
-      <h2>Media on this page <span class="count" id="media-count">${media.length}</span></h2>
+      <h2>สื่อในหน้านี้ <span class="count" id="media-count">${media.length}</span></h2>
       <div class="list" id="media">${
         media.length
           ? media
@@ -90,22 +90,22 @@ function render(): void {
                 (m) => `<div class="media" data-key="${esc(m.key)}">
                   <span class="kind">${kindIcon(m)}</span>
                   <span class="tx"><span class="name" title="${esc(m.url)}">${esc(m.name)}</span><span class="meta">${esc(mediaMeta(m))}</span></span>
-                  <button class="btn" data-act="media" data-key="${esc(m.key)}">${icons.download(14)}Download</button>
+                  <button class="btn" data-act="media" data-key="${esc(m.key)}">${icons.download(14)}ดาวน์โหลด</button>
                 </div>`,
               )
               .join('')
-          : `<div class="empty"><b>No media detected yet</b>Play a video or audio on the page and it will show up here.</div>`
+          : `<div class="empty"><b>ยังไม่พบสื่อในหน้านี้</b>เล่นวิดีโอหรือเสียงในหน้านี้เพื่อแสดงที่นี่</div>`
       }</div>
     </section>
     <section class="grab">
-      <button class="btn" data-act="collect" data-mode="links">${icons.link(18)}All links</button>
-      <button class="btn" data-act="collect" data-mode="images">${icons.image(18)}All images</button>
-      <button class="btn" data-act="collect" data-mode="videos">${icons.film(18)}All videos</button>
+      <button class="btn" data-act="collect" data-mode="links">${icons.link(18)}ทุกลิงก์</button>
+      <button class="btn" data-act="collect" data-mode="images">${icons.image(18)}ทุกรูปภาพ</button>
+      <button class="btn" data-act="collect" data-mode="videos">${icons.film(18)}ทุกวิดีโอ</button>
     </section>
     <footer class="foot">
-      <button class="btn ghost" data-act="open">${prismMark(16)}Open Prism</button>
+      <button class="btn ghost" data-act="open">${prismMark(16)}เปิด ZeluxDL</button>
       <span class="spacer"></span>
-      <button class="btn ghost icon" data-act="options" title="Options" aria-label="Options">${icons.gear(16)}</button>
+      <button class="btn ghost icon" data-act="options" title="การตั้งค่า" aria-label="การตั้งค่า">${icons.gear(16)}</button>
     </footer>`;
 }
 
@@ -139,11 +139,11 @@ async function act(el: HTMLElement): Promise<void> {
     switch (a) {
       case 'media':
         r = await sendInternal<ActionResult>({ kind: 'downloadMedia', tabId, key: el.dataset.key! });
-        if (r?.ok) toast('Sent to Prism');
+        if (r?.ok) toast('ส่งไปยัง ZeluxDL แล้ว');
         break;
       case 'collect':
         r = await sendInternal<ActionResult>({ kind: 'collect', tabId, mode: el.dataset.mode as BatchKind });
-        if (r?.ok) toast(r.count ? `Sent ${r.count} item${r.count === 1 ? '' : 's'} to Prism` : 'Nothing found on this page');
+        if (r?.ok) toast(r.count ? `ส่ง ${r.count} รายการไปยัง ZeluxDL แล้ว` : 'ไม่พบรายการใดๆ ในหน้านี้');
         break;
       case 'open':
       case 'launch':
@@ -158,8 +158,8 @@ async function act(el: HTMLElement): Promise<void> {
         r = { ok: true };
         break;
     }
-    if (r && !r.ok) toast(r.error ?? 'Something went wrong', true);
-    if (!r) toast('Prism extension is restarting — try again', true);
+    if (r && !r.ok) toast(r.error ?? 'เกิดข้อผิดพลาด', true);
+    if (!r) toast('ส่วนขยาย ZeluxDL กำลังเริ่มใหม่ — โปรดลองอีกครั้ง', true);
   } finally {
     busy = false;
     (el as HTMLButtonElement).disabled = false;

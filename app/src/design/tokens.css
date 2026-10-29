@@ -30,9 +30,9 @@
    -------------------------------------------------------------------------- */
 :root {
   /* ---- Typography ------------------------------------------------------ */
-  --font-sans: "Inter Variable", "Inter", "Segoe UI Variable Text", "Segoe UI",
+  --font-sans: "Noto Sans Thai Variable", "Inter Variable", "Inter", "Segoe UI Variable Text", "Segoe UI",
     system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "JetBrains Mono Variable", "JetBrains Mono", "Cascadia Mono",
+  --font-mono: "Noto Sans Thai Variable", "JetBrains Mono Variable", "JetBrains Mono", "Cascadia Mono",
     ui-monospace, "SF Mono", Menlo, Consolas, monospace;
 
   /* Type scale (px — the UI is a dense desktop tool, sizes are absolute).  */
@@ -419,6 +419,18 @@
      --accent-contrast text on --accent-solid (≥ 4.5:1)
      --accent-glow     soft halo for focus rings and active progress
    -------------------------------------------------------------------------- */
+
+/* Zelux Pulse (signature neon violet / deep glass) */
+[data-accent="pulse"] {
+  --accent: #a78bfa; --accent-rgb: 139 91 255;
+  --accent-solid: #8b5bff; --accent-solid-hover: #9c70ff; --accent-contrast: #ffffff;
+  --accent-2: #ec4899;
+}
+[data-theme="light"][data-accent="pulse"] {
+  --accent: #703bf7; --accent-rgb: 112 59 247;
+  --accent-solid: #703bf7; --accent-solid-hover: #5d29e6; --accent-contrast: #ffffff;
+  --accent-2: #db2777;
+}
 
 /* Prism (signature violet-blue) — default */
 :root,

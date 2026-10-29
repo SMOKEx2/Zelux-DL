@@ -17,6 +17,7 @@ pub mod manager;
 pub mod model;
 pub mod paths;
 pub mod platform;
+pub mod resolver;
 mod rt;
 pub mod scheduler;
 pub mod settings;

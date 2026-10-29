@@ -44,10 +44,110 @@
 /* ---- batch / grabber tables ------------------------------------------------------ */
 .batch__head { display: flex; gap: 12px; align-items: center; padding: 2px 16px 10px; flex: none; }
 .batch__head .chips { flex: 1; min-width: 0; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-.batch__head .input { width: 210px; flex: none; }
+.batch__head .input { width: 190px; flex: none; }
+.batch__view-toggle { display: flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--control-bg); box-shadow: inset 0 0 0 1px var(--border-subtle); flex: none; }
+.batch__view-toggle .btn { width: 28px; height: 26px; padding: 0; border-radius: 6px; }
+.batch__view-toggle .btn.on { background: var(--surface-overlay); color: var(--accent); box-shadow: 0 1px 3px rgb(0 0 0 / 0.15); }
 .gtable { display: flex; flex-direction: column; min-height: 0; border-radius: 10px; box-shadow: inset 0 0 0 1px var(--border-subtle); overflow: hidden; background: var(--surface-base); }
 [data-theme="dark"] .gtable { background: rgb(12 13 18 / 0.92); }
 .batch__table { flex: 1; margin: 0 12px; }
+.batch__grid {
+  flex: 1;
+  margin: 0 12px;
+  overflow-y: auto;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+  align-content: start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  background: var(--surface-base);
+}
+[data-theme="dark"] .batch__grid { background: rgb(12 13 18 / 0.92); }
+.batch-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 9px;
+  box-shadow: inset 0 0 0 1px var(--border-subtle);
+  background: var(--surface-raised);
+  overflow: hidden;
+  cursor: pointer;
+  user-select: none;
+  transition: transform var(--dur-fast), box-shadow var(--dur-fast), opacity var(--dur-fast);
+}
+.batch-card:hover {
+  transform: translateY(-2px);
+  box-shadow: inset 0 0 0 1px var(--accent-border), 0 4px 12px -2px rgb(0 0 0 / 0.3);
+}
+.batch-card.is-selected {
+  box-shadow: inset 0 0 0 1.5px var(--accent-solid), 0 0 10px -2px rgb(var(--accent-rgb) / 0.35);
+  background: var(--surface-overlay);
+}
+.batch-card.is-off {
+  opacity: 0.52;
+}
+.batch-card__check {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 6px;
+  background: rgb(15 16 22 / 0.75);
+  backdrop-filter: blur(6px);
+  padding: 2px 3px;
+  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
+}
+.batch-card__preview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 16 / 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--control-bg);
+  overflow: hidden;
+}
+.batch-card__img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--dur-fast);
+}
+.batch-card:hover .batch-card__img {
+  transform: scale(1.05);
+}
+.batch-card__meta {
+  padding: 7px 8px 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  background: var(--surface-raised);
+}
+.batch-card__name {
+  font-size: 11.5px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.batch-card__sub {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 10.5px;
+  color: var(--text-tertiary);
+}
+.batch-card__sub .tnum {
+  color: var(--text-secondary);
+}
 .gtable__rows { flex: 1; min-height: 0; overflow-y: auto; }
 .grow2 { display: grid; grid-template-columns: 20px 46px minmax(0, 1fr) 110px 76px; align-items: center; gap: 12px; height: 44px; padding: 0 12px; font-size: 12.5px; }
 .gtable__rows .grow2 + .grow2 { border-top: 1px solid var(--divider); }

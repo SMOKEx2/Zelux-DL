@@ -44,8 +44,8 @@ prism-core = { path = "crates/prism-core" }
 prism-video = { path = "crates/prism-video" }
 
 [profile.release]
-lto = "thin"
-codegen-units = 4
+lto = false
+codegen-units = 16
 strip = true
 opt-level = 3
 

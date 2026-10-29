@@ -12,22 +12,23 @@ const dev = process.argv.includes('--dev');
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
 const PUBLIC_KEY = readFileSync(join(root, 'keys', 'public-key.txt'), 'utf8').trim();
 
-export const CHROME_EXTENSION_ID = 'mmcdeiglkbfbicdjboocmhehodogilfl';
-export const GECKO_ID = 'prism@prismdl.site';
+export const CHROME_EXTENSION_ID = 'knbafelhijahhnpjkfjggcljdalpbaac';
+export const GECKO_ID = 'extension@zeluxdl.local';
 
-const description = 'Hand downloads, videos and links to the Prism download manager.';
+const description = 'Hand downloads, videos and links to the ZeluxDL download manager.';
 const icons = { 16: 'icons/icon-16.png', 32: 'icons/icon-32.png', 48: 'icons/icon-48.png', 128: 'icons/icon-128.png' };
 const common = {
   manifest_version: 3,
-  name: 'Prism Download Manager',
-  short_name: 'Prism',
+  name: 'ZeluxDL Download Manager',
+  short_name: 'ZeluxDL',
   version: pkg.version,
   description,
   icons,
-  action: { default_popup: 'popup.html', default_title: 'Prism', default_icon: { 16: icons[16], 32: icons[32] } },
+  action: { default_popup: 'popup.html', default_title: 'ZeluxDL', default_icon: { 16: icons[16], 32: icons[32] } },
   options_ui: { page: 'options.html', open_in_tab: true },
   host_permissions: ['<all_urls>'],
   content_scripts: [{ matches: ['<all_urls>'], js: ['content.js'], run_at: 'document_start', all_frames: true }],
+  web_accessible_resources: [{ resources: ['icons/icon-48.png', 'fonts/*'], matches: ['<all_urls>'] }],
 };
 const basePermissions = ['downloads', 'nativeMessaging', 'cookies', 'storage', 'contextMenus', 'scripting', 'webRequest', 'webNavigation', 'alarms'];
 
@@ -151,7 +152,13 @@ for (const target of ['chromium', 'firefox']) {
   });
   for (const [dst, src] of Object.entries(statics)) copyFileSync(join(root, src), join(out, dst));
   copyDir(join(root, 'static', 'icons'), join(out, 'icons'));
+  mkdirSync(join(out, 'fonts'), { recursive: true });
+  for (const subset of ['thai', 'latin', 'latin-ext']) {
+    const name = `noto-sans-thai-${subset}-wght-normal.woff2`;
+    copyFileSync(join(root, 'node_modules', '@fontsource-variable', 'noto-sans-thai', 'files', name), join(out, 'fonts', name));
+  }
+  copyFileSync(join(root, 'node_modules', '@fontsource-variable', 'noto-sans-thai', 'LICENSE'), join(out, 'fonts', 'OFL.txt'));
   writeFileSync(join(out, 'manifest.json'), JSON.stringify(manifests[target], null, 2) + '\n');
-  zipDir(out, join(outRoot, `prism-${target}.zip`));
-  console.log(`built ${relative(root, out)} + build/prism-${target}.zip`);
+  zipDir(out, join(outRoot, `zeluxdl-${target}.zip`));
+  console.log(`built ${relative(root, out)} + build/zeluxdl-${target}.zip`);
 }

@@ -8,9 +8,9 @@ use tauri::{AppHandle, Manager};
 pub fn bundled_host_path() -> PathBuf {
     let exe = std::env::current_exe().unwrap_or_default();
     let name = if cfg!(windows) {
-        "prism-native-host.exe"
+        "zeluxdl-native-host.exe"
     } else {
-        "prism-native-host"
+        "zeluxdl-native-host"
     };
     exe.parent()
         .map(|d| d.join(name))
@@ -24,7 +24,7 @@ pub fn host_path() -> PathBuf {
     let bundled = bundled_host_path();
     if let Some(appimage) = std::env::var_os("APPIMAGE") {
         let data = prism_core::paths::data_dir();
-        let stable = data.join("bin").join("prism-native-host");
+        let stable = data.join("bin").join("zeluxdl-native-host");
         let copy = || -> std::io::Result<()> {
             std::fs::create_dir_all(data.join("bin"))?;
             let needs_copy = std::fs::metadata(&stable).map(|m| m.len()).ok()
@@ -134,7 +134,7 @@ pub fn open_browser(browser: &str) -> Result<(), String> {
 }
 
 /// Prism's extension in the Chrome Web Store (Chrome, Edge, Brave, Opera, Vivaldi, Chromium).
-pub const EXTENSION_STORE_URL: &str = "https://chromewebstore.google.com/detail/prism-download-manager/mmcdeiglkbfbicdjboocmhehodogilfl";
+pub const EXTENSION_STORE_URL: &str = "https://github.com/SMOKEx2/Zelux-DL/releases";
 
 /// Opens the extension's Chrome Web Store page in `browser`.
 pub fn open_extension_store(browser: &str) -> Result<(), String> {

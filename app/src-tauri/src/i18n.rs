@@ -19,7 +19,7 @@ pub fn set_language(code: &str) -> bool {
 /// `key` (the English text) in the UI language, with `{name}` placeholders filled in.
 pub fn tr(key: &str, vars: &[(&str, &str)]) -> String {
     let lang = LANGUAGE.read().unwrap_or_else(|e| e.into_inner()).clone();
-    let mut text = lookup(&lang, key).unwrap_or(key).to_string();
+    let mut text = lookup(&lang, key).unwrap_or(key).replace("Prism", "ZeluxDL");
     for (name, value) in vars {
         text = text.replace(&format!("{{{name}}}"), value);
     }
@@ -27,6 +27,29 @@ pub fn tr(key: &str, vars: &[(&str, &str)]) -> String {
 }
 
 fn lookup(lang: &str, key: &str) -> Option<&'static str> {
+    if lang == "th" {
+        return match key {
+            "Open Prism" | "Open ZeluxDL" => Some("เปิด ZeluxDL"),
+            "Add URL…" => Some("เพิ่มลิงก์…"),
+            "Pause all" => Some("หยุดทั้งหมดชั่วคราว"),
+            "Resume all" => Some("ดาวน์โหลดทั้งหมดต่อ"),
+            "Speed limiter" => Some("จำกัดความเร็ว"),
+            "Mini window" => Some("หน้าต่างขนาดเล็ก"),
+            "Drop zone" => Some("พื้นที่วางลิงก์"),
+            "Quit Prism" | "Quit ZeluxDL" => Some("ออกจาก ZeluxDL"),
+            "Prism — idle" | "ZeluxDL — idle" => Some("ZeluxDL — ไม่มีการดาวน์โหลด"),
+            "Prism — {count} downloading · {speed}" | "ZeluxDL — {count} downloading · {speed}" => Some("ZeluxDL — กำลังดาวน์โหลด {count} รายการ · {speed}"),
+            "Download added" => Some("เพิ่มรายการดาวน์โหลดแล้ว"),
+            "Download complete" => Some("ดาวน์โหลดเสร็จแล้ว"),
+            "Download failed" => Some("ดาวน์โหลดไม่สำเร็จ"),
+            "Queue finished" => Some("คิวดาวน์โหลดเสร็จแล้ว"),
+            "{name} has no more downloads." => Some("ไม่มีรายการดาวน์โหลดเหลือใน {name}"),
+            "Added to the list" => Some("เพิ่มลงในรายการแล้ว"),
+            "Downloading in the browser" => Some("กำลังดาวน์โหลดในเบราว์เซอร์"),
+            "{host} lets only a web browser download this file, so the browser is downloading it." => Some("{host} อนุญาตให้ดาวน์โหลดผ่านเบราว์เซอร์เท่านั้น จึงให้เบราว์เซอร์ดาวน์โหลดไฟล์นี้"),
+            _ => None,
+        };
+    }
     let row = TEXTS.iter().find(|row| row[0] == key)?;
     let column = match lang {
         "cs" => 1,
@@ -277,7 +300,7 @@ mod tests {
         );
         assert_eq!(tr("Something new", &[]), "Something new");
         set_language("tr");
-        assert_eq!(tr("Open Prism", &[]), "Prism'i aç");
+        assert_eq!(tr("Open Prism", &[]), "ZeluxDL'i aç");
         set_language("en");
         assert_eq!(tr("Pause all", &[]), "Pause all");
         set_language("ja");

@@ -10,22 +10,22 @@
           <RegistryValue Type="string" Value="URL:Magnet link" KeyPath="yes" />
           <RegistryValue Name="URL Protocol" Type="string" Value="" />
         </RegistryKey>
-        <RegistryValue Root="HKCU" Key="Software\Classes\magnet\DefaultIcon" Type="string" Value="[INSTALLDIR]prism.exe,0" />
-        <RegistryValue Root="HKCU" Key="Software\Classes\magnet\shell\open\command" Type="string" Value="&quot;[INSTALLDIR]prism.exe&quot; &quot;%1&quot;" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\magnet\DefaultIcon" Type="string" Value="[INSTALLDIR]ZeluxDL.exe,0" />
+        <RegistryValue Root="HKCU" Key="Software\Classes\magnet\shell\open\command" Type="string" Value="&quot;[INSTALLDIR]ZeluxDL.exe&quot; &quot;%1&quot;" />
       </Component>
     </DirectoryRef>
 
     <!-- Run as the installing user (Impersonate) so HKCU and %APPDATA% are the user's. -->
     <CustomAction Id="PrismRegisterHost" Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]prism-native-host.exe&quot; register"
+                  ExeCommand="&quot;[INSTALLDIR]zeluxdl-native-host.exe&quot; register"
                   Execute="deferred" Impersonate="yes" Return="ignore" />
     <CustomAction Id="PrismUnregisterHost" Directory="INSTALLDIR"
-                  ExeCommand="&quot;[INSTALLDIR]prism-native-host.exe&quot; unregister"
+                  ExeCommand="&quot;[INSTALLDIR]zeluxdl-native-host.exe&quot; unregister"
                   Execute="deferred" Impersonate="yes" Return="ignore" />
     <!-- The browser keeps prism-native-host.exe running while the extension is connected;
          stop it so the file can be replaced or removed (the extension reconnects by itself). -->
     <CustomAction Id="PrismStopHost" Directory="TARGETDIR"
-                  ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /F /IM prism-native-host.exe"
+                  ExeCommand="&quot;[SystemFolder]taskkill.exe&quot; /F /IM zeluxdl-native-host.exe"
                   Execute="immediate" Return="ignore" />
     <InstallExecuteSequence>
       <Custom Action="PrismStopHost" Before="InstallValidate" />

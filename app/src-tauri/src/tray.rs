@@ -28,7 +28,7 @@ pub struct TrayState {
 
 pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
     let item = |id: &str, text: &str| MenuItem::with_id(app, id, tr(text, &[]), true, None::<&str>);
-    let show = item("show", "Open Prism")?;
+    let show = item("show", "Open ZeluxDL")?;
     let add = item("add", "Add URL…")?;
     let pause = item("pause_all", "Pause all")?;
     let resume = item("resume_all", "Resume all")?;
@@ -47,7 +47,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
     )?;
     let mini = item("mini", "Mini window")?;
     let drop = item("dropzone", "Drop zone")?;
-    let quit = item("quit", "Quit Prism")?;
+    let quit = item("quit", "Quit ZeluxDL")?;
     let sep = || PredefinedMenuItem::separator(app);
     let menu = Menu::with_items(
         app,
@@ -68,20 +68,20 @@ pub fn create(app: &AppHandle) -> tauri::Result<TrayIcon> {
     app.manage(TrayState {
         limiter: limiter.clone(),
         items: vec![
-            (show.clone(), "Open Prism"),
+            (show.clone(), "Open ZeluxDL"),
             (add.clone(), "Add URL…"),
             (pause.clone(), "Pause all"),
             (resume.clone(), "Resume all"),
             (mini.clone(), "Mini window"),
             (drop.clone(), "Drop zone"),
-            (quit.clone(), "Quit Prism"),
+            (quit.clone(), "Quit ZeluxDL"),
         ],
     });
 
     TrayIconBuilder::with_id(TRAY_ID)
         .icon(Image::from_bytes(ICON_IDLE)?)
         .icon_as_template(cfg!(target_os = "macos"))
-        .tooltip("Prism")
+        .tooltip("ZeluxDL")
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| {
@@ -150,10 +150,10 @@ pub fn update(app: &AppHandle, active: usize, speed: u64, icon_changed: bool) {
         return;
     };
     let tooltip = if active == 0 {
-        tr("Prism — idle", &[])
+        tr("ZeluxDL — idle", &[])
     } else {
         tr(
-            "Prism — {count} downloading · {speed}",
+            "ZeluxDL — {count} downloading · {speed}",
             &[
                 ("count", &active.to_string()),
                 ("speed", &human_speed(speed)),

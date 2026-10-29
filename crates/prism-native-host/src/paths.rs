@@ -54,21 +54,21 @@ pub fn resolve_data_dir(
         return Some(PathBuf::from(dir));
     }
     match os {
-        "windows" => non_empty(appdata).map(|a| PathBuf::from(a).join("Prism")),
+        "windows" => non_empty(appdata).map(|a| PathBuf::from(a).join("ZeluxDL")),
         "macos" => non_empty(home).map(|h| {
             PathBuf::from(h)
                 .join("Library")
                 .join("Application Support")
-                .join("Prism")
+                .join("ZeluxDL")
         }),
         _ => {
             if let Some(x) = non_empty(xdg_data_home) {
                 // XDG requires an absolute path; ignore relative values.
                 if x.to_string_lossy().starts_with('/') {
-                    return Some(PathBuf::from(x).join("prism"));
+                    return Some(PathBuf::from(x).join("zeluxdl"));
                 }
             }
-            non_empty(home).map(|h| PathBuf::from(h).join(".local").join("share").join("prism"))
+            non_empty(home).map(|h| PathBuf::from(h).join(".local").join("share").join("zeluxdl"))
         }
     }
 }
@@ -180,6 +180,13 @@ pub fn app_executable(host_exe: &Path) -> PathBuf {
 mod tests {
     use super::*;
 
+    #[test]
+    #[cfg(windows)]
+    fn host_launches_the_zeluxdl_executable_next_to_it() {
+        let host = Path::new(r"C:\ZeluxDL\zeluxdl-native-host.exe");
+        assert_eq!(resolve_app_executable(None, None, host), PathBuf::from(r"C:\ZeluxDL\ZeluxDL.exe"));
+    }
+
     fn os(s: &str) -> Option<OsString> {
         Some(OsString::from(s))
     }
@@ -245,19 +252,19 @@ mod tests {
         );
         assert_eq!(
             d,
-            Some(PathBuf::from("C:/Users/u/AppData/Roaming").join("Prism"))
+            Some(PathBuf::from("C:/Users/u/AppData/Roaming").join("ZeluxDL"))
         );
     }
 
     #[test]
     fn linux_xdg_and_default() {
         let d = resolve_data_dir("linux", None, None, os("/home/u"), os("/data"));
-        assert_eq!(d, Some(PathBuf::from("/data/prism")));
+        assert_eq!(d, Some(PathBuf::from("/data/zeluxdl")));
         // relative XDG_DATA_HOME is ignored per spec
         let d = resolve_data_dir("linux", None, None, os("/home/u"), os("rel"));
-        assert_eq!(d, Some(PathBuf::from("/home/u/.local/share/prism")));
+        assert_eq!(d, Some(PathBuf::from("/home/u/.local/share/zeluxdl")));
         let d = resolve_data_dir("linux", os(""), None, os("/home/u"), None);
-        assert_eq!(d, Some(PathBuf::from("/home/u/.local/share/prism")));
+        assert_eq!(d, Some(PathBuf::from("/home/u/.local/share/zeluxdl")));
     }
 
     #[test]
@@ -265,7 +272,7 @@ mod tests {
         let d = resolve_data_dir("macos", None, None, os("/Users/u"), None);
         assert_eq!(
             d,
-            Some(PathBuf::from("/Users/u/Library/Application Support/Prism"))
+            Some(PathBuf::from("/Users/u/Library/Application Support/ZeluxDL"))
         );
     }
 

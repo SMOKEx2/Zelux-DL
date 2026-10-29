@@ -342,8 +342,9 @@ mod platform {
     /// Vendor sub-paths (below the root) whose NativeMessagingHosts key the browser reads.
     pub fn vendor_keys(b: Browser) -> &'static [&'static str] {
         match b {
-            // Brave, Vivaldi and Opera read Chrome's key on Windows.
-            Browser::Chrome | Browser::Brave | Browser::Vivaldi | Browser::Opera => {
+            // Keep the shared Chrome key for older Brave versions as well.
+            Browser::Brave => &["BraveSoftware\\Brave-Browser", "Google\\Chrome"],
+            Browser::Chrome | Browser::Vivaldi | Browser::Opera => {
                 &["Google\\Chrome"]
             }
             // Verified with Chrome for Testing 156 (Playwright's build): it reads the Chromium key.
@@ -511,7 +512,7 @@ mod platform {
                 break;
             }
         }
-        if matches!(b, Browser::Brave | Browser::Vivaldi | Browser::Opera) {
+        if matches!(b, Browser::Vivaldi | Browser::Opera) {
             st.note = Some("uses Google Chrome's registry key on Windows".into());
         }
         if b == Browser::Zen {
@@ -847,11 +848,8 @@ mod tests {
         );
         assert_eq!(
             o.firefox_extension_ids,
-            vec![
-                crate::FIREFOX_EXTENSION_ID.to_string(),
-                "prism@prism.dev".to_string()
-            ],
-            "the Firefox Add-ons ID, and the one copies loaded by hand used before"
+            vec![crate::FIREFOX_EXTENSION_ID.to_string()],
+            "only the ZeluxDL Firefox extension is authorized"
         );
         assert!(o.browsers.is_empty());
     }
@@ -863,6 +861,26 @@ mod tests {
         }
         let s = serde_json::to_string(&Browser::ChromeForTesting).unwrap();
         assert_eq!(s, "\"chrome-for-testing\"");
+    }
+
+    #[test]
+    #[cfg(windows)]
+    fn brave_registration_writes_its_own_registry_key() {
+        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        let dir = tempfile::tempdir().unwrap();
+        let host = dir.path().join(crate::HOST_BINARY_NAME);
+        fs::write(&host, b"").unwrap();
+        let unique = format!("Software\\ZeluxDLBraveTest{}", std::process::id());
+        let loc = Locations { manifest_dir: Some(dir.path().join("nm")), home: None, registry_root: Some(unique.clone()) };
+        let mut opts = RegisterOptions::new(&host);
+        opts.browsers = vec![Browser::Brave];
+        opts.locations = loc.clone();
+        register(&opts).unwrap();
+        let key = format!("{unique}\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\{HOST_NAME}");
+        let actual: String = RegKey::predef(HKEY_CURRENT_USER).open_subkey(&key).unwrap().get_value("").unwrap();
+        assert!(Path::new(&actual).is_file());
+        unregister(&[Browser::Brave], &loc).unwrap();
+        RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&unique).unwrap();
     }
 
     /// Full register → status → unregister cycle against a sandboxed location

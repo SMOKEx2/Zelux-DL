@@ -23,13 +23,24 @@ export default function BatchWindow({ id }: { id: string }) {
   const [ext, setExt] = useState("");
   const [dir, setDir] = useState("");
   const [busy, setBusy] = useState(false);
+  const [viewMode, setViewMode] = useState<"table" | "grid">("table");
   const categories = useApp((s) => s.categories);
   const queues = useApp((s) => s.queues);
 
   useEffect(() => {
     void api.getBatch(id).then((b) => {
       setBatch(b);
-      if (b) setChecked(new Set(b.entries.map((e) => e.url)));
+      if (b) {
+        setChecked(new Set(b.entries.map((e) => e.url)));
+        const imgCount = b.entries.filter(
+          (e) =>
+            e.category === "images" ||
+            /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)$/i.test(e.fileName || e.url)
+        ).length;
+        if (imgCount > b.entries.length / 2) {
+          setViewMode("grid");
+        }
+      }
     });
   }, [id]);
 
@@ -78,40 +89,134 @@ export default function BatchWindow({ id }: { id: string }) {
             ))}
         </div>
         <TextField value={ext} onChange={setExt} label={t("Filter by extension")} icon="filter" placeholder={t("Extensions: zip pdf")} />
-      </div>
-      <div className="gtable batch__table">
-        <div className="grow2 h">
-          <Checkbox checked={allShown} indeterminate={!allShown && shown.some((e) => checked.has(e.url))} label={t("Select all shown")} onChange={(v) => setAll(v)} />
-          <span />
-          <span>{t("File")}</span>
-          <span>{t("Category")}</span>
-          <span className="r">{t("Size")}</span>
+        <div className="batch__view-toggle" role="group" aria-label={t("View mode")}>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${viewMode === "table" ? " on" : ""}`}
+            title={t("Table view")}
+            aria-label={t("Table view")}
+            onClick={() => setViewMode("table")}
+          >
+            <Icon name="list" size={15} />
+          </button>
+          <button
+            type="button"
+            className={`btn btn--ghost btn--sm${viewMode === "grid" ? " on" : ""}`}
+            title={t("Grid view")}
+            aria-label={t("Grid view")}
+            onClick={() => setViewMode("grid")}
+          >
+            <Icon name="grid" size={15} />
+          </button>
         </div>
-        <div className="gtable__rows">
-          {shown.map((e) => (
-            <div
-              key={e.url}
-              className={`grow2${checked.has(e.url) ? "" : " is-off"}`}
-              onClick={() => {
-                const n = new Set(checked);
-                if (n.has(e.url)) n.delete(e.url);
-                else n.add(e.url);
-                setChecked(n);
-              }}
-            >
-              <Checkbox checked={checked.has(e.url)} label={t("Select {name}", { name: e.fileName })} onChange={() => undefined} />
-              <FileTile item={{ fileName: e.fileName || e.url, kind: "http", category: e.category, media: null }} size={26} />
-              <span className="nm">
-                <b>{e.fileName || e.url.split("/").pop()}</b>
-                <small>{e.text ? `${e.text} · ` : ""}{hostOf(e.url)}</small>
-              </span>
-              <span className="dim">{categories.find((c) => c.id === e.category)?.name ?? "—"}</span>
-              <span className="r tnum">{formatBytes(e.size)}</span>
-            </div>
-          ))}
+      </div>
+      {viewMode === "table" ? (
+        <div className="gtable batch__table">
+          <div className="grow2 h">
+            <Checkbox checked={allShown} indeterminate={!allShown && shown.some((e) => checked.has(e.url))} label={t("Select all shown")} onChange={(v) => setAll(v)} />
+            <span />
+            <span>{t("File")}</span>
+            <span>{t("Category")}</span>
+            <span className="r">{t("Size")}</span>
+          </div>
+          <div className="gtable__rows">
+            {shown.map((e) => (
+              <div
+                key={e.url}
+                className={`grow2${checked.has(e.url) ? "" : " is-off"}`}
+                onClick={() => {
+                  const n = new Set(checked);
+                  if (n.has(e.url)) n.delete(e.url);
+                  else n.add(e.url);
+                  setChecked(n);
+                }}
+              >
+                <Checkbox checked={checked.has(e.url)} label={t("Select {name}", { name: e.fileName })} onChange={() => undefined} />
+                <FileTile item={{ fileName: e.fileName || e.url, kind: "http", category: e.category, media: null }} size={26} />
+                <span className="nm">
+                  <b>{e.fileName || e.url.split("/").pop()}</b>
+                  <small>{e.text ? `${e.text} · ` : ""}{hostOf(e.url)}</small>
+                </span>
+                <span className="dim">{categories.find((c) => c.id === e.category)?.name ?? "—"}</span>
+                <span className="r tnum">{formatBytes(e.size)}</span>
+              </div>
+            ))}
+            {!shown.length && <p className="wempty">{batch ? t("No links match the filter.") : t("Loading…")}</p>}
+          </div>
+        </div>
+      ) : (
+        <div className="batch__grid">
+          {shown.map((e) => {
+            const isSelected = checked.has(e.url);
+            const isImage =
+              e.category === "images" ||
+              /\.(jpe?g|png|gif|webp|svg|avif|bmp|ico)$/i.test(e.fileName || e.url);
+            return (
+              <div
+                key={e.url}
+                className={`batch-card${isSelected ? " is-selected" : " is-off"}`}
+                onClick={() => {
+                  const n = new Set(checked);
+                  if (n.has(e.url)) n.delete(e.url);
+                  else n.add(e.url);
+                  setChecked(n);
+                }}
+                role="button"
+                tabIndex={0}
+                onKeyDown={(ev) => {
+                  if (ev.key === " " || ev.key === "Enter") {
+                    ev.preventDefault();
+                    const n = new Set(checked);
+                    if (n.has(e.url)) n.delete(e.url);
+                    else n.add(e.url);
+                    setChecked(n);
+                  }
+                }}
+              >
+                <div className="batch-card__check" onClick={(ev) => ev.stopPropagation()}>
+                  <Checkbox
+                    checked={isSelected}
+                    label={t("Select {name}", { name: e.fileName })}
+                    onChange={() => {
+                      const n = new Set(checked);
+                      if (n.has(e.url)) n.delete(e.url);
+                      else n.add(e.url);
+                      setChecked(n);
+                    }}
+                  />
+                </div>
+                <div className="batch-card__preview">
+                  {isImage ? (
+                    <img
+                      src={e.url}
+                      alt={e.fileName}
+                      loading="lazy"
+                      className="batch-card__img"
+                      onError={(ev) => {
+                        ev.currentTarget.style.display = "none";
+                      }}
+                    />
+                  ) : null}
+                  <FileTile
+                    item={{ fileName: e.fileName || e.url, kind: "http", category: e.category, media: null }}
+                    size={36}
+                  />
+                </div>
+                <div className="batch-card__meta">
+                  <span className="batch-card__name" title={e.fileName || e.url}>
+                    {e.fileName || e.url.split("/").pop()}
+                  </span>
+                  <div className="batch-card__sub">
+                    <span>{categories.find((c) => c.id === e.category)?.name ?? "—"}</span>
+                    <span className="tnum">{formatBytes(e.size)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
           {!shown.length && <p className="wempty">{batch ? t("No links match the filter.") : t("Loading…")}</p>}
         </div>
-      </div>
+      )}
       <div className="batch__save">
         <span className="field__label">{t("Save to")}</span>
         <div className="withbtn">

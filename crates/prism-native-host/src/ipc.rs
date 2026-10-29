@@ -200,7 +200,7 @@ impl AppClient {
                     if !allow_launch {
                         return Err((
                             codes::APP_NOT_RUNNING,
-                            format!("Prism is not running ({why})"),
+                            format!("ZeluxDL is not running ({why})"),
                         ));
                     }
                     if launched {
@@ -231,7 +231,7 @@ impl AppClient {
             log_error!("launching {} failed: {e}", self.app_exe.display());
             (
                 codes::APP_UNREACHABLE,
-                format!("could not start Prism ({}): {e}", self.app_exe.display()),
+                format!("could not start ZeluxDL ({}): {e}", self.app_exe.display()),
             )
         })?;
         log_info!("launched {} --background", self.app_exe.display());
@@ -249,7 +249,7 @@ impl AppClient {
         }
         Err((
             codes::APP_UNREACHABLE,
-            format!("Prism did not start within {} s", LAUNCH_WAIT.as_secs()),
+            format!("ZeluxDL did not start within {} s", LAUNCH_WAIT.as_secs()),
         ))
     }
 }

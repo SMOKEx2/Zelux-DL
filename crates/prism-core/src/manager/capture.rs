@@ -341,6 +341,15 @@ impl Core {
         mut probed: Option<std::result::Result<jobs::ProbeResult, jobs::ProbeFailure>>,
     ) -> CaptureInfo {
         let _rt = crate::rt::enter();
+        // Multi-host direct download URL resolver (Google Drive, Dropbox, OneDrive, Pixeldrain, HuggingFace, etc.)
+        if n.kind.is_none() && is_get(&n) {
+            if let Some(resolved) = crate::resolver::resolve_url(&n.url) {
+                if resolved != n.url {
+                    n.url = resolved;
+                    probed = None;
+                }
+            }
+        }
         // A link to a model on Hugging Face opens the model window, where its files are picked
         // (#29); a link to a file's page there downloads the file instead of the page.
         if n.kind.is_none() && is_get(&n) {
@@ -618,6 +627,9 @@ impl Core {
         {
             let st = self.0.state.lock();
             for e in &mut entries {
+                if let Some(resolved) = crate::resolver::resolve_url(&e.url) {
+                    e.url = resolved;
+                }
                 if e.file_name.is_empty() {
                     e.file_name = name_from_url(&e.url);
                 }
@@ -1136,7 +1148,7 @@ impl Core {
                 .map(String::from)
         };
         let fail = |code: &str, message: String| serde_json::json!({"ok": false, "error": {"code": code, "message": message}});
-        let app = serde_json::json!({"name": "Prism", "version": crate::APP_VERSION});
+        let app = serde_json::json!({"name": "ZeluxDL", "version": crate::APP_VERSION});
         match ty {
             "hello" => {
                 if let Some(v) = s("version") {
@@ -1578,7 +1590,7 @@ pub(crate) fn not_a_single_video(url: &str) -> Option<&'static str> {
         // Also what a post without its own id gets (LinkedIn's newer pages name a post only in
         // its text block, so a post without text has none).
         return Some(
-            "Prism can't tell which LinkedIn post this video belongs to here. Open the post itself (··· › Copy link to post) and try there.",
+            "ZeluxDL can't tell which LinkedIn post this video belongs to here. Open the post itself (··· › Copy link to post) and try there.",
         );
     }
     if site("instagram.com")
@@ -1614,7 +1626,7 @@ pub(crate) fn readable_probe_error(raw: &str) -> String {
         return "The site wants you to sign in to show this video. Sign in in your browser and try again.".into();
     }
     if m.contains("unsupported url") {
-        return "This page doesn't show a single video Prism can read. Point at the video in a post, or open the video's own page.".into();
+        return "This page doesn't show a single video ZeluxDL can read. Point at the video in a post, or open the video's own page.".into();
     }
     let gone = [
         "private",
@@ -1629,7 +1641,7 @@ pub(crate) fn readable_probe_error(raw: &str) -> String {
         return "This video is private or not available.".into();
     }
     if m.contains("unable to extract") || m.contains("unable to download") {
-        return "Prism couldn't find the video on this page (the site may have changed; Prism updates its video tool by itself).".into();
+        return "ZeluxDL couldn't find the video on this page (the site may have changed; ZeluxDL updates its video tool by itself).".into();
     }
     let first = raw
         .split(['\n', ';'])
@@ -1641,7 +1653,7 @@ pub(crate) fn readable_probe_error(raw: &str) -> String {
         .trim()
         .trim_end_matches([',', '.', ' ']);
     let short: String = first.chars().take(160).collect();
-    format!("Prism couldn't read this page: {short}.")
+    format!("ZeluxDL couldn't read this page: {short}.")
 }
 
 /// `a` is an older version than `b` (dotted numbers; anything unparsable compares as 0).
@@ -1911,13 +1923,13 @@ mod probe_message_tests {
         let extract = "yt-dlp failed (exit code 1): [instagram:user] explore: Unable to extract data; please report this issue on https://github.com/yt-dlp/yt-dlp/issues?q= , filling out the appropriate issue template. Confirm you are on the latest version using yt-dlp -U";
         let r = readable_probe_error(extract);
         assert!(
-            r.starts_with("Prism couldn't find the video") && !r.contains("report"),
+            r.starts_with("ZeluxDL couldn't find the video") && !r.contains("report"),
             "{r}"
         );
         let other = "yt-dlp failed (exit code 1): HTTP Error 500: Internal Server Error; please report this issue on https://github.com/yt-dlp/yt-dlp";
         assert_eq!(
             readable_probe_error(other),
-            "Prism couldn't read this page: yt-dlp failed (exit code 1): HTTP Error 500: Internal Server Error."
+            "ZeluxDL couldn't read this page: yt-dlp failed (exit code 1): HTTP Error 500: Internal Server Error."
         );
         let gone =
             "yt-dlp failed (exit code 1): [youtube] abc: Video unavailable. This video is private";
@@ -1926,7 +1938,7 @@ mod probe_message_tests {
             "This video is private or not available."
         );
         let busy = "yt-dlp failed (exit code 1): HTTP Error 503: Service Unavailable";
-        assert!(readable_probe_error(busy).starts_with("Prism couldn't read this page: "));
+        assert!(readable_probe_error(busy).starts_with("ZeluxDL couldn't read this page: "));
         let cookies = "yt-dlp failed (exit code 1): Could not copy Chrome cookie database\n\nTip: Prism couldn't read the cookies of the browser chosen under Settings";
         assert!(readable_probe_error(cookies).contains("couldn't read the cookies"));
     }

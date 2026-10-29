@@ -3,7 +3,7 @@
 import { inTauri } from "./api";
 
 /** Prism on GitHub. */
-export const REPO_URL = "https://github.com/FortoGraphy/prism-download-manager";
+export const REPO_URL = "https://github.com/SMOKEx2/Zelux-DL";
 
 export async function openUrl(url: string) {
   if (inTauri) {

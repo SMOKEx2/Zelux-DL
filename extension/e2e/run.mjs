@@ -20,10 +20,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const shots = join(here, 'artifacts');
 const extDir = resolve(here, '..', 'build', 'chromium');
 const repo = resolve(here, '..', '..');
-const EXPECTED_ID = 'mmcdeiglkbfbicdjboocmhehodogilfl';
+const EXPECTED_ID = 'knbafelhijahhnpjkfjggcljdalpbaac';
 const hostExe =
   process.env.PRISM_HOST_EXE ??
-  [join(repo, 'target', 'release', 'prism-native-host.exe'), join(repo, 'target', 'release', 'prism-native-host'), join(repo, 'target', 'debug', 'prism-native-host.exe'), join(repo, 'target', 'debug', 'prism-native-host')].find(existsSync);
+  [join(repo, 'target', 'release', 'zeluxdl-native-host.exe'), join(repo, 'target', 'release', 'zeluxdl-native-host'), join(repo, 'target', 'debug', 'zeluxdl-native-host.exe'), join(repo, 'target', 'debug', 'zeluxdl-native-host')].find(existsSync);
 const headed = process.env.PRISM_E2E_HEADED === '1';
 // Optional: a specific Chromium/Chrome-for-Testing executable (branded Chrome/Edge can't side-load extensions).
 const chromePath = process.env.PRISM_E2E_CHROME_PATH;
@@ -57,7 +57,7 @@ async function until(fn, timeoutMs = 5000, what = 'condition') {
 }
 
 // ---- registry backup/restore (Windows) -----------------------------------------
-const REG_KEYS = { chromium: 'HKCU\\Software\\Chromium\\NativeMessagingHosts\\dev.prism.host', chrome: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.prism.host' };
+const REG_KEYS = { chromium: 'HKCU\\Software\\Chromium\\NativeMessagingHosts\\dev.zeluxdl.host', chrome: 'HKCU\\Software\\Google\\Chrome\\NativeMessagingHosts\\dev.zeluxdl.host' };
 function regRead(key) {
   try {
     const out = execFileSync('reg', ['query', key, '/ve'], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });

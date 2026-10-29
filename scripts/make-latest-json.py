@@ -12,7 +12,8 @@ import sys
 
 src, tag, notes_path = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
 version = tag.lstrip("v")
-base = os.environ.get("UPDATE_BASE_URL") or f"https://github.com/FortoGraphy/prism-download-manager/releases/download/{tag}/"
+repo = os.environ.get("GITHUB_REPOSITORY") or "SMOKEx2/Zelux-DL"
+base = os.environ.get("UPDATE_BASE_URL") or f"https://github.com/{repo}/releases/download/{tag}/"
 
 # platform key -> file-name suffix of its update bundle
 PLATFORMS = {
@@ -24,8 +25,8 @@ PLATFORMS = {
 
 platforms = {}
 for key, suffix in PLATFORMS.items():
-    bundle = next((p for p in src.rglob(f"*{suffix}") if p.name.startswith("Prism_")), None)
-    if bundle and not bundle.name.startswith(f"Prism_{version}_"):
+    bundle = next((p for p in src.rglob(f"*{suffix}") if p.name.startswith(("ZeluxDL_", "Prism_"))), None)
+    if bundle and not (bundle.name.startswith(f"ZeluxDL_{version}_") or bundle.name.startswith(f"Prism_{version}_")):
         # The app would report another version than the manifest and be offered it forever.
         sys.exit(f"{bundle.name} doesn't match tag {tag}: bump the version in tauri.conf.json, Cargo.toml and app/package.json")
     sig = bundle and bundle.with_name(bundle.name + ".sig")

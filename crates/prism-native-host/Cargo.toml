@@ -11,7 +11,7 @@ name = "prism_native_host"
 path = "src/lib.rs"
 
 [[bin]]
-name = "prism-native-host"
+name = "zeluxdl-native-host"
 path = "src/main.rs"
 required-features = ["host"]
 

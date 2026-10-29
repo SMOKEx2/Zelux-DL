@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="en">
+<html lang="th">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Prism — Extension options</title>
+    <title>ZeluxDL — ตัวเลือกส่วนขยาย</title>
     <link rel="stylesheet" href="ui.css" />
     <link rel="stylesheet" href="options.css" />
   </head>
@@ -12,63 +12,63 @@
       <header class="hero">
         <span id="mark"></span>
         <div>
-          <h1>Prism browser integration</h1>
-          <p class="muted" id="source-line">Settings follow the Prism app.</p>
+          <h1>ส่วนเชื่อมต่อเบราว์เซอร์ ZeluxDL</h1>
+          <p class="muted" id="source-line">การตั้งค่าซิงค์ตามโปรแกรม ZeluxDL</p>
         </div>
         <span class="spacer"></span>
-        <button class="btn" id="sync" type="button">Sync from Prism</button>
+        <button class="btn" id="sync" type="button">ซิงค์จาก ZeluxDL</button>
       </header>
 
       <form id="form" class="glass card" autocomplete="off">
         <section class="field toggle">
-          <div><label for="captureEnabled">Capture downloads</label><p class="muted small">Hand matching browser downloads to Prism.</p></div>
+          <div><label for="captureEnabled">จับการดาวน์โหลด</label><p class="muted small">ส่งการดาวน์โหลดที่ตรงกันจากเบราว์เซอร์ไปยัง ZeluxDL</p></div>
           <label class="switch"><input type="checkbox" id="captureEnabled" /><span></span></label>
         </section>
         <section class="field toggle">
-          <div><label for="showVideoButton">Show “Download” button on videos</label><p class="muted small">A floating button appears when you hover a video.</p></div>
+          <div><label for="showVideoButton">แสดงปุ่ม "ดาวน์โหลด" บนวิดีโอ</label><p class="muted small">ปุ่มลอยจะปรากฏขึ้นเมื่อนำเมาส์ไปชี้ที่วิดีโอ</p></div>
           <label class="switch"><input type="checkbox" id="showVideoButton" /><span></span></label>
         </section>
         <section class="field">
-          <label for="bypassKey">Bypass key</label>
-          <p class="muted small">Hold this key while clicking a link to let the browser download it.</p>
+          <label for="bypassKey">ปุ่มยกเว้นการจับดาวน์โหลด (Bypass key)</label>
+          <p class="muted small">กดปุ่มนี้ค้างไว้ขณะคลิกลิงก์เพื่อให้เบราว์เซอร์ดาวน์โหลดเอง</p>
           <select id="bypassKey">
             <option value="alt">Alt</option>
             <option value="shift">Shift</option>
             <option value="ctrl">Ctrl</option>
             <option value="meta">⌘ / Win</option>
-            <option value="none">None</option>
+            <option value="none">ไม่ใช้ (None)</option>
           </select>
         </section>
         <section class="field">
-          <label for="extensions">File types to capture</label>
-          <p class="muted small">Extensions separated by spaces. Wildcards allowed (e.g. <code>R0*</code>).</p>
+          <label for="extensions">ประเภทไฟล์ที่ต้องการจับดาวน์โหลด</label>
+          <p class="muted small">นามสกุลไฟล์คั่นด้วยช่องว่าง ใช้ไวด์การ์ดได้ (เช่น <code>R0*</code>)</p>
           <textarea id="extensions" rows="4" spellcheck="false"></textarea>
         </section>
         <section class="field">
-          <label for="mimeTypes">MIME types to capture</label>
-          <p class="muted small">One per line. Entries ending in <code>/</code>, <code>-</code> or <code>*</code> are prefixes.</p>
+          <label for="mimeTypes">ประเภท MIME ที่ต้องการจับดาวน์โหลด</label>
+          <p class="muted small">หนึ่งรายการต่อหนึ่งบรรทัด รายการที่ลงท้ายด้วย <code>/</code>, <code>-</code> หรือ <code>*</code> จะถือเป็นคำนำหน้า</p>
           <textarea id="mimeTypes" rows="5" spellcheck="false"></textarea>
         </section>
         <section class="field">
-          <label for="minSize">Minimum size (KB)</label>
-          <p class="muted small">Smaller downloads (when the size is known) stay in the browser. 0 = no limit.</p>
+          <label for="minSize">ขนาดไฟล์ขั้นต่ำ (KB)</label>
+          <p class="muted small">ไฟล์ที่มีขนาดเล็กกว่านี้ (เมื่อทราบขนาด) จะให้เบราว์เซอร์ดาวน์โหลดเอง 0 = ไม่จำกัด</p>
           <input id="minSize" type="number" min="0" step="1" />
         </section>
         <section class="field">
-          <label for="excludedSites">Never capture on these sites</label>
-          <p class="muted small">One per line: <code>example.com</code>, <code>*.example.com</code> or <code>https://example.com/path/*</code>.</p>
+          <label for="excludedSites">เว็บไซต์ที่ไม่ต้องจับการดาวน์โหลด</label>
+          <p class="muted small">หนึ่งรายการต่อหนึ่งบรรทัด เช่น <code>example.com</code>, <code>*.example.com</code> หรือ <code>https://example.com/path/*</code></p>
           <textarea id="excludedSites" rows="4" spellcheck="false"></textarea>
         </section>
         <section class="field">
-          <label for="videoSites">Sites resolved by Prism (quality picker)</label>
-          <p class="muted small">On these sites the video button asks the app for available formats.</p>
+          <label for="videoSites">เว็บไซต์ที่ดึงคุณภาพด้วย ZeluxDL (เครื่องมือเลือกคุณภาพ)</label>
+          <p class="muted small">บนเว็บไซต์เหล่านี้ ปุ่มวิดีโอจะขอรูปแบบที่มีทั้งหมดจากโปรแกรม</p>
           <textarea id="videoSites" rows="3" spellcheck="false"></textarea>
         </section>
         <footer class="actions">
           <span id="status" class="muted small" role="status"></span>
           <span class="spacer"></span>
-          <button class="btn" type="button" id="reset">Reset to defaults</button>
-          <button class="btn primary" type="submit">Save</button>
+          <button class="btn" type="button" id="reset">คืนค่าเริ่มต้น</button>
+          <button class="btn primary" type="submit">บันทึก</button>
         </footer>
       </form>
     </div>

@@ -75,7 +75,7 @@ export function Sidebar() {
       <div className="brand" data-tauri-drag-region>
         <BrandTile size={28} />
         <span className="brand__name" data-tauri-drag-region>
-          Prism
+          ZeluxDL
         </span>
       </div>
       <nav className="nav">

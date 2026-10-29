@@ -1,0 +1,83 @@
+name: Release ZeluxDL Desktop
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    name: Build ZeluxDL Windows (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+
+      - name: Install app and extension dependencies
+        run: |
+          npm ci --prefix app
+          npm ci --prefix extension
+
+      - name: Build browser extension
+        run: npm run build --prefix extension
+
+      - name: Package browser extension zips
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path packaging/out | Out-Null
+          Compress-Archive -Path extension/build/chromium/* -DestinationPath packaging/out/ZeluxDL-extension-chromium.zip -Force
+          Compress-Archive -Path extension/build/firefox/* -DestinationPath packaging/out/ZeluxDL-extension-firefox.zip -Force
+
+      - name: Build native host sidecar
+        run: node scripts/build-sidecar.mjs --target x86_64-pc-windows-msvc
+
+      - name: Build ZeluxDL Desktop (NSIS & MSI)
+        working-directory: app
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          npx tauri build --target x86_64-pc-windows-msvc --bundles nsis,msi
+
+      - name: Package portable zip
+        shell: pwsh
+        run: ./scripts/make-portable.ps1 -Target x86_64-pc-windows-msvc
+
+      - name: Generate SHA-256 Checksums
+        shell: pwsh
+        run: |
+          $artifacts = Get-ChildItem -Path target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe, target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi, packaging/out/*.zip -ErrorAction SilentlyContinue
+          $lines = foreach ($item in $artifacts) {
+            $hash = (Get-FileHash -Path $item.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($item.Name)"
+          }
+          $lines | Out-File -FilePath packaging/out/SHA256SUMS.txt -Encoding utf8
+          Get-Content packaging/out/SHA256SUMS.txt
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            target/x86_64-pc-windows-msvc/release/bundle/nsis/*.exe
+            target/x86_64-pc-windows-msvc/release/bundle/msi/*.msi
+            packaging/out/*.zip
+            packaging/out/SHA256SUMS.txt
+          generate_release_notes: true
+          fail_on_unmatched_files: false

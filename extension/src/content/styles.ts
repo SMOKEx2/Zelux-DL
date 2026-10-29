@@ -4,7 +4,7 @@ export const VIDEO_BUTTON_CSS = `
 * { box-sizing: border-box; }
 .wrap {
   position: fixed; top: 0; left: 0;
-  font: 500 12.5px/1.2 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  font: 500 12.5px/1.2 "Noto Sans Thai Variable", ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   color: #f3f5fb;
   opacity: 0; transform: translate3d(var(--x, 0px), var(--y, 0px), 0) scale(.94);
   transform-origin: top right;

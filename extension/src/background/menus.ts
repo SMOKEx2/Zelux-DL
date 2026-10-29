@@ -10,11 +10,11 @@ import { native } from './native';
 type Ctx = chrome.contextMenus.ContextType;
 
 const ITEMS: Array<{ id: string; title: string; contexts: Ctx[] }> = [
-  { id: 'prism-link', title: 'Download with Prism', contexts: ['link', 'image', 'video', 'audio'] as Ctx[] },
-  { id: 'prism-selection', title: 'Download selection links with Prism', contexts: ['selection'] as Ctx[] },
-  { id: 'prism-all-links', title: 'Download all links with Prism', contexts: ['page', 'selection'] as Ctx[] },
-  { id: 'prism-all-images', title: 'Download all images with Prism', contexts: ['page', 'image'] as Ctx[] },
-  { id: 'prism-all-videos', title: 'Download all videos with Prism', contexts: ['page', 'video', 'audio'] as Ctx[] },
+  { id: 'prism-link', title: 'ดาวน์โหลดด้วย ZeluxDL', contexts: ['link', 'image', 'video', 'audio'] as Ctx[] },
+  { id: 'prism-selection', title: 'ดาวน์โหลดลิงก์ที่เลือกด้วย ZeluxDL', contexts: ['selection'] as Ctx[] },
+  { id: 'prism-all-links', title: 'ดาวน์โหลดทุกลิงก์ด้วย ZeluxDL', contexts: ['page', 'selection'] as Ctx[] },
+  { id: 'prism-all-images', title: 'ดาวน์โหลดทุกรูปภาพด้วย ZeluxDL', contexts: ['page', 'image'] as Ctx[] },
+  { id: 'prism-all-videos', title: 'ดาวน์โหลดทุกวิดีโอด้วย ZeluxDL', contexts: ['page', 'video', 'audio'] as Ctx[] },
 ];
 
 export async function createMenus(): Promise<void> {
@@ -45,8 +45,8 @@ export async function sendSingleLink(url: string, referrer: string | undefined, 
 }
 
 /**
- * "Download with Prism" on a video/audio element that plays a `blob:` (MSE) stream, which has
- * no URL to hand over: open the page's Prism video menu for that element (it knows the post on
+ * "Download with ZeluxDL" on a video/audio element that plays a `blob:` (MSE) stream, which has
+ * no URL to hand over: open the page's ZeluxDL video menu for that element (it knows the post on
  * a feed and the streams it loaded); without the in-page button, let the app read the page.
  */
 async function downloadElementVideo(info: chrome.contextMenus.OnClickData, tab: chrome.tabs.Tab | undefined): Promise<void> {

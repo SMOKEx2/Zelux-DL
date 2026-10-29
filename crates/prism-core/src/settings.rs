@@ -70,7 +70,7 @@ pub struct General {
 impl Default for General {
     fn default() -> Self {
         Self {
-            launch_at_startup: true,
+            launch_at_startup: false,
             start_minimized: false,
             close_to_tray: true,
             show_capture_dialog: true,
@@ -81,7 +81,7 @@ impl Default for General {
             use_trash: true,
             check_updates: true,
             remove_deleted_files: false,
-            language: String::new(),
+            language: String::from("th"),
         }
     }
 }
@@ -486,6 +486,10 @@ fn merge_json(target: &mut serde_json::Value, patch: &serde_json::Value) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn fresh_install_does_not_enable_autostart() {
+        assert!(!super::General::default().launch_at_startup);
+    }
     use super::*;
 
     #[test]

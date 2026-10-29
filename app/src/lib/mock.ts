@@ -704,8 +704,8 @@ const commands: Record<string, (args: Record<string, unknown>) => unknown> = {
       emitApp("update-progress", [i * 800_000, 16_000_000]);
     }
   },
-  extension_dir: () => "C:\\Program Files\\Prism\\extension",
-  extension_folder: ({ firefox }) => `C:\\Users\\you\\AppData\\Local\\Prism\\extension\\${firefox ? "firefox" : "chromium"}`,
+  extension_dir: () => "C:\\Users\\you\\AppData\\Local\\ZeluxDL\\extension",
+  extension_folder: ({ firefox }) => `C:\\Users\\you\\AppData\\Local\\ZeluxDL\\extension\\${firefox ? "firefox" : "chromium"}`,
   open_browser: () => {
     // Demo: pretend the user installs the extension a few seconds after the page opens.
     if (!mockExtSeen) setTimeout(() => (mockExtSeen = Date.now()), 6000);

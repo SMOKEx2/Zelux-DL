@@ -18,6 +18,7 @@ import fr from "../locales/fr.json";
 import id from "../locales/id.json";
 import it from "../locales/it.json";
 import turkish from "../locales/tr.json";
+import thai from "../locales/th.json";
 
 export type PluralEntry = Partial<Record<Intl.LDMLPluralRule, string>>;
 export type Catalog = Record<string, string | PluralEntry>;
@@ -32,12 +33,13 @@ export const LANGUAGES = [
   { code: "id", name: "Bahasa Indonesia" },
   { code: "it", name: "Italiano" },
   { code: "tr", name: "Türkçe" },
+  { code: "th", name: "ไทย" },
   { code: "ar", name: "العربية" },
 ] as const;
 
 export type Language = (typeof LANGUAGES)[number]["code"];
 
-export const CATALOGS: Record<Language, Catalog> = { en, cs, de, es, fr, id, it, tr: turkish, ar };
+export const CATALOGS: Record<Language, Catalog> = { en, cs, de, es, fr, id, it, tr: turkish, th: thai, ar };
 
 /** Languages written right to left: the whole layout mirrors (`<html dir="rtl">`). */
 const RTL: readonly Language[] = ["ar"];
@@ -88,11 +90,11 @@ type Vars = Record<string, string | number>;
 
 function lookup(key: string, vars?: Vars): string {
   const entry = CATALOGS[current][key] ?? CATALOGS.en[key] ?? key;
-  if (typeof entry === "string") return entry;
+  if (typeof entry === "string") return entry.replaceAll("Prism", "ZeluxDL");
   const n = Number(vars?.count ?? 0);
   const form = entry[plurals.select(n)] ?? entry.other;
   // A language without this plural entry falls back to the English forms.
-  return form ?? (CATALOGS.en[key] as PluralEntry | undefined)?.[n === 1 ? "one" : "other"] ?? key;
+  return (form ?? (CATALOGS.en[key] as PluralEntry | undefined)?.[n === 1 ? "one" : "other"] ?? key).replaceAll("Prism", "ZeluxDL");
 }
 
 /** The text for `key` in the current language, with `{name}` placeholders filled in. */

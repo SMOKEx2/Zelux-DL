@@ -26,8 +26,8 @@ function fill(s: CaptureSettings, st?: StoredState): void {
   if (st) {
     $('source-line').textContent =
       st.settingsSource === 'app'
-        ? `Settings follow the Prism app${st.appVersion ? ` (v${st.appVersion})` : ''}. Saving here overrides them locally.`
-        : 'Using local settings. “Sync from Prism” goes back to the app’s settings.';
+        ? `การตั้งค่าเป็นไปตามโปรแกรม ZeluxDL${st.appVersion ? ` (v${st.appVersion})` : ''} การบันทึกที่นี่จะแทนที่เฉพาะในส่วนขยายนี้`
+        : 'กำลังใช้การตั้งค่าเฉพาะส่วนขยาย กด "ซิงค์จาก ZeluxDL" เพื่อกลับไปใช้ค่าของโปรแกรม';
   }
 }
 
@@ -56,22 +56,22 @@ form.addEventListener('submit', async (e) => {
   const r = await sendInternal<{ ok: boolean; state?: StoredState; error?: string }>({ kind: 'saveSettings', settings: read() });
   if (r?.ok && r.state) {
     fill(r.state.settings, r.state);
-    setStatus('Saved.', 'ok');
-  } else setStatus(r?.error ?? 'Could not save.', 'bad');
+    setStatus('บันทึกเรียบร้อยแล้ว', 'ok');
+  } else setStatus(r?.error ?? 'ไม่สามารถบันทึกได้', 'bad');
 });
 
 $('reset').addEventListener('click', () => {
   fill(DEFAULT_SETTINGS);
-  setStatus('Defaults restored — click Save to keep them.');
+  setStatus('คืนค่าเริ่มต้นแล้ว — กดบันทึกเพื่อใช้งาน');
 });
 
 $('sync').addEventListener('click', async () => {
-  setStatus('Asking Prism…');
+  setStatus('กำลังสอบถาม ZeluxDL…');
   const r = await sendInternal<{ ok: boolean; state?: StoredState; error?: string }>({ kind: 'syncSettings' });
   if (r?.ok && r.state) {
     fill(r.state.settings, r.state);
-    setStatus('Settings synced from Prism.', 'ok');
-  } else setStatus(`Couldn’t reach Prism: ${r?.error ?? 'no answer'}. Is the app running?`, 'bad');
+    setStatus('ซิงค์การตั้งค่าจาก ZeluxDL สำเร็จ', 'ok');
+  } else setStatus(`ไม่สามารถติดต่อ ZeluxDL ได้: ${r?.error ?? 'ไม่มีการตอบสนอง'} โปรแกรมกำลังทำงานอยู่หรือไม่?`, 'bad');
 });
 
 void load();

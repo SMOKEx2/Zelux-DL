@@ -31,7 +31,7 @@ if (!window.__prismContentLoaded) {
   api.storage.onChanged.addListener((changes, area) => {
     if (area === 'local' && changes[STATE_KEY]) apply(changes[STATE_KEY].newValue);
   });
-  // Context menu "Download with Prism" on a video that has no downloadable URL (blob:).
+  // Context menu "Download with ZeluxDL" on a video that has no downloadable URL (blob:).
   api.runtime.onMessage.addListener((msg: { kind?: string } | undefined, _sender, sendResponse) => {
     if (msg?.kind !== 'showVideoMenu') return false;
     sendResponse({ ok: button.openForContextMenu() });

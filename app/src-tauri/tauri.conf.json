@@ -1,9 +1,9 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Prism",
-  "mainBinaryName": "prism",
+  "productName": "ZeluxDL",
+  "mainBinaryName": "ZeluxDL",
   "version": "1.1.7",
-  "identifier": "dev.prism.manager",
+  "identifier": "dev.zeluxdl.manager",
   "build": {
     "beforeDevCommand": "npm run dev",
     "beforeBuildCommand": "npm run build",
@@ -16,7 +16,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "Prism",
+        "title": "ZeluxDL",
         "url": "index.html",
         "width": 1320,
         "height": 820,
@@ -45,11 +45,11 @@
       "app",
       "dmg"
     ],
-    "publisher": "Prism",
+    "publisher": "ZeluxDL",
     "copyright": "Personal use",
     "category": "Utility",
     "shortDescription": "Fast multi-connection download manager",
-    "longDescription": "Prism is a fast multi-segment download manager with browser integration, video downloading, queues, a scheduler and a site grabber.",
+    "longDescription": "ZeluxDL is a multi-segment download manager with browser integration, video downloading, queues, a scheduler and a site grabber.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -58,7 +58,7 @@
       "icons/icon.ico"
     ],
     "externalBin": [
-      "binaries/prism-native-host"
+      "binaries/zeluxdl-native-host"
     ],
     "fileAssociations": [
       {
@@ -123,7 +123,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY2RUU0OTdFODgyRDc0Q0IKUldUTGRDMklma251Wm82Z3NkUEtFcFFiQURoOEJDT3Q2N3NQZE4rQ2s4UXZyMnRyOVlxRGpmdHMK",
       "endpoints": [
-        "https://github.com/FortoGraphy/prism-download-manager/releases/latest/download/latest.json"
+        "https://github.com/SMOKEx2/Zelux-DL/releases/latest/download/latest.json"
       ],
       "windows": {
         "installMode": "passive"

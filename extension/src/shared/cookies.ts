@@ -51,8 +51,8 @@ export function mergeCookieHeaders(sent: string | undefined, store: string | und
 
 /**
  * The stored cookies that may be added to a captured download's request. The browser leaves
- * SameSite=Strict cookies out of a request another site started, and Prism must not put them back
- * (any page could otherwise make Prism repeat a GET to another site, signed in). So Strict cookies
+ * SameSite=Strict cookies out of a request another site started, and ZeluxDL must not put them back
+ * (any page could otherwise make ZeluxDL repeat a GET to another site, signed in). So Strict cookies
  * are added only when the browser's own Cookie header is unknown and the download was started from
  * `url`'s own scheme and host (`initiator`: the request's referrer); an unknown initiator counts as
  * another site. Hosts, not registrable domains, are compared: stricter than the browser (a sibling

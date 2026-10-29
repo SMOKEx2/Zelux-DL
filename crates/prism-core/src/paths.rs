@@ -24,9 +24,9 @@ pub fn data_dir() -> PathBuf {
     }
     let base = dirs::data_dir().unwrap_or_else(|| PathBuf::from("."));
     if cfg!(target_os = "linux") {
-        base.join("prism")
+        base.join("zeluxdl")
     } else {
-        base.join("Prism")
+        base.join("ZeluxDL")
     }
 }
 

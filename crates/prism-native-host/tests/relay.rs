@@ -102,8 +102,8 @@ fn ipc_json(port: u16) -> String {
 }
 
 fn spawn_host(data_dir: &Path, app_path: &Path) -> Child {
-    Command::new(env!("CARGO_BIN_EXE_prism-native-host"))
-        .arg("chrome-extension://mmcdeiglkbfbicdjboocmhehodogilfl/")
+    Command::new(env!("CARGO_BIN_EXE_zeluxdl-native-host"))
+        .arg("chrome-extension://knbafelhijahhnpjkfjggcljdalpbaac/")
         .arg("--parent-window=0")
         .env("PRISM_DATA_DIR", data_dir)
         .env("PRISM_APP_PATH", app_path)

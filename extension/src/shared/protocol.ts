@@ -10,7 +10,7 @@
  */
 
 export const PROTOCOL_VERSION = 1;
-export const NATIVE_HOST_NAME = 'dev.prism.host';
+export const NATIVE_HOST_NAME = 'dev.zeluxdl.host';
 
 export type BrowserName = 'chrome' | 'edge' | 'brave' | 'opera' | 'vivaldi' | 'chromium' | 'firefox';
 export type BypassKey = 'alt' | 'shift' | 'ctrl' | 'meta' | 'none';

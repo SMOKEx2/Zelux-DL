@@ -1020,10 +1020,10 @@
   "Table view": "มุมมองตาราง",
   "Grid view": "มุมมองตารางภาพ",
   "Next-generation high-speed download manager with multi-connection acceleration, video grabber, multi-host resolvers, and glassmorphic UI.": "โปรแกรมช่วยดาวน์โหลดไฟล์ความเร็วสูงยุคใหม่ เร่งสปีดเต็มแบนด์วิธ พร้อมตัวแปลงลิงก์อัจฉริยะ ระบบดึงวิดีโอ และหน้าต่าง Liquid Glass",
-  "ZeluxDL is open source. Star it on GitHub": "ZeluxDL เป็นโอเพนซอร์ส ติดดาวบน GitHub",
   "ZeluxDL is up to date": "ZeluxDL เป็นเวอร์ชันล่าสุดแล้ว",
   "Installing ZeluxDL {version}…": "กำลังติดตั้ง ZeluxDL {version}…",
   "Downloading ZeluxDL {version}… {percent}%": "กำลังดาวน์โหลด ZeluxDL {version}… {percent}%",
   "ZeluxDL restarts by itself and your downloads continue.": "ZeluxDL จะรีสตาร์ทเองและการดาวน์โหลดของคุณจะดำเนินต่อไป",
-  "ZeluxDL {version} is ready.": "ZeluxDL {version} พร้อมแล้ว"
+  "ZeluxDL {version} is ready.": "ZeluxDL {version} พร้อมแล้ว",
+  "Prism is open source. Star it on GitHub": "Prism เป็นโอเพ่นซอร์ส ติดดาวบน GitHub"
 }

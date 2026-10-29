@@ -20,7 +20,8 @@
   <a href="https://github.com/SMOKEx2/Zelux-DL/releases/latest"><b>⬇ ดาวน์โหลดเวอร์ชันล่าสุด</b></a> ·
   <a href="#-จุดเด่นของ-zeluxdl">ฟีเจอร์เด่น</a> ·
   <a href="#-ภาพตัวอย่างโปรแกรม-screenshots">ภาพตัวอย่าง</a> ·
-  <a href="#-การติดตั้งและใช้งาน">วิธีติดตั้ง</a>
+  <a href="#-การติดตั้งและใช้งาน">วิธีติดตั้ง</a> ·
+  <a href="#-เครดิตและขอขอบคุณ-credits--acknowledgements">เครดิต</a>
 </p>
 
 <p align="center">
@@ -149,6 +150,18 @@ npm run tauri dev
 # บิวด์ Release ตัวติดตั้ง (EXE, MSI, Portable)
 npm run tauri:build
 ```
+
+---
+
+## 🙏 เครดิตและขอขอบคุณ (Credits & Acknowledgements)
+
+ZeluxDL ขอขอบคุณโครงการโอเพนซอร์สและชุมชนผู้พัฒนาทุกท่าน:
+
+* **[Prism Download Manager](https://github.com/FortoGraphy/prism-download-manager)** โดย **[FortoGraphy](https://github.com/FortoGraphy)** — โปรเจกต์ต้นฉบับคุณภาพสูง ซึ่ง ZeluxDL ได้นำมาพัฒนาต่อยอดฟีเจอร์ ปรับแต่งธีม Zelux Pulse และเพิ่มระบบแปลงลิงก์ Multi-Host Resolvers (เผยแพร่ภายใต้ใบอนุญาต [MIT License](LICENSE))
+* **[yt-dlp](https://github.com/yt-dlp/yt-dlp)** — ระบบดึงข้อมูลและดาวน์โหลดสตรีมมิ่งวิดีโอ/เสียง
+* **[FFmpeg](https://ffmpeg.org/)** — เครื่องมือรวมและแปลงไฟล์มัลติมีเดีย
+* **[librqbit](https://github.com/ikatson/rqbit)** — ไคลเอนต์และเอนจินดาวน์โหลดไฟล์ BitTorrent
+* **[Inter](https://rsms.me/inter/)** และ **[JetBrains Mono](https://www.jetbrains.com/lp/mono/)** — แบบอักษรคุณภาพสูงภายใต้ SIL Open Font License
 
 ---
 

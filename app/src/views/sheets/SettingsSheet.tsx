@@ -449,6 +449,22 @@ function Appearance({ s }: { s: Settings }) {
           <p className="accents__note">{t("Accent tints selection, focus rings, progress and the window’s ambient light. Status colours never change.")}</p>
         </div>
       </Group>
+      <Group title={t("Download progress style")}>
+        <Row title={t("Progress bar FX")} hint={t("Visual style and light effects for active download bars")}>
+          <Segmented
+            size="sm"
+            label={t("Progress bar FX")}
+            value={s.appearance.progressStyle || "rainbow"}
+            onChange={(v) => save({ appearance: { progressStyle: v } })}
+            options={[
+              { value: "rainbow", label: t("🌈 Prism Rainbow") },
+              { value: "neon", label: t("⚡ Neon Laser") },
+              { value: "cyber", label: t("🌊 Cyber Wave") },
+              { value: "clean", label: t("◻️ Clean") },
+            ]}
+          />
+        </Row>
+      </Group>
       <div className="twocol">
         <Group title={t("Materials & motion")}>
           <Toggle title={t("Liquid glass")} hint={t("Frosted, translucent sidebar & toolbars")} value={!s.appearance.reduceTransparency} onChange={(v) => save({ appearance: { reduceTransparency: !v } })} />

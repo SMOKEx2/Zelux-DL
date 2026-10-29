@@ -1,4 +1,11 @@
 {
+  "Download progress style": "สไตล์หลอดดาวน์โหลด",
+  "Progress bar FX": "เอฟเฟกต์หลอดโหลด",
+  "Visual style and light effects for active download bars": "รูปแบบแสงและเอฟเฟกต์ของหลอดดาวน์โหลดขณะทำงาน",
+  "🌈 Prism Rainbow": "🌈 สีรุ้ง Prism",
+  "⚡ Neon Laser": "⚡ นีออนเลเซอร์",
+  "🌊 Cyber Wave": "🌊 คลื่นไซเบอร์",
+  "◻️ Clean": "◻️ คลีนมินิมอล",
   "Prism could not start": "ZeluxDL ไม่สามารถเริ่มทำงานได้",
   "Decrease {label}": "ลด {label}",
   "Increase {label}": "เพิ่ม {label}",

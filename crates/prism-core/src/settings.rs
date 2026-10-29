@@ -126,6 +126,8 @@ pub struct Appearance {
     pub visible_columns: Vec<String>,
     /// Just the download list: no sidebar, details pane or tips (like a classic download manager).
     pub compact_view: bool,
+    /// Visual style for download progress bars ("rainbow", "neon", "cyber", "clean").
+    pub progress_style: String,
 }
 
 impl Default for Appearance {
@@ -144,6 +146,7 @@ impl Default for Appearance {
             .map(String::from)
             .collect(),
             compact_view: false,
+            progress_style: "rainbow".into(),
         }
     }
 }

@@ -275,8 +275,7 @@ table { border-collapse: collapse; border-spacing: 0; }
   height: var(--_h);
   border-radius: var(--radius-full);
   background: var(--track-bg);
-  overflow: hidden;
-  contain: paint;
+  overflow: visible;
 }
 .progress--thin { --_h: 3px; }
 .progress--thick { --_h: 6px; }
@@ -286,10 +285,25 @@ table { border-collapse: collapse; border-spacing: 0; }
   position: absolute;
   inset: 0;
   border-radius: inherit;
+  overflow: hidden;
   background: var(--_fill);
   transform-origin: left center;
   transform: scaleX(var(--value));
   transition: transform var(--dur-progress) var(--ease-linear);
+}
+
+/* Laser glow head that tracks the leading edge of active downloads */
+.progress__head {
+  position: absolute;
+  top: -2px;
+  bottom: -2px;
+  width: 3px;
+  border-radius: 2px;
+  background: #ffffff;
+  box-shadow: 0 0 4px 1px #ffffff, 0 0 10px 3px var(--spectrum-4, var(--accent)), 0 0 16px 5px var(--spectrum-1, var(--accent));
+  pointer-events: none;
+  z-index: 2;
+  transition: left var(--dur-progress) var(--ease-linear);
 }
 
 /* Shimmer: a soft highlight travelling across the *filled* part only. It is
@@ -319,6 +333,117 @@ table { border-collapse: collapse; border-spacing: 0; }
   transform: none;
   width: 35%;
   animation: prism-indeterminate 1.4s var(--ease-in-out) infinite;
+}
+
+/* ---- Progress Bar FX Variants (Rainbow, Neon, Cyber, Clean) -------------- */
+
+/* 1. Rainbow Prism (Brand signature) */
+:root,
+[data-progress-style="rainbow"] {
+  --prism-rainbow-gradient: linear-gradient(
+    90deg,
+    var(--spectrum-1) 0%,
+    var(--spectrum-2) 16.6%,
+    var(--spectrum-3) 33.3%,
+    var(--spectrum-4) 50%,
+    var(--spectrum-5) 66.6%,
+    var(--spectrum-6) 83.3%,
+    var(--spectrum-7) 100%
+  );
+}
+
+[data-progress-style="rainbow"] .progress[data-state="active"] .progress__fill {
+  background: linear-gradient(
+    90deg,
+    var(--spectrum-1) 0%,
+    var(--spectrum-2) 16.6%,
+    var(--spectrum-3) 33.3%,
+    var(--spectrum-4) 50%,
+    var(--spectrum-5) 66.6%,
+    var(--spectrum-6) 83.3%,
+    var(--spectrum-7) 100%
+  );
+  background-size: 200% 100%;
+  animation: prism-rainbow-flow 3.5s linear infinite;
+  box-shadow: 0 0 12px 1px rgba(70, 168, 255, 0.45);
+}
+
+[data-progress-style="rainbow"] .progress__head {
+  background: #ffffff;
+  box-shadow:
+    0 0 4px 1px #ffffff,
+    0 0 10px 3px var(--spectrum-4),
+    0 0 18px 5px var(--spectrum-1);
+}
+
+@keyframes prism-rainbow-flow {
+  0%   { background-position: 0% 50%; }
+  100% { background-position: 200% 50%; }
+}
+
+/* 2. Neon Laser (Vivid Accent Glow) */
+[data-progress-style="neon"] .progress[data-state="active"] .progress__fill {
+  background: linear-gradient(90deg, rgb(var(--accent-rgb) / 0.6) 0%, var(--accent) 100%);
+  box-shadow: 0 0 14px 2px rgb(var(--accent-rgb) / 0.65);
+}
+
+[data-progress-style="neon"] .progress__head {
+  background: #ffffff;
+  box-shadow:
+    0 0 4px 1px #ffffff,
+    0 0 12px 3px var(--accent),
+    0 0 20px 6px rgb(var(--accent-rgb) / 0.7);
+}
+
+/* 3. Cyber Wave */
+[data-progress-style="cyber"] .progress[data-state="active"] .progress__fill {
+  background: repeating-linear-gradient(
+    45deg,
+    var(--spectrum-4) 0px,
+    var(--spectrum-4) 8px,
+    var(--spectrum-1) 8px,
+    var(--spectrum-1) 16px
+  );
+  background-size: 200% 100%;
+  animation: prism-cyber-scan 2.2s linear infinite;
+  box-shadow: 0 0 10px 1px rgba(47, 203, 230, 0.5);
+}
+
+@keyframes prism-cyber-scan {
+  0%   { background-position: 0 0; }
+  100% { background-position: 32px 0; }
+}
+
+[data-progress-style="cyber"] .progress__head {
+  background: #ffffff;
+  box-shadow:
+    0 0 4px 1px #ffffff,
+    0 0 10px 3px var(--spectrum-4);
+}
+
+/* 4. Classic Clean */
+[data-progress-style="clean"] .progress[data-state="active"] .progress__fill {
+  box-shadow: none;
+}
+[data-progress-style="clean"] .progress__head {
+  display: none;
+}
+
+/* Completion celebration shockwave */
+.progress[data-state="completed"] {
+  animation: prism-complete-shockwave 1s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes prism-complete-shockwave {
+  0% {
+    filter: brightness(1.7) drop-shadow(0 0 6px var(--spectrum-5));
+  }
+  40% {
+    filter: brightness(1.3) drop-shadow(0 0 12px var(--spectrum-4));
+  }
+  100% {
+    filter: brightness(1) drop-shadow(0 0 0 transparent);
+  }
 }
 
 @keyframes prism-shimmer {

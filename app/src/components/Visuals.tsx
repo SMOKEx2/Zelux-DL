@@ -11,18 +11,26 @@ import type { DownloadItem, SegmentInfo } from "../lib/types";
 
 export function ProgressBar({ value, state, size, label }: { value: number | null; state: ProgressState; size?: "thin" | "thick" | "xl"; label?: string }) {
   const indeterminate = value == null && state === "active";
+  const numValue = value ?? 0;
   return (
     <div
       className={`progress${size ? ` progress--${size}` : ""}`}
       data-state={indeterminate ? "indeterminate" : state}
-      style={{ ["--value" as string]: String(value ?? 0) }}
+      style={{ ["--value" as string]: String(numValue) }}
       role="progressbar"
       aria-label={label}
       aria-valuemin={0}
       aria-valuemax={100}
-      aria-valuenow={value == null ? undefined : Math.round(value * 100)}
+      aria-valuenow={value == null ? undefined : Math.round(numValue * 100)}
     >
       <div className="progress__fill" />
+      {state === "active" && numValue > 0.005 && numValue < 0.999 && (
+        <span
+          className="progress__head"
+          style={{ left: `calc(${Math.min(100, Math.max(0, numValue * 100))}% - 1.5px)` }}
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 }
@@ -69,12 +77,19 @@ export function SpeedChart({ samples, height = 160, labels = true }: { samples: 
             <stop offset="0" stopColor="var(--accent)" stopOpacity=".38" />
             <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
           </linearGradient>
+          <linearGradient id={`${id}rainbow`} x1="0" x2="1" y1="0" y2="0">
+            <stop offset="0%" stopColor="var(--spectrum-1)" />
+            <stop offset="25%" stopColor="var(--spectrum-3)" />
+            <stop offset="50%" stopColor="var(--spectrum-4)" />
+            <stop offset="75%" stopColor="var(--spectrum-6)" />
+            <stop offset="100%" stopColor="var(--spectrum-7)" />
+          </linearGradient>
         </defs>
         {ticks.map((tick) => (
           <path key={tick} d={`M0 ${H - tick * H}H${W}`} stroke="var(--divider)" vectorEffect="non-scaling-stroke" />
         ))}
         <path d={area} fill={`url(#${id}a)`} />
-        <path d={line} fill="none" stroke="var(--accent)" strokeWidth="1.75" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
+        <path d={line} fill="none" stroke={`url(#${id}rainbow)`} strokeWidth="2" strokeLinejoin="round" vectorEffect="non-scaling-stroke" />
       </svg>
       {samples.length > 1 && <span className="chart__dot" style={{ top: `${(lastY / H) * 100}%` }} />}
       <span className="sr-only">{t("Current speed {speed}", { speed: formatSpeed(last) })}</span>

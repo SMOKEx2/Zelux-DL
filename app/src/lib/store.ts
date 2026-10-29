@@ -187,6 +187,7 @@ export function applyAppearance(s: Settings) {
   root.dataset.theme = theme;
   root.dataset.accent = a.accent || "prism";
   root.dataset.density = a.density;
+  root.dataset.progressStyle = a.progressStyle || "rainbow";
   root.classList.toggle("no-blur", a.reduceTransparency);
   const reduced =
     a.motion === "reduced" || (a.motion === "system" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches);

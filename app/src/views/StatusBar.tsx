@@ -50,9 +50,17 @@ export function StatusBar() {
 
   return (
     <footer className="statusbar glass blur-md edge-top">
-      <span className="sb down" data-tip={t("Total download speed")}>
+      <span className={`sb down${speed > 0 ? " is-active" : ""}`} data-tip={t("Total download speed")}>
         <Icon name="arrow-down" size={12} strokeWidth={2.2} />
         <b>{speed ? formatSpeed(speed) : "0 B/s"}</b>
+        {speed > 0 && (
+          <span className="speed-hud" aria-hidden="true">
+            <span className="speed-hud__bar speed-hud__bar--1" />
+            <span className="speed-hud__bar speed-hud__bar--2" />
+            <span className="speed-hud__bar speed-hud__bar--3" />
+            <span className="speed-hud__bar speed-hud__bar--4" />
+          </span>
+        )}
       </span>
       <span className="sb">{tr("{active} active · {queued} queued", { active: <b>{c.active}</b>, queued: <b>{c.queued}</b> })}</span>
       {running.length > 0 && (

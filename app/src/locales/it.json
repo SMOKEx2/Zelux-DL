@@ -1048,5 +1048,12 @@
   "Downloading ZeluxDL {version}… {percent}%": "Downloading ZeluxDL {version}… {percent}%",
   "ZeluxDL restarts by itself and your downloads continue.": "ZeluxDL restarts by itself and your downloads continue.",
   "ZeluxDL {version} is ready.": "ZeluxDL {version} is ready.",
-  "Prism is open source. Star it on GitHub": "Prism è open source. Dagli una stella su GitHub"
+  "Prism is open source. Star it on GitHub": "Prism è open source. Dagli una stella su GitHub",
+  "Download progress style": "Stile barra di avanzamento",
+  "Progress bar FX": "Effetti barra di avanzamento",
+  "Visual style and light effects for active download bars": "Stile visivo ed effetti di luce per i download attivi",
+  "🌈 Prism Rainbow": "🌈 Arcobaleno Prism",
+  "⚡ Neon Laser": "⚡ Laser neon",
+  "🌊 Cyber Wave": "🌊 Onda cyber",
+  "◻️ Clean": "◻️ Pulito"
 }

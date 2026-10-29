@@ -193,6 +193,7 @@ export interface Settings {
     visibleColumns: string[];
     /** Just the download list: no sidebar, details pane or tips. */
     compactView: boolean;
+    progressStyle?: "rainbow" | "neon" | "cyber" | "clean";
   };
   downloads: {
     defaultDir: string;

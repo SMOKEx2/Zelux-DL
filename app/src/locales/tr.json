@@ -1025,5 +1025,12 @@
   "Downloading ZeluxDL {version}… {percent}%": "Downloading ZeluxDL {version}… {percent}%",
   "ZeluxDL restarts by itself and your downloads continue.": "ZeluxDL restarts by itself and your downloads continue.",
   "ZeluxDL {version} is ready.": "ZeluxDL {version} is ready.",
-  "Prism is open source. Star it on GitHub": "Prism açık kaynaklıdır. GitHub'da yıldız verin"
+  "Prism is open source. Star it on GitHub": "Prism açık kaynaklıdır. GitHub'da yıldız verin",
+  "Download progress style": "İndirme çubuğu stili",
+  "Progress bar FX": "İlerleme çubuğu efektleri",
+  "Visual style and light effects for active download bars": "Aktif indirmeler için görsel stil ve ışık efektleri",
+  "🌈 Prism Rainbow": "🌈 Prizma Gökkuşağı",
+  "⚡ Neon Laser": "⚡ Neon Lazer",
+  "🌊 Cyber Wave": "🌊 Siber Dalga",
+  "◻️ Clean": "◻️ Sade"
 }

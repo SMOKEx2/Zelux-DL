@@ -1,60 +1,50 @@
 <p align="center">
-  <img src="assets/brand/png/app-icon-256.png" width="120" alt="Prism">
+  <img src="assets/brand/png/app-icon-256.png" width="120" alt="ZeluxDL">
 </p>
 
-<h1 align="center">Prism</h1>
+<h1 align="center">ZeluxDL</h1>
 
 <p align="center">
-  <b>One beam. Many rays.</b><br>
-  The fast, beautiful, open-source download manager for Windows, macOS and Linux.
+  <b>Next-Gen High-Performance Download Manager for Windows, macOS and Linux.</b><br>
+  Multi-connection acceleration, video grabber, multi-host resolvers, and glassmorphic UI.
 </p>
 
 <p align="center">
-  <a href="https://github.com/FortoGraphy/prism-download-manager/releases/latest"><img alt="Latest release" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fprismdl.site%2Frelease.json&style=flat-square&cacheSeconds=300"></a>
-  <a href="https://github.com/FortoGraphy/prism-download-manager/releases"><img alt="Downloads" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fprismdl.site%2Fdownloads.json&style=flat-square&cacheSeconds=300"></a>
-  <a href="https://github.com/FortoGraphy/prism-download-manager/actions/workflows/ci.yml"><img alt="CI" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fprismdl.site%2Ftests.json&style=flat-square&cacheSeconds=300"></a>
-  <a href="https://chromewebstore.google.com/detail/prism-download-manager/mmcdeiglkbfbicdjboocmhehodogilfl"><img alt="Chrome Web Store" src="https://img.shields.io/chrome-web-store/v/mmcdeiglkbfbicdjboocmhehodogilfl?style=flat-square&label=Chrome%20Web%20Store&color=4285f4"></a>
+  <a href="https://github.com/SMOKEx2/Zelux-DL/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/SMOKEx2/Zelux-DL?style=flat-square&color=8b5bff"></a>
   <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2ecc71?style=flat-square"></a>
   <img alt="Platforms" src="https://img.shields.io/badge/Windows%20·%20macOS%20·%20Linux-555?style=flat-square">
 </p>
 
 <p align="center">
-  <a href="https://github.com/FortoGraphy/prism-download-manager/releases/latest"><b>⬇ Download</b></a> ·
-  <a href="https://prismdl.site/"><b>Website</b></a> ·
-  <a href="https://youtu.be/IkZu0XN2lLQ"><b>▶ Watch the film</b></a> ·
+  <a href="https://github.com/SMOKEx2/Zelux-DL/releases/latest"><b>⬇ Download</b></a> ·
   <a href="docs/guide/installation.md">Install guide</a> ·
-  <a href="docs/guide/browser-extension.md">Browser extension</a> ·
-  <a href="https://ko-fi.com/prismdownloadmanager"><b>☕ Buy me a beam</b></a>
-</p>
-
-<p align="center">
-  <a href="https://youtu.be/IkZu0XN2lLQ">
-    <img src="docs/media/teaser.gif" width="860" alt="Prism in motion: one beam splits into many connections">
-  </a>
+  <a href="docs/guide/browser-extension.md">Browser extension</a>
 </p>
 
 ---
 
-Prism splits every download into up to **32 parallel connections**, keeps them all busy until
+ZeluxDL splits every download into up to **32 parallel connections**, keeps them all busy until
 the last byte, and survives crashes, sleep and pulled cables. Click a link in your browser and
-Prism takes over; hover a video and grab it as **MP4 in the quality you want — or just the MP3**.
-All of it in a calm, liquid-glass interface with dark and light themes.
+ZeluxDL takes over; hover a video and grab it as **MP4 in the quality you want — or just the MP3**.
+All of it in a calm, liquid-glass interface with dark, light, and exclusive Zelux Pulse themes.
 
 Free, open source, no ads, no accounts, no telemetry.
 
-## ✨ Why Prism
+## ✨ Why ZeluxDL
 
 | | |
 |---|---|
-| ⚡ **Up to 15× faster** | On servers that throttle each connection, Prism's multi-connection engine is up to 15× faster than a normal browser download ([benchmarks](#-benchmarks)). |
-| 🔁 **Never start over** | Pause, close the laptop, lose power — Prism resumes exactly where it stopped and checks that the file on the server hasn't changed. |
-| 🌐 **Lives in your browser** | Chrome, Edge, Brave, Opera, Vivaldi and Firefox. Downloads jump into Prism in about a quarter of a second. |
+| ⚡ **Up to 15× faster** | On servers that throttle each connection, ZeluxDL's multi-connection engine is up to 15× faster than a normal browser download ([benchmarks](#-benchmarks)). |
+| 🔗 **Multi-Host Resolvers** | Built-in direct link resolvers for Google Drive, Google Docs/Sheets/Slides, Dropbox (`dl=1`), Pixeldrain, OneDrive/SharePoint, VikingFile, Hugging Face, and GitHub. |
+| 🖼 **Media Grid Picker** | Batch download window with live thumbnail grid view, quick card multi-selection, and filter by extension. |
+| 🔁 **Never start over** | Pause, close the laptop, lose power — ZeluxDL resumes exactly where it stopped and checks that the file on the server hasn't changed. |
+| 🌐 **Lives in your browser** | Chrome, Edge, Brave, Opera, Vivaldi and Firefox. Downloads jump into ZeluxDL in about a quarter of a second. |
 | 🎬 **Video & music** | YouTube and [1,800+ sites](https://github.com/yt-dlp/yt-dlp/blob/master/supportedsites.md): MP4 up to 8K/HDR or MP3 only, with subtitles, chapters and SponsorBlock. |
 | 🧲 **Every protocol** | HTTP(S), FTP/FTPS, HLS and DASH streams, BitTorrent and magnet links. |
-| 🤖 **AI models** | Download models from [Hugging Face](https://huggingface.co) by name, link or search. Prism picks the files you need (one GGUF version, the weights in one format), downloads them over many connections and checks each against its SHA-256. Gated models, mirrors like hf-mirror.com and LM Studio's folder work too. |
+| 🤖 **AI models** | Download models from [Hugging Face](https://huggingface.co) by name, link or search. ZeluxDL picks the files you need (one GGUF version, the weights in one format), downloads them over many connections and checks each against its SHA-256. |
 | 🗂 **Organised** | Categories, queues with schedules and speed limits, "shut down when done", site grabber, batch downloads, clipboard monitor. |
-| 🌍 **Your language** | English, Czech, German, Spanish, French, Italian, Indonesian, Turkish and Arabic. Prism follows your system's language, or pick one in Settings. |
-| 🎨 **Gorgeous** | Liquid-glass design, dark & light themes, six accent colours, a mini window — and fast with thousands of downloads. |
+| 🌍 **Your language** | Thai (ภาษาไทย), English, Czech, German, Spanish, French, Italian, Indonesian, Turkish, and Arabic. |
+| 🎨 **Gorgeous** | Liquid-glass design, dark & light themes, exclusive **Zelux Pulse** neon violet theme, and compact mini window. |
 
 <p align="center">
   <img src="docs/screenshots/details-window.png" width="820" alt="Prism download details: 16 live connections, file map and speed graph">
@@ -62,11 +52,11 @@ Free, open source, no ads, no accounts, no telemetry.
 
 ## ⬇ Download
 
-Grab the file for your system from the **[latest release](https://github.com/FortoGraphy/prism-download-manager/releases/latest)**:
+Grab the file for your system from the **[latest release](https://github.com/SMOKEx2/Zelux-DL/releases/latest)**:
 
 | System | File |
 |---|---|
-| **Windows** 10 / 11 | `Prism_<version>_x64-setup.exe` — recommended, no admin rights needed<br>`…_x64_en-US.msi` for all users · `…-windows-x64-portable.zip` for USB sticks |
+| **Windows** 10 / 11 | `ZeluxDL_<version>_x64-setup.exe` — recommended, no admin rights needed<br>`…_x64_en-US.msi` for all users · `…-windows-x64-portable.zip` for USB sticks |
 | **macOS** 11+ Apple Silicon | `Prism_<version>_aarch64.dmg` |
 | **macOS** 11+ Intel | `Prism_<version>_x64.dmg` |
 | **Ubuntu / Debian / Mint** | `Prism_<version>_amd64.deb` |

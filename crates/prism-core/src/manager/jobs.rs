@@ -280,6 +280,7 @@ pub(crate) fn engine_config(s: &Settings) -> EngineConfig {
             .then(|| s.connection.max_connections_per_host.min(u16::MAX as u32) as u16),
         ffmpeg_path: (!s.video.ffmpeg_path.trim().is_empty())
             .then(|| PathBuf::from(s.video.ffmpeg_path.trim())),
+        turbo_mode: s.downloads.turbo_mode,
         ..EngineConfig::default()
     }
 }

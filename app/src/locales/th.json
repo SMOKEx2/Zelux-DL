@@ -1032,5 +1032,7 @@
   "Downloading ZeluxDL {version}… {percent}%": "กำลังดาวน์โหลด ZeluxDL {version}… {percent}%",
   "ZeluxDL restarts by itself and your downloads continue.": "ZeluxDL จะรีสตาร์ทเองและการดาวน์โหลดของคุณจะดำเนินต่อไป",
   "ZeluxDL {version} is ready.": "ZeluxDL {version} พร้อมแล้ว",
-  "Prism is open source. Star it on GitHub": "Prism เป็นโอเพ่นซอร์ส ติดดาวบน GitHub"
+  "Prism is open source. Star it on GitHub": "Prism เป็นโอเพ่นซอร์ส ติดดาวบน GitHub",
+  "Turbo Multi-Thread Booster": "🚀 ตัวเร่งสปีดมัลติเธรดเทอร์โบ (Turbo Booster)",
+  "Automatically scale up connections (up to {max}) on healthy servers to maximize download speed": "ไต่ระดับจำนวนการเชื่อมต่ออัตโนมัติ (สูงสุด {max} ช่อง) เมื่อเซิร์ฟเวอร์เสถียร เพื่อรีดความเร็วดาวน์โหลดสูงสุด"
 }

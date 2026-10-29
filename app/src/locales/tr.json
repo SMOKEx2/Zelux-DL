@@ -1032,5 +1032,7 @@
   "🌈 Prism Rainbow": "🌈 Prizma Gökkuşağı",
   "⚡ Neon Laser": "⚡ Neon Lazer",
   "🌊 Cyber Wave": "🌊 Siber Dalga",
-  "◻️ Clean": "◻️ Sade"
+  "◻️ Clean": "◻️ Sade",
+  "Turbo Multi-Thread Booster": "Turbo Çoklu İş Parçacığı Hızlandırıcı",
+  "Automatically scale up connections (up to {max}) on healthy servers to maximize download speed": "İndirme hızını en üst düzeye çıkarmak için kararlı sunucularda bağlantıları otomatik olarak ({max}'a kadar) artırın"
 }

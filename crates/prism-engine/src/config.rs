@@ -50,6 +50,8 @@ pub struct EngineConfig {
     pub host_limit_ttl: Duration,
     /// ffmpeg executable for HLS/DASH remuxing (`None` = `ffmpeg` on `PATH`).
     pub ffmpeg_path: Option<PathBuf>,
+    /// Whether Turbo Multi-Thread Dynamic Booster is enabled (default true).
+    pub turbo_mode: bool,
 }
 
 impl Default for EngineConfig {
@@ -72,6 +74,7 @@ impl Default for EngineConfig {
             max_connections_per_host: None,
             host_limit_ttl: Duration::from_secs(24 * 3600),
             ffmpeg_path: None,
+            turbo_mode: true,
         }
     }
 }

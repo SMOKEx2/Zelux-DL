@@ -1078,5 +1078,7 @@
   "🌈 Prism Rainbow": "🌈 Duhové spektrum Prism",
   "⚡ Neon Laser": "⚡ Neonový laser",
   "🌊 Cyber Wave": "🌊 Kybernetická vlna",
-  "◻️ Clean": "◻️ Čistý minimalistický"
+  "◻️ Clean": "◻️ Čistý minimalistický",
+  "Turbo Multi-Thread Booster": "Turbo posilovač více vláken",
+  "Automatically scale up connections (up to {max}) on healthy servers to maximize download speed": "Automaticky navýšit počet připojení (až na {max}) na stabilních serverech pro maximální rychlost"
 }

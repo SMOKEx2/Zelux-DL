@@ -206,6 +206,7 @@ export interface Settings {
     speedLimiterEnabled: boolean;
     verifyChecksums: boolean;
     autoStart: boolean;
+    turboMode?: boolean;
   };
   connection: {
     userAgent: string;

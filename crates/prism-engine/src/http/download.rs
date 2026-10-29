@@ -270,6 +270,7 @@ pub(crate) async fn run(
             requested,
             initial: usize::from(cfg.initial_connections),
             cap: usize::from(cfg.max_connections_cap),
+            turbo: cfg.turbo_mode,
         },
     )
     .await;

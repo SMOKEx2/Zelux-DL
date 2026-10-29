@@ -1055,5 +1055,7 @@
   "🌈 Prism Rainbow": "🌈 Arc-en-ciel Prism",
   "⚡ Neon Laser": "⚡ Laser néon",
   "🌊 Cyber Wave": "🌊 Cyber-vague",
-  "◻️ Clean": "◻️ Épuré"
+  "◻️ Clean": "◻️ Épuré",
+  "Turbo Multi-Thread Booster": "Accélérateur multi-thread Turbo",
+  "Automatically scale up connections (up to {max}) on healthy servers to maximize download speed": "Augmenter automatiquement les connexions (jusqu'à {max}) sur les serveurs stables pour maximiser la vitesse"
 }

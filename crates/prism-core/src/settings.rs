@@ -177,6 +177,8 @@ pub struct Downloads {
     pub verify_checksums: bool,
     /// Start downloads added from the browser immediately when no dialog is shown.
     pub auto_start: bool,
+    /// Turbo Multi-Thread Dynamic Booster: auto-scale connection threads to maximize throughput.
+    pub turbo_mode: bool,
 }
 
 impl Default for Downloads {
@@ -192,6 +194,7 @@ impl Default for Downloads {
             speed_limiter_enabled: false,
             verify_checksums: true,
             auto_start: true,
+            turbo_mode: true,
         }
     }
 }

@@ -176,6 +176,12 @@ function SectionBody({ id, s }: { id: string; s: Settings }) {
             </Row>
           </Group>
           <Group title={t("Engine")}>
+            <Toggle
+              title={t("Turbo Multi-Thread Booster")}
+              hint={t("Automatically scale up connections (up to {max}) on healthy servers to maximize download speed", { max: s.downloads.maxConnections })}
+              value={s.downloads.turboMode ?? true}
+              onChange={(v) => save({ downloads: { turboMode: v } })}
+            />
             <Row title={t("Connections per download")} hint={t("Prism splits files into this many segments (work-stealing keeps all busy)")}>
               <NumberField value={s.downloads.defaultConnections} min={1} max={s.downloads.maxConnections} label={t("Connections per download")} onCommit={(v) => save({ downloads: { defaultConnections: v } })} width={90} />
             </Row>

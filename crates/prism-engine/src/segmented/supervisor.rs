@@ -54,6 +54,8 @@ pub(crate) struct Params {
     pub initial: usize,
     /// Engine cap.
     pub cap: usize,
+    /// Whether Turbo Multi-Thread Dynamic Booster is enabled.
+    pub turbo: bool,
 }
 
 fn spawn_worker<F: RangeFetcher>(
@@ -95,6 +97,7 @@ pub(crate) async fn supervise<FF: FetcherFactory>(
     let mut last_error: Option<EngineError> = None;
     let mut fatal: Option<EngineError> = None;
     let mut done = false;
+    let mut turbo_next_eval = Instant::now() + Duration::from_secs(3);
 
     if let Some((fetcher, initial)) = first {
         spawn_worker(&mut workers, &ctx, &mut next_id, fetcher, Some(initial));
@@ -203,6 +206,33 @@ pub(crate) async fn supervise<FF: FetcherFactory>(
                     learned = Some(l + 1);
                     ctx.host_limits.record(&ctx.host, l + 1);
                     probe_up_at = Some(now + probe_backoff);
+                }
+                // Turbo Multi-Thread Dynamic Booster: scale connections up when the transfer is healthy.
+                if params.turbo
+                    && requested < params.cap
+                    && learned.is_none()
+                    && hold_until.is_none()
+                    && !any_limited(&ctx.limiters)
+                    && now >= turbo_next_eval
+                {
+                    turbo_next_eval = now + Duration::from_secs(3);
+                    let active = ctx.active_workers.load(Ordering::Acquire);
+                    let connected = ctx.connected.load(Ordering::Acquire);
+                    let remaining = ctx.table.remaining().unwrap_or(0);
+                    let min_needed_bytes = (requested as u64 + 4) * (ctx.min_request.max(1024 * 1024));
+                    if connected >= active && active >= requested && remaining >= min_needed_bytes {
+                        let next_target = (requested + 4).min(params.cap);
+                        if next_target > requested {
+                            tracing::info!(
+                                host = %ctx.host,
+                                from = requested,
+                                to = next_target,
+                                "Turbo Booster: dynamically scaled up connections"
+                            );
+                            requested = next_target;
+                            ramp = requested;
+                        }
+                    }
                 }
             }
             _ = ctx.connected_notify.notified() => {}

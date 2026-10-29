@@ -1124,5 +1124,7 @@
   "🌈 Prism Rainbow": "🌈 قوس قزح بريزم",
   "⚡ Neon Laser": "⚡ ليزر نيون",
   "🌊 Cyber Wave": "🌊 موجة سيبرانية",
-  "◻️ Clean": "◻️ نظيف وبسيط"
+  "◻️ Clean": "◻️ نظيف وبسيط",
+  "Turbo Multi-Thread Booster": "معزز التنزيل متعدد المسارات (Turbo)",
+  "Automatically scale up connections (up to {max}) on healthy servers to maximize download speed": "زيادة عدد الاتصالات تلقائيًا (حتى {max}) على الخوادم المستقرة لزيادة سرعة التنزيل إلى أقصى حد"
 }

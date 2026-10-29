@@ -9,7 +9,7 @@ import { useApp } from "../lib/store";
 import { toast } from "../lib/ui";
 import { scheduleUpdateChecks, windowEnv } from "../lib/update-schedule";
 
-const SITE = "https://prismdl.site/#download";
+const SITE = `${REPO_URL}/releases/latest`;
 const RELEASES = `${REPO_URL}/releases`;
 
 interface UpdateState {
@@ -60,7 +60,7 @@ export async function checkForUpdates(manual = false): Promise<void> {
         /* storage unavailable */
       }
     }
-    if (manual && !info) toast(t("Prism is up to date"), { kind: "success", ms: 2500 });
+    if (manual && !info) toast(t("ZeluxDL is up to date"), { kind: "success", ms: 2500 });
   } catch (e) {
     if (manual) toast(t("Couldn't check for updates"), { kind: "error", body: String(e) });
   }
@@ -108,17 +108,17 @@ export function UpdateBanner() {
                   <>
                     <b>
                       {phase === "installing"
-                        ? t("Installing Prism {version}…", { version: info.version })
-                        : t("Downloading Prism {version}… {percent}%", { version: info.version, percent: Math.round(progress * 100) })}
+                        ? t("Installing ZeluxDL {version}…", { version: info.version })
+                        : t("Downloading ZeluxDL {version}… {percent}%", { version: info.version, percent: Math.round(progress * 100) })}
                     </b>{" "}
-                    {t("Prism restarts by itself and your downloads continue.")}
+                    {t("ZeluxDL restarts by itself and your downloads continue.")}
                     <span className="ubanner__bar">
                       <span style={{ width: `${Math.max(4, progress * 100)}%` }} />
                     </span>
                   </>
                 ) : (
                   <>
-                    <b>{t("Prism {version} is ready.", { version: info.version })}</b> {t("You have {version}.", { version: info.current })}{" "}
+                    <b>{t("ZeluxDL {version} is ready.", { version: info.version })}</b> {t("You have {version}.", { version: info.current })}{" "}
                     <button type="button" className="link-btn" onClick={() => void openUrl(`${RELEASES}/tag/v${info.version}`)}>
                       {t("What’s new")}
                     </button>

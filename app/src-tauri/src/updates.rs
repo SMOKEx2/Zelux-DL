@@ -39,19 +39,76 @@ fn can_self_update() -> bool {
     }
 }
 
+fn is_newer_version(a: &str, b: &str) -> bool {
+    let parse = |v: &str| -> Vec<u64> {
+        v.split('-')
+            .next()
+            .unwrap_or("")
+            .split('.')
+            .map(|n| n.parse::<u64>().unwrap_or(0))
+            .collect()
+    };
+    let x = parse(a);
+    let y = parse(b);
+    let len = x.len().max(y.len());
+    for i in 0..len {
+        let xi = x.get(i).copied().unwrap_or(0);
+        let yi = y.get(i).copied().unwrap_or(0);
+        if xi != yi {
+            return xi > yi;
+        }
+    }
+    false
+}
+
 #[tauri::command]
 pub async fn check_update(app: AppHandle) -> CmdResult<Option<UpdateInfo>> {
-    let updater = app.updater().map_err(|e| e.to_string())?;
-    let update = updater.check().await.map_err(|e| {
-        tracing::info!("update check failed: {e}");
-        e.to_string()
-    })?;
-    Ok(update.map(|u| UpdateInfo {
-        version: u.version.clone(),
-        current: u.current_version.clone(),
-        notes: u.body.clone(),
-        can_install: can_self_update(),
-    }))
+    let current = app.package_info().version.to_string();
+
+    // 1. Try Tauri's built-in updater (if configured and valid release JSON exists)
+    if let Ok(updater) = app.updater() {
+        if let Ok(Some(update)) = updater.check().await {
+            return Ok(Some(UpdateInfo {
+                version: update.version.clone(),
+                current: update.current_version.clone(),
+                notes: update.body.clone(),
+                can_install: can_self_update(),
+            }));
+        }
+    }
+
+    // 2. Direct GitHub Release API check (reliable fallback without needing custom signed latest.json)
+    if let Ok(client) = reqwest::Client::builder()
+        .user_agent("ZeluxDL")
+        .build()
+    {
+        if let Ok(resp) = client
+            .get("https://api.github.com/repos/SMOKEx2/Zelux-DL/releases/latest")
+            .send()
+            .await
+        {
+            if resp.status().is_success() {
+                if let Ok(json) = resp.json::<serde_json::Value>().await {
+                    if let Some(tag) = json.get("tag_name").and_then(|v| v.as_str()) {
+                        let remote_ver = tag.trim_start_matches('v');
+                        if is_newer_version(remote_ver, &current) {
+                            return Ok(Some(UpdateInfo {
+                                version: remote_ver.to_string(),
+                                current,
+                                notes: json
+                                    .get("body")
+                                    .and_then(|v| v.as_str())
+                                    .map(|s| s.to_string()),
+                                can_install: false,
+                            }));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    Ok(None)
 }
 
 #[tauri::command]
@@ -65,7 +122,7 @@ pub async fn install_update(app: AppHandle) -> CmdResult<()> {
         .check()
         .await
         .map_err(|e| e.to_string())?
-        .ok_or("Prism is up to date.")?;
+        .ok_or("ZeluxDL is up to date.")?;
     tracing::info!("downloading update {}", update.version);
     let mut received = 0u64;
     let bytes = update

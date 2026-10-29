@@ -9,7 +9,7 @@ import { api, type HfContext, type IntegrationStatus, type ToolStatus } from "..
 import { formatDate } from "../../lib/format";
 import { LANGUAGES, t, tk } from "../../lib/i18n";
 import { needsRepair } from "../../lib/integration";
-import { openUrl } from "../../lib/links";
+import { openUrl, REPO_URL } from "../../lib/links";
 import { categoryIcon, displayName } from "../../lib/present";
 import { COMPLETE_SOUNDS } from "../../lib/sounds";
 import { playSound, useApp } from "../../lib/store";
@@ -958,9 +958,9 @@ function About() {
           <Icon name="star" size={15} /> {t("What's new")}
         </button>
       </div>
-      <p className="lead">{t("One beam, many rays. A fast multi-connection download manager with browser integration, video downloading, queues, a scheduler and a site grabber.")}</p>
-      <button type="button" className="linkbtn about__star" onClick={() => void openUrl("https://github.com/FortoGraphy/prism-download-manager")}>
-        {t("Prism is open source. Star it on GitHub").replace("ZeluxDL", "Prism")}
+      <p className="lead">{t("Next-generation high-speed download manager with multi-connection acceleration, video grabber, multi-host resolvers, and glassmorphic UI.")}</p>
+      <button type="button" className="linkbtn about__star" onClick={() => void openUrl(REPO_URL)}>
+        {t("ZeluxDL is open source. Star it on GitHub")}
       </button>
       <p className="t-small text-tertiary">{t("Inter and JetBrains Mono are used under the SIL Open Font License. yt-dlp, ffmpeg and librqbit are separate projects under their own licenses.")}</p>
     </div>

@@ -90,5 +90,12 @@
   "{count} downloads and their files will be deleted. The files can't be restored.": {
     "one": "{count} download and its file will be deleted. The file can't be restored.",
     "other": "{count} downloads and their files will be deleted. The files can't be restored."
-  }
+  },
+  "Next-generation high-speed download manager with multi-connection acceleration, video grabber, multi-host resolvers, and glassmorphic UI.": "Next-generation high-speed download manager with multi-connection acceleration, video grabber, multi-host resolvers, and glassmorphic UI.",
+  "ZeluxDL is open source. Star it on GitHub": "ZeluxDL is open source. Star it on GitHub",
+  "ZeluxDL is up to date": "ZeluxDL is up to date",
+  "Installing ZeluxDL {version}…": "Installing ZeluxDL {version}…",
+  "Downloading ZeluxDL {version}… {percent}%": "Downloading ZeluxDL {version}… {percent}%",
+  "ZeluxDL restarts by itself and your downloads continue.": "ZeluxDL restarts by itself and your downloads continue.",
+  "ZeluxDL {version} is ready.": "ZeluxDL {version} is ready."
 }

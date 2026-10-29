@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # ZeluxDL - Windows Context Menu Registration Script
 # ==============================================================================
 param(
@@ -20,7 +20,7 @@ $RootDir = Split-Path -Parent $ScriptDir
 if (-not $ExePath) {
     $Candidates = @(
         (Join-Path $RootDir "target\release\ZeluxDL.exe"),
-        (Join-Path $RootDir "packaging\out\ZeluxDL-2.0.0-portable\ZeluxDL.exe"),
+        (Join-Path $RootDir "packaging\out\ZeluxDL-2.0.1-portable\ZeluxDL.exe"),
         (Join-Path $env:LOCALAPPDATA "Programs\ZeluxDL\ZeluxDL.exe"),
         (Join-Path $env:ProgramFiles "ZeluxDL\ZeluxDL.exe")
     )

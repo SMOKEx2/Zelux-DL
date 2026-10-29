@@ -1,4 +1,4 @@
-﻿# ==============================================================================
+# ==============================================================================
 # ZeluxDL - 1-Click Browser Extension Installer for Windows
 # ==============================================================================
 param(
@@ -64,7 +64,7 @@ if (-not $ExtensionDir -and -not $Uninstall) {
 }
 
 $ManifestPath = if ($ExtensionDir) { Join-Path $ExtensionDir "manifest.json" } else { "" }
-$Version = "2.0.0"
+$Version = "2.0.1"
 if ($ManifestPath -and (Test-Path $ManifestPath)) {
     try {
         $manifest = Get-Content $ManifestPath -Raw -Encoding utf8 | ConvertFrom-Json

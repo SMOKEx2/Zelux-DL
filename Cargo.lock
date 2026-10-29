@@ -4661,7 +4661,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "prism-app"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4695,7 +4695,7 @@ dependencies = [
 
 [[package]]
 name = "prism-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "arboard",
@@ -4736,7 +4736,7 @@ dependencies = [
 
 [[package]]
 name = "prism-engine"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -4778,7 +4778,7 @@ dependencies = [
 
 [[package]]
 name = "prism-native-host"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -4790,7 +4790,7 @@ dependencies = [
 
 [[package]]
 name = "prism-testserver"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "aes",
  "base64 0.22.1",
@@ -4811,7 +4811,7 @@ dependencies = [
 
 [[package]]
 name = "prism-torrent"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "bytes",
@@ -4826,7 +4826,7 @@ dependencies = [
 
 [[package]]
 name = "prism-video"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "bytes",
  "chrono",

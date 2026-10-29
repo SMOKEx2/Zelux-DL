@@ -22,6 +22,15 @@ if (Test-Path $ext) {
   Copy-Item -Recurse (Join-Path $ext "firefox") (Join-Path $stage "extension\firefox")
 }
 Copy-Item (Join-Path $root "packaging\windows\PORTABLE-README.txt") $stage
+
+# Include 1-click installer scripts in portable package
+New-Item -ItemType Directory -Force (Join-Path $stage "scripts") | Out-Null
+Copy-Item (Join-Path $root "scripts\install-extension.ps1") (Join-Path $stage "scripts\")
+Copy-Item (Join-Path $root "scripts\register-context-menu.ps1") (Join-Path $stage "scripts\")
+Copy-Item (Join-Path $root "scripts\unregister-context-menu.ps1") (Join-Path $stage "scripts\")
+Copy-Item (Join-Path $root "install-extension.bat") $stage
+Copy-Item (Join-Path $root "register-context-menu.bat") $stage
+Copy-Item (Join-Path $root "unregister-context-menu.bat") $stage
 Remove-Item -Force $zip -ErrorAction SilentlyContinue
 # tar.exe (Windows 10+) writes portable forward-slash paths; Compress-Archive on PS 5.1 does not.
 $bsdtar = Join-Path $env:SystemRoot "System32\tar.exe"   # not Git's GNU tar, which can't write zips

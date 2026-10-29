@@ -43,12 +43,13 @@
 | ฟีเจอร์ | คำอธิบาย |
 |---|---|
 | 🚀 **Multi-Connection Turbo** | เร่งความเร็วการดาวน์โหลดสูงสุด **32 การเชื่อมต่อพร้อมกัน** พร้อมระบบ Dynamic Segmentation ที่แบ่งไฟล์ดาวน์โหลดอย่างต่อเนื่องจนถึงไบต์สุดท้าย |
-| 🔗 **Multi-Host Resolvers** | ระบบแปลงลิงก์เว็บฝากไฟล์ยอดนิยมให้เป็นลิงก์โหลดตรงความเร็วสูงอัตโนมัติ (รองรับ Google Drive, Google Docs/Sheets/Slides, Dropbox `dl=1`, Pixeldrain, OneDrive, SharePoint, VikingFile, Hugging Face, GitHub) |
+| 🔗 **Multi-Host Resolvers** | ระบบแปลงลิงก์เว็บฝากไฟล์ยอดนิยมให้เป็นลิงก์โหลดตรงความเร็วสูงอัตโนมัติ (รองรับ Google Drive, Google Docs/Sheets/Slides, Dropbox `dl=1`, Pixeldrain, OneDrive, SharePoint, VikingFile, Hugging Face, GitHub, MediaFire, GitLab, Pastebin, GitHub Gist, Buzzheavier) |
 | 🖼 **Media Grid Picker** | หน้าต่างดาวน์โหลดไฟล์แบบกลุ่ม (Batch) อัปเกรดใหม่ สลับระหว่างโหมดตารางและ **โหมดการ์ดรูปภาพ (Grid View)** พร้อมพรีวิวรูปภาพขนาดย่อและการเลือกดาวน์โหลดที่ง่ายดาย |
 | 🎬 **Smart Video & Music Grabber** | ดึงคลิปวิดีโอและเพลงจาก YouTube และเว็บสตรีมมิ่งกว่า **1,800+ เว็บไซต์** เลือกความละเอียดได้ตั้งแต่ 1080p, 2K, 4K ไปจนถึง 8K/HDR หรือจะแปลงเป็น MP3 ก็ทำได้ทันที |
 | 🧲 **รองรับทุกโปรโตคอล** | ดาวน์โหลดได้ทั้ง HTTP(S), FTP/FTPS, HLS/DASH Streaming, BitTorrent และ Magnet links |
 | 🔁 **Resume ได้เสมอ ไม่ต้องเริ่มใหม่** | เน็ตหลุด คอมดับ หรือปิดเครื่อง ZeluxDL สามารถดาวน์โหลดต่อจากจุดเดิมได้ทันที พร้อมตรวจสอบความถูกต้องของไฟล์อัตโนมัติ |
-| 🌐 **เชื่อมต่อเว็บเบราว์เซอร์ลื่นไหล** | มาพร้อม Browser Extension สำหรับ Chrome, Brave, Edge, Opera และ Firefox คลิกดาวน์โหลดปุ๊บ สลับเข้า ZeluxDL ภายในเสี้ยววินาที |
+| 🌐 **เชื่อมต่อเว็บเบราว์เซอร์ลื่นไหล** | มาพร้อม Browser Extension สำหรับ Chrome, Brave, Edge, Opera และ Firefox พร้อมสคริปต์ติดตั้งคลิกเดียว `install-extension.bat` |
+| 🖱 **Windows Explorer Integration** | ผสานเมนูคลิกขวาใน Windows Explorer ดับเบิ้ลคลิก `register-context-menu.bat` คลิกขวาที่ไฟล์ใดๆ หรือลิงก์เพื่อ "ดาวน์โหลดด้วย ZeluxDL" ได้ทันที |
 | 💜 **Zelux Pulse Glassmorphism** | ดีไซน์อินเทอร์เฟซกระจกโปร่งแสง Glassmorphism พร้อมธีมเอกสิทธิ์ **Zelux Pulse (ม่วงนีออน)** สวยงาม สบายตา รองรับทั้ง Dark Mode และ Light Mode |
 | 🇹🇭 **ภาษาไทยสมบูรณ์แบบ** | เมนูและข้อความแจ้งเตือนทั้งหมดแปลเป็นภาษาไทยอย่างถูกต้อง พร้อมฟอนต์ Noto Sans Thai อ่านง่าย สบายตา |
 
@@ -111,6 +112,10 @@
 
 ## 🧩 การติดตั้ง Browser Extension
 
+### วิธีที่ 1: ติดตั้งอัตโนมัติด้วยคลิกเดียว (แนะนำ ⚡)
+ดับเบิ้ลคลิกไฟล์ **`install-extension.bat`** (หรือรัน `scripts/install-extension.ps1`) ระบบจะลงทะเบียนส่วนขยายเข้าสู่ Chrome, Edge, Brave, Opera, Vivaldi และเชื่อมต่อ Native Messaging Host ให้โดยอัตโนมัติทันที!
+
+### วิธีที่ 2: ติดตั้งแบบโหลดส่วนขยายที่แตกไว้ (Load Unpacked)
 1. แตกไฟล์ `zeluxdl-chromium.zip` (หรือ `zeluxdl-firefox.zip`) ลงในโฟลเดอร์ที่ต้องการ
 2. เปิดเบราว์เซอร์ของคุณ ไปที่หน้าจัดการส่วนขยาย:
    - **Chrome / Brave:** `chrome://extensions` หรือ `brave://extensions`
@@ -118,6 +123,16 @@
 3. เปิดสวิตช์ **Developer mode (โหมดนักพัฒนา)** ที่มุมขวาบน
 4. กดปุ่ม **Load unpacked (โหลดส่วนขยายที่แตกไว้)** แล้วเลือกโฟลเดอร์ส่วนขยาย
 5. สัญลักษณ์ ZeluxDL จะปรากฏขึ้นบนแถบเบราว์เซอร์และแสดงสถานะ **เชื่อมต่อแล้ว (Connected)** 🚀
+
+---
+
+## 🖱 เมนูคลิกขวาใน Windows Explorer (Context Menu)
+
+สามารถเปิดใช้งานเมนูคลิกขวาได้ง่ายๆ:
+- **เปิดใช้งาน:** ดับเบิ้ลคลิก **`register-context-menu.bat`** (หรือรัน `scripts/register-context-menu.ps1`)
+- **ยกเลิก:** ดับเบิ้ลคลิก **`unregister-context-menu.bat`** (หรือรัน `scripts/unregister-context-menu.ps1`)
+
+เมื่อเปิดใช้งานแล้ว คุณสามารถคลิกขวาที่ไฟล์ ลิงก์ หรือหน้า Desktop แล้วเลือก **"ดาวน์โหลดด้วย ZeluxDL"** ได้ทันที!
 
 ---
 

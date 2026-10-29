@@ -119,6 +119,88 @@ pub fn resolve_url(raw_url: &str) -> Option<String> {
         }
     }
 
+    // 8. GitLab: blob view -> raw
+    if host == "gitlab.com" {
+        let path = parsed.path().to_string();
+        if path.contains("/-/blob/") {
+            let new_path = path.replace("/-/blob/", "/-/raw/");
+            parsed.set_path(&new_path);
+            return Some(parsed.to_string());
+        }
+    }
+
+    // 9. Pastebin: view -> raw
+    if host == "pastebin.com" || host == "www.pastebin.com" {
+        let path = parsed.path().trim_start_matches('/');
+        if !path.is_empty() && !path.starts_with("raw/") && !path.contains('/') {
+            return Some(format!("https://pastebin.com/raw/{path}"));
+        }
+    }
+
+    // 10. GitHub Gist: view -> raw
+    if host == "gist.github.com" {
+        let segments: Vec<&str> = parsed.path().split('/').filter(|s| !s.is_empty()).collect();
+        if segments.len() == 2 && segments[1] != "raw" {
+            let user = segments[0];
+            let id = segments[1];
+            return Some(format!("https://gist.githubusercontent.com/{user}/{id}/raw"));
+        }
+    }
+
+    // 11. Buzzheavier: /f/{id} -> /{id}
+    if host == "buzzheavier.com" || host == "www.buzzheavier.com" {
+        let path = parsed.path();
+        if let Some(id) = path.strip_prefix("/f/") {
+            let clean_id = id.trim_matches('/');
+            if !clean_id.is_empty() {
+                return Some(format!("https://buzzheavier.com/{clean_id}"));
+            }
+        }
+    }
+
+    None
+}
+
+/// Asynchronous resolver that handles both synchronous URL transformations and
+/// dynamic direct download link extractions (e.g. MediaFire).
+pub async fn resolve_url_async(raw_url: &str) -> Option<String> {
+    if let Some(direct) = resolve_url(raw_url) {
+        return Some(direct);
+    }
+
+    let parsed = Url::parse(raw_url).ok()?;
+    let host = parsed.host_str()?.to_lowercase();
+
+    // MediaFire direct download resolver
+    if host == "mediafire.com" || host == "www.mediafire.com" {
+        if let Ok(client) = reqwest::Client::builder()
+            .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .timeout(std::time::Duration::from_secs(10))
+            .build()
+        {
+            if let Ok(resp) = client.get(raw_url).send().await {
+                if resp.status().is_success() {
+                    if let Ok(html) = resp.text().await {
+                        if let Ok(re) = regex::Regex::new(r#"id=["']downloadButton["'][^>]*href=["'](https?://[^"']+)["']"#) {
+                            if let Some(caps) = re.captures(&html) {
+                                if let Some(m) = caps.get(1) {
+                                    return Some(m.as_str().to_string());
+                                }
+                            }
+                        }
+                        if let Ok(re_cdn) = regex::Regex::new(r#"href=["'](https?://download[0-9]*\.mediafire\.com/[^"']+)["']"#) {
+                            if let Some(caps) = re_cdn.captures(&html) {
+                                if let Some(m) = caps.get(1) {
+                                    return Some(m.as_str().to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     None
 }
 
@@ -244,6 +326,40 @@ mod tests {
             resolved,
             "https://raw.githubusercontent.com/torvalds/linux/master/README"
         );
+    }
+
+    #[test]
+    fn test_gitlab() {
+        let input = "https://gitlab.com/user/project/-/blob/main/config.yml";
+        let resolved = resolve_url(input).expect("should resolve gitlab blob");
+        assert_eq!(
+            resolved,
+            "https://gitlab.com/user/project/-/raw/main/config.yml"
+        );
+    }
+
+    #[test]
+    fn test_pastebin() {
+        let input = "https://pastebin.com/d0wnl0ad";
+        let resolved = resolve_url(input).expect("should resolve pastebin");
+        assert_eq!(resolved, "https://pastebin.com/raw/d0wnl0ad");
+    }
+
+    #[test]
+    fn test_gist() {
+        let input = "https://gist.github.com/torvalds/123456789";
+        let resolved = resolve_url(input).expect("should resolve gist");
+        assert_eq!(
+            resolved,
+            "https://gist.githubusercontent.com/torvalds/123456789/raw"
+        );
+    }
+
+    #[test]
+    fn test_buzzheavier() {
+        let input = "https://buzzheavier.com/f/abc123xyz";
+        let resolved = resolve_url(input).expect("should resolve buzzheavier");
+        assert_eq!(resolved, "https://buzzheavier.com/abc123xyz");
     }
 
     #[test]

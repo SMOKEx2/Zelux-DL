@@ -102,7 +102,7 @@ Notes:
 ## 6. CI
 
 `.github/workflows/release.yml` builds `aarch64-apple-darwin` and `x86_64-apple-darwin`
-DMGs on Apple Silicon runners (`macos-14`; the Intel build is cross-compiled). This already
+DMGs on Apple Silicon runners (`macos-15`; the Intel build is cross-compiled). This already
 works: release builds produce ZeluxDL-named `.dmg` files for both architectures.
 
 Without signing secrets the app gets an **ad-hoc signature** (`bundle.macOS.signingIdentity

@@ -17,6 +17,8 @@ Local build directories, development data and personal session notes are exclude
 - Corrected Linux native-host names/extension IDs and added a cross-component packaging test.
 - Corrected build paths, extension ZIP names and the documented autostart default.
 - Resolved Rust formatting and Clippy findings.
+- Migrated CI/release jobs from retiring macOS 14 runners to macOS 15 after GitHub's
+  runner-brownout annotation prevented the first cross-platform CI attempt.
 
 ## Performance
 

@@ -1,9 +1,8 @@
 name: Release ZeluxDL Desktop
 
 on:
-  push:
-    tags:
-      - "v*"
+  # Manual Windows-only publishing remains available for recovery; version tags use
+  # release.yml, which builds all platforms and publishes one complete release.
   workflow_dispatch:
 
 permissions:

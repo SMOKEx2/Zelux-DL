@@ -1,6 +1,6 @@
 # ZeluxDL 2.0.2
 
-Windows installers include ZeluxDL branding and the application icon. If updater-signing keys are not configured for this release, download and run the installer manually; the signed in-app update manifest is published only with signed update bundles.
+Windows installers include ZeluxDL branding, the application icon, and Noto Sans Thai typography. If updater-signing keys are not configured for this release, download and run the installer manually; the signed in-app update manifest is published only with signed update bundles.
 
 ## What's new
 

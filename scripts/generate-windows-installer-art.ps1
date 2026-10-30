@@ -1,5 +1,6 @@
 param(
   [string]$SourceIcon = (Join-Path $PSScriptRoot "../app/src-tauri/icons/icon.png"),
+  [string]$SourceFont = (Join-Path $PSScriptRoot "../packaging/windows/installer-fonts/NotoSansThai-Variable.ttf"),
   [string]$OutputDir = (Join-Path $PSScriptRoot "../packaging/windows")
 )
 
@@ -7,13 +8,26 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
 $iconPath = [System.IO.Path]::GetFullPath($SourceIcon)
+$fontPath = [System.IO.Path]::GetFullPath($SourceFont)
 $outPath = [System.IO.Path]::GetFullPath($OutputDir)
 if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
   throw "ZeluxDL source icon not found: $iconPath"
 }
+if (-not (Test-Path -LiteralPath $fontPath -PathType Leaf)) {
+  throw "Noto Sans Thai font not found: $fontPath"
+}
 New-Item -ItemType Directory -Force -Path $outPath | Out-Null
 
 $icon = [System.Drawing.Image]::FromFile($iconPath)
+$fontCollection = [System.Drawing.Text.PrivateFontCollection]::new()
+$fontCollection.AddFontFile($fontPath)
+$brandRegular = $fontCollection.Families | Where-Object { $_.Name -eq "Noto Sans Thai" } | Select-Object -First 1
+$brandSemibold = $fontCollection.Families | Where-Object { $_.Name -eq "Noto Sans Thai SemiBold" } | Select-Object -First 1
+if (-not $brandRegular -or -not $brandSemibold) {
+  $icon.Dispose()
+  $fontCollection.Dispose()
+  throw "Noto Sans Thai regular and semibold faces could not be loaded from $fontPath"
+}
 try {
   function New-BrandBitmap([int]$Width, [int]$Height, [string]$Kind) {
     $bitmap = [System.Drawing.Bitmap]::new($Width, $Height, [System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
@@ -42,16 +56,16 @@ try {
     $graphics.FillRectangle($accent, 0, $Height - [Math]::Max(3, [int](3 * $scale)), $Width, [Math]::Max(3, [int](3 * $scale)))
     $accent.Dispose()
 
-    $titleFont = [System.Drawing.Font]::new("Segoe UI Semibold", [Math]::Max(9, 27 * $scale), [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-    $subFont = [System.Drawing.Font]::new("Segoe UI", [Math]::Max(6, 12 * $scale), [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+    $titleFont = [System.Drawing.Font]::new($brandSemibold, [Math]::Max(9, 27 * $scale), [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+    $subFont = [System.Drawing.Font]::new($brandRegular, [Math]::Max(6, 12 * $scale), [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
     $white = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(243, 242, 255))
     $muted = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(165, 171, 194))
 
     if ($Kind -eq "nsis-header") {
       $titleFont.Dispose()
       $subFont.Dispose()
-      $titleFont = [System.Drawing.Font]::new("Segoe UI Semibold", 18, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-      $subFont = [System.Drawing.Font]::new("Segoe UI", 8, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+      $titleFont = [System.Drawing.Font]::new($brandSemibold, 18, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+      $subFont = [System.Drawing.Font]::new($brandRegular, 8, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
       $pad = 8
       $logoSize = 40
       $graphics.DrawImage($icon, $pad, 8, $logoSize, $logoSize)
@@ -69,8 +83,8 @@ try {
       $logoX = [int](($Width - $logoSize) / 2)
       $graphics.DrawImage($icon, $logoX, 52, $logoSize, $logoSize)
       $titleFont.Dispose()
-      $centerTitle = [System.Drawing.Font]::new("Segoe UI Semibold", 18, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
-      $centerSub = [System.Drawing.Font]::new("Segoe UI", 9, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+      $centerTitle = [System.Drawing.Font]::new($brandSemibold, 18, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
+      $centerSub = [System.Drawing.Font]::new($brandRegular, 9, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Pixel)
       $titleFormat = [System.Drawing.StringFormat]::new()
       $titleFormat.Alignment = [System.Drawing.StringAlignment]::Center
       $graphics.DrawString("ZeluxDL", $centerTitle, $white, [System.Drawing.RectangleF]::new(0, 150, $Width, 28), $titleFormat)
@@ -116,4 +130,5 @@ try {
   }
 } finally {
   $icon.Dispose()
+  $fontCollection.Dispose()
 }

@@ -467,10 +467,10 @@ pub(crate) async fn probe(
     settings: &Settings,
 ) -> std::result::Result<ProbeResult, ProbeFailure> {
     let mut resolved_item = n.clone();
-    if let Some(resolved) = crate::resolver::resolve_url_async(&n.url).await {
-        if resolved != n.url {
-            resolved_item.url = resolved;
-        }
+    if let Some(resolved) = crate::resolver::resolve_url_async(&n.url).await
+        && resolved != n.url
+    {
+        resolved_item.url = resolved;
     }
     let value = request_json(&resolved_item, settings);
     let mut req: DownloadRequest = serde_json::from_value(value).map_err(|_| ProbeFailure {

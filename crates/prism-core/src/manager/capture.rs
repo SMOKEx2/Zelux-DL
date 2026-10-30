@@ -342,13 +342,13 @@ impl Core {
     ) -> CaptureInfo {
         let _rt = crate::rt::enter();
         // Multi-host direct download URL resolver (Google Drive, Dropbox, OneDrive, Pixeldrain, HuggingFace, etc.)
-        if n.kind.is_none() && is_get(&n) {
-            if let Some(resolved) = crate::resolver::resolve_url(&n.url) {
-                if resolved != n.url {
-                    n.url = resolved;
-                    probed = None;
-                }
-            }
+        if n.kind.is_none()
+            && is_get(&n)
+            && let Some(resolved) = crate::resolver::resolve_url(&n.url)
+            && resolved != n.url
+        {
+            n.url = resolved;
+            probed = None;
         }
         // A link to a model on Hugging Face opens the model window, where its files are picked
         // (#29); a link to a file's page there downloads the file instead of the page.

@@ -66,45 +66,38 @@ pub async fn check_update(app: AppHandle) -> CmdResult<Option<UpdateInfo>> {
     let current = app.package_info().version.to_string();
 
     // 1. Try Tauri's built-in updater (if configured and valid release JSON exists)
-    if let Ok(updater) = app.updater() {
-        if let Ok(Some(update)) = updater.check().await {
-            return Ok(Some(UpdateInfo {
-                version: update.version.clone(),
-                current: update.current_version.clone(),
-                notes: update.body.clone(),
-                can_install: can_self_update(),
-            }));
-        }
+    if let Ok(updater) = app.updater()
+        && let Ok(Some(update)) = updater.check().await
+    {
+        return Ok(Some(UpdateInfo {
+            version: update.version.clone(),
+            current: update.current_version.clone(),
+            notes: update.body.clone(),
+            can_install: can_self_update(),
+        }));
     }
 
     // 2. Direct GitHub Release API check (reliable fallback without needing custom signed latest.json)
-    if let Ok(client) = reqwest::Client::builder()
-        .user_agent("ZeluxDL")
-        .build()
-    {
-        if let Ok(resp) = client
+    if let Ok(client) = reqwest::Client::builder().user_agent("ZeluxDL").build()
+        && let Ok(resp) = client
             .get("https://api.github.com/repos/SMOKEx2/Zelux-DL/releases/latest")
             .send()
             .await
-        {
-            if resp.status().is_success() {
-                if let Ok(json) = resp.json::<serde_json::Value>().await {
-                    if let Some(tag) = json.get("tag_name").and_then(|v| v.as_str()) {
-                        let remote_ver = tag.trim_start_matches('v');
-                        if is_newer_version(remote_ver, &current) {
-                            return Ok(Some(UpdateInfo {
-                                version: remote_ver.to_string(),
-                                current,
-                                notes: json
-                                    .get("body")
-                                    .and_then(|v| v.as_str())
-                                    .map(|s| s.to_string()),
-                                can_install: false,
-                            }));
-                        }
-                    }
-                }
-            }
+        && resp.status().is_success()
+        && let Ok(json) = resp.json::<serde_json::Value>().await
+        && let Some(tag) = json.get("tag_name").and_then(|v| v.as_str())
+    {
+        let remote_ver = tag.trim_start_matches('v');
+        if is_newer_version(remote_ver, &current) {
+            return Ok(Some(UpdateInfo {
+                version: remote_ver.to_string(),
+                current,
+                notes: json
+                    .get("body")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string()),
+                can_install: false,
+            }));
         }
     }
 

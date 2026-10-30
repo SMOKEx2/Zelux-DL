@@ -12,47 +12,47 @@ pub fn resolve_url(raw_url: &str) -> Option<String> {
     let host = parsed.host_str()?.to_lowercase();
 
     // 1. Google Drive & Google Docs / Sheets / Slides
-    if host == "drive.google.com" || host == "docs.google.com" {
-        if let Some(file_id) = extract_google_file_id(&parsed) {
-            let path = parsed.path();
-            if path.contains("/document/d/") {
-                return Some(format!(
-                    "https://docs.google.com/document/d/{file_id}/export?format=docx"
-                ));
-            }
-            if path.contains("/spreadsheets/d/") {
-                return Some(format!(
-                    "https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
-                ));
-            }
-            if path.contains("/presentation/d/") {
-                return Some(format!(
-                    "https://docs.google.com/presentation/d/{file_id}/export/pptx"
-                ));
-            }
+    if (host == "drive.google.com" || host == "docs.google.com")
+        && let Some(file_id) = extract_google_file_id(&parsed)
+    {
+        let path = parsed.path();
+        if path.contains("/document/d/") {
             return Some(format!(
-                "https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+                "https://docs.google.com/document/d/{file_id}/export?format=docx"
             ));
         }
+        if path.contains("/spreadsheets/d/") {
+            return Some(format!(
+                "https://docs.google.com/spreadsheets/d/{file_id}/export?format=xlsx"
+            ));
+        }
+        if path.contains("/presentation/d/") {
+            return Some(format!(
+                "https://docs.google.com/presentation/d/{file_id}/export/pptx"
+            ));
+        }
+        return Some(format!(
+            "https://drive.usercontent.google.com/download?id={file_id}&export=download&confirm=t"
+        ));
     }
 
     // 2. Dropbox: force direct download param dl=1
-    if host == "dropbox.com" || host.ends_with(".dropbox.com") {
-        if host != "dl.dropboxusercontent.com" {
-            let mut pairs: Vec<(String, String)> = parsed
-                .query_pairs()
-                .filter(|(k, _)| k != "raw" && k != "dl")
-                .map(|(k, v)| (k.into_owned(), v.into_owned()))
-                .collect();
-            pairs.push(("dl".to_string(), "1".to_string()));
-            parsed.set_query(None);
-            for (k, v) in pairs {
-                parsed.query_pairs_mut().append_pair(&k, &v);
-            }
-            let res = parsed.to_string();
-            if res != raw_url {
-                return Some(res);
-            }
+    if (host == "dropbox.com" || host.ends_with(".dropbox.com"))
+        && host != "dl.dropboxusercontent.com"
+    {
+        let mut pairs: Vec<(String, String)> = parsed
+            .query_pairs()
+            .filter(|(k, _)| k != "raw" && k != "dl")
+            .map(|(k, v)| (k.into_owned(), v.into_owned()))
+            .collect();
+        pairs.push(("dl".to_string(), "1".to_string()));
+        parsed.set_query(None);
+        for (k, v) in pairs {
+            parsed.query_pairs_mut().append_pair(&k, &v);
+        }
+        let res = parsed.to_string();
+        if res != raw_url {
+            return Some(res);
         }
     }
 
@@ -65,14 +65,18 @@ pub fn resolve_url(raw_url: &str) -> Option<String> {
         {
             let clean_id = id.trim_matches('/');
             if !clean_id.is_empty() && !clean_id.contains('/') {
-                return Some(format!("https://pixeldrain.com/api/file/{clean_id}?download"));
+                return Some(format!(
+                    "https://pixeldrain.com/api/file/{clean_id}?download"
+                ));
             }
         }
     }
 
     // 4. OneDrive & SharePoint: append download=1
     if host == "1drv.ms" || host == "onedrive.live.com" || host.ends_with(".sharepoint.com") {
-        let has_dl = parsed.query_pairs().any(|(k, v)| k == "download" && v == "1");
+        let has_dl = parsed
+            .query_pairs()
+            .any(|(k, v)| k == "download" && v == "1");
         if !has_dl {
             parsed.query_pairs_mut().append_pair("download", "1");
             return Some(parsed.to_string());
@@ -80,27 +84,28 @@ pub fn resolve_url(raw_url: &str) -> Option<String> {
     }
 
     // 5. VikingFile: normalize vik1ngfile.site to vikingfile.com
-    if host == "vik1ngfile.site" || host == "www.vik1ngfile.site" {
-        if parsed.set_host(Some("vikingfile.com")).is_ok() {
-            return Some(parsed.to_string());
-        }
+    if (host == "vik1ngfile.site" || host == "www.vik1ngfile.site")
+        && parsed.set_host(Some("vikingfile.com")).is_ok()
+    {
+        return Some(parsed.to_string());
     }
 
     // 6. Hugging Face: blob -> resolve with download=true
     if host == "huggingface.co" {
         let path = parsed.path().to_string();
         let segments: Vec<&str> = path.split('/').filter(|s| !s.is_empty()).collect();
-        if let Some(blob_idx) = segments.iter().position(|&s| s == "blob") {
-            if blob_idx >= 1 && blob_idx < segments.len() - 1 {
-                let mut new_segments = segments.clone();
-                new_segments[blob_idx] = "resolve";
-                let new_path = format!("/{}", new_segments.join("/"));
-                parsed.set_path(&new_path);
-                if !parsed.query_pairs().any(|(k, _)| k == "download") {
-                    parsed.query_pairs_mut().append_pair("download", "true");
-                }
-                return Some(parsed.to_string());
+        if let Some(blob_idx) = segments.iter().position(|&s| s == "blob")
+            && blob_idx >= 1
+            && blob_idx < segments.len() - 1
+        {
+            let mut new_segments = segments.clone();
+            new_segments[blob_idx] = "resolve";
+            let new_path = format!("/{}", new_segments.join("/"));
+            parsed.set_path(&new_path);
+            if !parsed.query_pairs().any(|(k, _)| k == "download") {
+                parsed.query_pairs_mut().append_pair("download", "true");
             }
+            return Some(parsed.to_string());
         }
     }
 
@@ -143,7 +148,9 @@ pub fn resolve_url(raw_url: &str) -> Option<String> {
         if segments.len() == 2 && segments[1] != "raw" {
             let user = segments[0];
             let id = segments[1];
-            return Some(format!("https://gist.githubusercontent.com/{user}/{id}/raw"));
+            return Some(format!(
+                "https://gist.githubusercontent.com/{user}/{id}/raw"
+            ));
         }
     }
 
@@ -172,32 +179,26 @@ pub async fn resolve_url_async(raw_url: &str) -> Option<String> {
     let host = parsed.host_str()?.to_lowercase();
 
     // MediaFire direct download resolver
-    if host == "mediafire.com" || host == "www.mediafire.com" {
-        if let Ok(client) = reqwest::Client::builder()
+    if (host == "mediafire.com" || host == "www.mediafire.com")
+        && let Ok(client) = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
             .timeout(std::time::Duration::from_secs(10))
             .build()
+        && let Ok(resp) = client.get(raw_url).send().await
+        && resp.status().is_success()
+        && let Ok(html) = resp.text().await
+    {
+        if let Ok(re) = regex::Regex::new(r#"id=["']downloadButton["'][^>]*href=["'](https?://[^"']+)["']"#)
+            && let Some(caps) = re.captures(&html)
+            && let Some(m) = caps.get(1)
         {
-            if let Ok(resp) = client.get(raw_url).send().await {
-                if resp.status().is_success() {
-                    if let Ok(html) = resp.text().await {
-                        if let Ok(re) = regex::Regex::new(r#"id=["']downloadButton["'][^>]*href=["'](https?://[^"']+)["']"#) {
-                            if let Some(caps) = re.captures(&html) {
-                                if let Some(m) = caps.get(1) {
-                                    return Some(m.as_str().to_string());
-                                }
-                            }
-                        }
-                        if let Ok(re_cdn) = regex::Regex::new(r#"href=["'](https?://download[0-9]*\.mediafire\.com/[^"']+)["']"#) {
-                            if let Some(caps) = re_cdn.captures(&html) {
-                                if let Some(m) = caps.get(1) {
-                                    return Some(m.as_str().to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-            }
+            return Some(m.as_str().to_string());
+        }
+        if let Ok(re_cdn) = regex::Regex::new(r#"href=["'](https?://download[0-9]*\.mediafire\.com/[^"']+)["']"#)
+            && let Some(caps) = re_cdn.captures(&html)
+            && let Some(m) = caps.get(1)
+        {
+            return Some(m.as_str().to_string());
         }
     }
 
@@ -266,7 +267,8 @@ mod tests {
             "https://docs.google.com/document/d/1234567890abcdef/export?format=docx"
         );
         assert_eq!(
-            resolve_url("https://docs.google.com/spreadsheets/d/1234567890abcdef/edit#gid=0").unwrap(),
+            resolve_url("https://docs.google.com/spreadsheets/d/1234567890abcdef/edit#gid=0")
+                .unwrap(),
             "https://docs.google.com/spreadsheets/d/1234567890abcdef/export?format=xlsx"
         );
         assert_eq!(
@@ -287,11 +289,17 @@ mod tests {
     fn test_pixeldrain() {
         let input = "https://pixeldrain.com/u/abc12345";
         let resolved = resolve_url(input).expect("should resolve pixeldrain");
-        assert_eq!(resolved, "https://pixeldrain.com/api/file/abc12345?download");
+        assert_eq!(
+            resolved,
+            "https://pixeldrain.com/api/file/abc12345?download"
+        );
 
         let input_file = "https://pixeldrain.com/file/xyz98765";
         let resolved_file = resolve_url(input_file).expect("should resolve pixeldrain file");
-        assert_eq!(resolved_file, "https://pixeldrain.com/api/file/xyz98765?download");
+        assert_eq!(
+            resolved_file,
+            "https://pixeldrain.com/api/file/xyz98765?download"
+        );
     }
 
     #[test]

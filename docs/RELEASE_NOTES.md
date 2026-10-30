@@ -1,3 +1,9 @@
+# ZeluxDL 2.0.4
+
+## Fixed
+
+- Keep the bundled browser extension version in sync with the app so browser integration no longer reports the shipped extension as outdated.
+
 # ZeluxDL 2.0.3
 
 This transition release enables verified in-app updates. Existing installations must install this release once from GitHub because the previous updater signing key was unavailable; later signed releases can be installed from within ZeluxDL.

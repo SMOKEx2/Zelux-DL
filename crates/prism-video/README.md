@@ -114,6 +114,9 @@ yt-dlp --ignore-config [--ffmpeg-location D] [--js-runtimes deno:PATH] [--proxy 
 * `--flat-playlist` is always passed. It does not affect single videos, but it keeps channel and playlist listings fast. For example, `@BlenderOfficial/videos` returns 1,215 entries in about 20 s.
 * A `_type: url` redirect result is followed once.
 * Browser cookies are written to a temporary Netscape `cookies.txt` for the page's site (`.example.com`). The file is deleted after the run.
+* Exact social posts (Facebook, Instagram, TikTok and X) use the pinned `gallery-dl` binary only to resolve metadata (`--dump-json`). Rust accepts file-level event 3 entries, filters to visual extensions, normalizes and deduplicates X media IDs, and disables TikTok audio plus quoted/retweeted/reply X posts. Resolved direct media URLs are passed to ZeluxDL's regular HTTP queue; page Referer and browser User-Agent are attached.
+* Per-file `_http_headers` are parsed with a strict allowlist. `Accept`, `Accept-Language`, and `Origin` can accompany queued media; Cookie and hop-by-hop headers are never persisted in queue items. Extension cookies are read only after the user opts in, used by the resolver from a temporary file, and (when opted in for transfer) held in memory for the engine then removed at job end.
+* Signed CDN URLs are resolved when the user opens the picker rather than at app startup; users should select/download promptly because some URLs expire.
 * Referer and User-Agent go through `--add-headers`. The old `--referer` / `--user-agent` flags are deprecated and hidden from `--help`.
 * The browser User-Agent is **not** forced on YouTube. yt-dlp uses per-client UAs there, and the stream URLs are bound to them.
 * `--js-runtimes deno:<path>` was confirmed against `yt-dlp 2026.10.10.233141 --help` and with `-v` (`[debug] JS runtimes: deno-2.9.7`). The path must be a native Windows path.

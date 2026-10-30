@@ -190,6 +190,39 @@ export interface ProbeVideoRequest {
   userAgent: string;
 }
 
+export interface PostMediaEntry {
+  url: string;
+  title?: string | null;
+  extension?: string | null;
+  thumbnail?: string | null;
+  httpHeaders?: Record<string, string>;
+}
+
+export interface ProbePostMediaRequest {
+  type: 'probePostMedia';
+  pageUrl: string;
+  cookies?: string;
+  userAgent: string;
+}
+
+export interface ProbePostMediaReply extends OkReply {
+  title?: string;
+  entries: PostMediaEntry[];
+}
+
+export interface AddPostMediaRequest {
+  type: 'addPostMedia';
+  pageUrl: string;
+  media: { url: string; extension: string; httpHeaders?: Record<string, string>; index: number }[];
+  userAgent: string;
+  cookies?: string;
+}
+
+export interface AddPostMediaReply extends OkReply {
+  accepted: boolean;
+  count?: number;
+}
+
 export interface VideoFormat {
   /** yt-dlp format selector the app understands when sent back in `video.formatId`. */
   id: string;
@@ -251,6 +284,19 @@ export interface OpenRequest {
   page?: 'main' | 'browserIntegration' | 'settings';
 }
 
+/** Open the app's exact-post picker; unlike `batch`, this never scrapes page-wide media. */
+export interface OpenMediaPickerRequest {
+  type: 'openMediaPicker';
+  pageUrl: string;
+  title?: string;
+  cookies?: string;
+  userAgent?: string;
+}
+
+export interface OpenMediaPickerReply extends OkReply {
+  accepted: boolean;
+}
+
 export interface HostPingReply extends OkReply {
   host: { version: string; dataDir?: string };
 }
@@ -261,9 +307,12 @@ export type AppRequest =
   | BatchRequest
   | VideoRequest
   | ProbeVideoRequest
+  | ProbePostMediaRequest
+  | AddPostMediaRequest
   | ProbeStreamRequest
   | StatusRequest
   | OpenRequest
+  | OpenMediaPickerRequest
   | { type: 'hostPing' };
 
 export interface ReplyMap {
@@ -272,8 +321,11 @@ export interface ReplyMap {
   batch: BatchReply;
   video: VideoReply;
   probeVideo: ProbeVideoReply;
+  probePostMedia: ProbePostMediaReply;
+  addPostMedia: AddPostMediaReply;
   probeStream: ProbeStreamReply;
   status: StatusReply;
   open: OkReply;
+  openMediaPicker: OpenMediaPickerReply;
   hostPing: HostPingReply;
 }

@@ -22,6 +22,10 @@ export interface MediaInfo {
   pageUrl?: string | null;
   /** 1-based position in the playlist it was picked from. */
   playlistIndex?: number | null;
+  /** Files selected together from a social post share one completion notice. */
+  downloadGroup?: string | null;
+  /** The existing download whose identical file was kept instead of another copy. */
+  duplicateOf?: string | null;
 }
 
 export interface DownloadItem {
@@ -330,6 +334,9 @@ export interface VideoCapture {
   title?: string | null;
   streams: SniffedStream[];
   preselected?: string | null;
+  /** Temporary browser context supplied after the user explicitly starts a post picker. */
+  cookies?: string | null;
+  userAgent?: string | null;
 }
 
 export type StartMode = { type: "now" } | { type: "later" } | { type: "queue"; queueId: string };

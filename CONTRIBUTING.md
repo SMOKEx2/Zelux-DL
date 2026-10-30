@@ -42,7 +42,7 @@ Architecture overview: [ARCHITECTURE.md](ARCHITECTURE.md) · Design system:
 ## Before you open a PR
 
 ```bash
-cargo test --workspace --exclude prism-app
+cargo test --workspace --exclude zeluxdl-app
 cargo clippy --workspace --all-targets -- -D warnings
 npm test --prefix app && npm run typecheck --prefix app
 npm test --prefix extension && npm run typecheck --prefix extension

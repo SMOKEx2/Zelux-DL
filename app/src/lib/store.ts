@@ -19,6 +19,7 @@ import type {
 /** Sidebar selection: a category, a status group, a queue, a grabber project or trash. */
 export type View =
   | { kind: "all" }
+  | { kind: "duplicates" }
   | { kind: "category"; id: string }
   | { kind: "status"; id: "unfinished" | "finished" | "active" | "failed" }
   | { kind: "queue"; id: string }
@@ -32,6 +33,8 @@ export interface AppState {
   version: string;
   dataDir: string;
   items: Record<string, DownloadItem>;
+  duplicateIds: string[];
+  duplicateScanStatus: "idle" | "scanning" | "done" | "error";
   progress: Record<string, Progress>;
   categories: Category[];
   queues: Queue[];
@@ -46,6 +49,7 @@ export interface AppState {
 
   init: () => Promise<void>;
   setView: (v: View) => void;
+  scanDuplicates: () => Promise<void>;
   select: (ids: string[], anchor?: string | null) => void;
   setSearch: (s: string) => void;
   setSort: (key: SortKey) => void;
@@ -61,6 +65,8 @@ export const useApp = create<AppState>((set, get) => ({
   version: "",
   dataDir: "",
   items: {},
+  duplicateIds: [],
+  duplicateScanStatus: "idle",
   progress: {},
   categories: [],
   queues: [],
@@ -94,6 +100,16 @@ export const useApp = create<AppState>((set, get) => ({
   },
 
   setView: (view) => set({ view, selection: [], anchor: null }),
+  scanDuplicates: async () => {
+    if (get().duplicateScanStatus === "scanning") return;
+    set({ duplicateIds: [], duplicateScanStatus: "scanning" });
+    try {
+      set({ duplicateIds: await api.findDuplicates(), duplicateScanStatus: "done" });
+    } catch (error) {
+      set({ duplicateScanStatus: "error" });
+      throw error;
+    }
+  },
   select: (ids, anchor) => set({ selection: ids, anchor: anchor === undefined ? get().anchor : anchor }),
   setSearch: (search) => set({ search }),
   setSort: (key) => {
@@ -112,7 +128,7 @@ function handleEvent(e: CoreEvent) {
     case "itemsAdded": {
       const items = { ...st.items };
       for (const i of e.payload) items[i.id] = i;
-      useApp.setState({ items });
+      useApp.setState({ items, duplicateIds: [], duplicateScanStatus: "idle" });
       break;
     }
     case "itemUpdated": {
@@ -122,9 +138,9 @@ function handleEvent(e: CoreEvent) {
       if (!isActive(e.payload.status) && st.progress[e.payload.id]) {
         const progress = { ...st.progress };
         delete progress[e.payload.id];
-        useApp.setState({ items, progress });
+        useApp.setState({ items, progress, duplicateIds: [], duplicateScanStatus: "idle" });
       } else if (prev !== e.payload) {
-        useApp.setState({ items });
+        useApp.setState({ items, duplicateIds: [], duplicateScanStatus: "idle" });
       }
       break;
     }
@@ -135,7 +151,7 @@ function handleEvent(e: CoreEvent) {
         delete items[id];
         delete progress[id];
       }
-      useApp.setState({ items, progress, selection: st.selection.filter((s) => !e.payload.includes(s)) });
+      useApp.setState({ items, progress, selection: st.selection.filter((s) => !e.payload.includes(s)), duplicateIds: st.duplicateIds.filter((id) => !e.payload.includes(id)) });
       break;
     }
     case "progress": {
@@ -225,6 +241,9 @@ export function visibleItems(st: AppState): DownloadItem[] {
       if (!i.trashed) return false;
     } else if (i.trashed) return false;
     switch (view.kind) {
+      case "duplicates":
+        if (!st.duplicateIds.includes(i.id)) return false;
+        break;
       case "category":
         if (i.category !== view.id) return false;
         break;

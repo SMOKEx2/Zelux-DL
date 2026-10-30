@@ -398,10 +398,10 @@ export class VideoButton {
     }
     const pw = this.pill.offsetWidth || 118;
     const ph = this.pill.offsetHeight || 32;
-    const inFs = !!document.fullscreenElement;
     const x = Math.max(8, Math.min(r.right, vw) - pw - 10);
-    // Above the player's top-right edge when there is room, else just inside it.
-    const y = !inFs && r.top >= ph + 14 ? r.top - ph - 6 : Math.max(r.top, 0) + 10;
+    // Place the pill just below the player, clear of the player's bottom controls.
+    const belowPlayer = r.bottom + 8;
+    const y = belowPlayer + ph <= vh - 8 ? belowPlayer : Math.max(8, r.top - ph - 8);
     this.wrap.style.setProperty('--x', `${x}px`);
     this.wrap.style.setProperty('--y', `${y}px`);
     // Open the menu upwards when there's no room below.

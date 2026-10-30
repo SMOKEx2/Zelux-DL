@@ -12,8 +12,8 @@ mod jobs;
 mod queues;
 
 pub use capture::{
-    BatchDecision, CaptureDecision, NewItem, ONE_AT_A_TIME_QUEUE, StartMode, VideoDecision,
-    VideoEntry,
+    BatchDecision, CaptureDecision, NewItem, ONE_AT_A_TIME_QUEUE, PostMediaSelection, StartMode,
+    VideoDecision, VideoEntry,
 };
 pub use jobs::ItemDetails;
 pub(crate) use jobs::{engine_config, http_preference, proxy_config};
@@ -36,6 +36,36 @@ use tokio::sync::{broadcast, mpsc};
 
 /// Number of speed samples kept per item for the details graph (1 sample / 500 ms).
 const SPEED_HISTORY: usize = 240;
+
+/// Cheap rejection before full SHA-256 comparison; a matching prefix never proves equality.
+fn file_prefix_hash(path: &Path) -> std::io::Result<[u8; 32]> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut prefix = Vec::with_capacity(64 * 1024);
+    std::fs::File::open(path)?
+        .take(64 * 1024)
+        .read_to_end(&mut prefix)?;
+    Ok(Sha256::digest(prefix).into())
+}
+
+#[test]
+fn matching_prefixes_still_require_full_content_verification() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a");
+    let b = dir.path().join("b");
+    let mut bytes = vec![7; 128 * 1024];
+    std::fs::write(&a, &bytes).unwrap();
+    bytes[100_000] = 8;
+    std::fs::write(&b, &bytes).unwrap();
+    assert_eq!(file_prefix_hash(&a).unwrap(), file_prefix_hash(&b).unwrap());
+    assert_ne!(
+        prism_video::tools::sha256_file(&a).unwrap(),
+        prism_video::tools::sha256_file(&b).unwrap()
+    );
+    bytes[0] = 9;
+    std::fs::write(&b, bytes).unwrap();
+    assert_ne!(file_prefix_hash(&a).unwrap(), file_prefix_hash(&b).unwrap());
+}
 
 pub struct CoreOptions {
     pub data_dir: PathBuf,
@@ -93,10 +123,12 @@ pub(crate) struct State {
     pub categories: Vec<Category>,
     pub queues: Vec<Queue>,
     pub jobs: HashMap<String, Job>,
+    /// Per-job opt-in social-session cookies kept only in memory, never in items or the database.
+    pub ephemeral_cookies: HashMap<String, String>,
     pub captures: HashMap<String, capture::PendingCapture>,
     pub batches: HashMap<String, BatchInfo>,
     pub videos: HashMap<String, VideoCapture>,
-    /// Recent yt-dlp probes by page URL (the in-page menu probes, then picks a format).
+    /// Recent yt-dlp probes by page URL and a hash of the request context (cookies are not stored in the key).
     pub video_probes: HashMap<String, (std::time::Instant, serde_json::Value)>,
     pub grabbers: HashMap<String, crate::grabber::CancelFlag>,
     pub speed_history: HashMap<String, VecDeque<u64>>,
@@ -204,6 +236,7 @@ impl Core {
             categories,
             queues,
             jobs: HashMap::new(),
+            ephemeral_cookies: HashMap::new(),
             captures: HashMap::new(),
             batches: HashMap::new(),
             videos: HashMap::new(),
@@ -347,6 +380,70 @@ impl Core {
         }
     }
 
+    /// Find completed download records whose files duplicate an older file on disk.
+    pub async fn find_duplicate_items(&self) -> Result<Vec<String>> {
+        let mut candidates: Vec<_> = self
+            .0
+            .state
+            .lock()
+            .items
+            .values()
+            .filter(|item| {
+                item.status == Status::Completed
+                    && !item.trashed
+                    && item
+                        .media
+                        .as_ref()
+                        .is_none_or(|media| media.duplicate_of.is_none())
+            })
+            .map(|item| (item.added_at, item.id.clone(), item.path()))
+            .collect();
+        candidates.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
+
+        tokio::task::spawn_blocking(move || {
+            let mut by_size: HashMap<u64, Vec<(String, PathBuf)>> = HashMap::new();
+            for (_, id, path) in candidates {
+                let Ok(path) = std::fs::canonicalize(path) else {
+                    continue;
+                };
+                let Ok(metadata) = std::fs::metadata(&path) else {
+                    continue;
+                };
+                if metadata.is_file() {
+                    by_size.entry(metadata.len()).or_default().push((id, path));
+                }
+            }
+
+            let mut duplicates = Vec::new();
+            for files in by_size.into_values().filter(|files| files.len() > 1) {
+                let mut by_prefix = HashMap::<[u8; 32], Vec<(String, PathBuf)>>::new();
+                for (id, path) in files {
+                    if let Ok(prefix) = file_prefix_hash(&path) {
+                        by_prefix.entry(prefix).or_default().push((id, path));
+                    }
+                }
+                for files in by_prefix.into_values().filter(|files| files.len() > 1) {
+                    let mut seen_paths = HashSet::new();
+                    let mut seen_hashes = HashSet::new();
+                    for (id, path) in files {
+                        if !seen_paths.insert(path.clone()) {
+                            continue;
+                        }
+                        let Ok(hash) = prism_video::tools::sha256_file(&path) else {
+                            continue;
+                        };
+                        if !seen_hashes.insert(hash) {
+                            duplicates.push(id);
+                        }
+                    }
+                }
+            }
+            duplicates
+        })
+        .await
+        .context("join duplicate file scan")
+    }
+
     pub fn settings(&self) -> Settings {
         self.0.state.lock().settings.clone()
     }
@@ -358,6 +455,65 @@ impl Core {
 
     pub fn item(&self, id: &str) -> Option<DownloadItem> {
         self.0.state.lock().items.get(id).cloned()
+    }
+
+    /// Read and persist a completed video's duration when older records don't have metadata.
+    pub async fn video_file_duration(&self, id: &str) -> Result<Option<f64>> {
+        let Some(item) = self.item(id) else {
+            return Ok(None);
+        };
+        if item.kind != ItemKind::Video
+            || item.status != Status::Completed
+            || !item.path().is_file()
+        {
+            return Ok(None);
+        }
+        if let Some(duration) = item
+            .media
+            .as_ref()
+            .and_then(|m| m.duration)
+            .filter(|d| *d > 0.0)
+        {
+            return Ok(Some(duration));
+        }
+        let Some(ffprobe) = self.0.video.tool_status().await.ffprobe.path else {
+            return Ok(None);
+        };
+        let mut command = tokio::process::Command::new(ffprobe);
+        command.kill_on_drop(true);
+        #[cfg(windows)]
+        command.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        let output = tokio::time::timeout(
+            Duration::from_secs(10),
+            command
+                .args([
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                ])
+                .arg(item.path())
+                .output(),
+        )
+        .await
+        .context("ffprobe timed out")??;
+        if !output.status.success() {
+            return Ok(None);
+        }
+        let duration = std::str::from_utf8(&output.stdout)
+            .ok()
+            .and_then(|s| s.trim().parse::<f64>().ok())
+            .filter(|d| d.is_finite() && *d > 0.0);
+        if let Some(duration) = duration {
+            self.with_item(id, |item| {
+                if let Some(media) = item.media.as_mut() {
+                    media.duration.get_or_insert(duration);
+                }
+            });
+        }
+        Ok(duration)
     }
 
     // ----- settings -----------------------------------------------------------------------
@@ -460,6 +616,16 @@ impl Core {
             return Err(anyhow!("Pause the download before renaming or moving it"));
         }
         let current = self.item(id).ok_or_else(|| anyhow!("unknown item"))?;
+        if current
+            .media
+            .as_ref()
+            .is_some_and(|media| media.duplicate_of.is_some())
+            && (patch.file_name.is_some() || patch.save_dir.is_some())
+        {
+            return Err(anyhow!(
+                "This file belongs to another download; edit the original item instead"
+            ));
+        }
         // Moving/renaming a finished file moves it on disk too.
         if current.status == Status::Completed
             && (patch.file_name.is_some() || patch.save_dir.is_some())
@@ -549,6 +715,7 @@ impl Core {
                     i.status = Status::Failed;
                     i.error = Some(format!("{e:#}"));
                 });
+                self.0.state.lock().ephemeral_cookies.remove(id);
             }
         }
     }
@@ -559,10 +726,15 @@ impl Core {
             if st.jobs.contains_key(id) {
                 return Ok(());
             }
-            st.items
+            let mut item = st
+                .items
                 .get(id)
                 .cloned()
-                .ok_or_else(|| anyhow!("unknown item"))?
+                .ok_or_else(|| anyhow!("unknown item"))?;
+            if let Some(cookie) = st.ephemeral_cookies.get(id) {
+                attach_ephemeral_cookie(&mut item, cookie);
+            }
+            item
         };
         if item.trashed || item.status == Status::Completed {
             return Ok(());
@@ -571,6 +743,9 @@ impl Core {
             i.status = Status::Connecting;
             i.error = None;
             i.last_try_at = Some(now_ms());
+            if let Some(media) = &mut i.media {
+                media.duplicate_of = None;
+            }
         });
         let job = jobs::spawn(self, &item)?;
         self.0.state.lock().jobs.insert(id.to_string(), job);
@@ -717,7 +892,10 @@ impl Core {
                     }
                 });
             } else {
-                self.0.state.lock().items.remove(id);
+                let mut st = self.0.state.lock();
+                st.items.remove(id);
+                st.ephemeral_cookies.remove(id);
+                drop(st);
                 self.0.db.delete_download(id)?;
                 removed.push(id.clone());
             }
@@ -907,8 +1085,102 @@ impl Core {
         }
     }
 
+    async fn deduplicate_post_file(&self, id: &str, path: &Path, size: u64) -> Option<PathBuf> {
+        let item = self.item(id)?;
+        let media = item.media.as_ref()?;
+        if media.playlist_index.is_none()
+            || !media
+                .page_url
+                .as_deref()
+                .is_some_and(prism_video::probe::is_single_post_media_url)
+        {
+            return None;
+        }
+        let grouped = media.download_group.is_some();
+        let candidates: Vec<_> = self
+            .0
+            .state
+            .lock()
+            .items
+            .values()
+            .filter(|other| {
+                other.id != id
+                    && !other.trashed
+                    && other.status == Status::Completed
+                    && other.size == Some(size)
+                    && other
+                        .media
+                        .as_ref()
+                        .is_none_or(|media| media.duplicate_of.is_none())
+            })
+            .map(|other| (other.id.clone(), other.path()))
+            .collect();
+        if candidates.is_empty() {
+            return None;
+        }
+        let downloaded = path.to_path_buf();
+        let checked =
+            tokio::task::spawn_blocking(move || -> std::io::Result<Option<(String, PathBuf)>> {
+                let prefix = file_prefix_hash(&downloaded)?;
+                let mut digest = None;
+                let canonical = downloaded.canonicalize()?;
+                for (existing_id, existing) in candidates {
+                    if !existing
+                        .metadata()
+                        .is_ok_and(|metadata| metadata.is_file() && metadata.len() == size)
+                        || existing.canonicalize().is_ok_and(|path| path == canonical)
+                        || file_prefix_hash(&existing).is_ok_and(|value| value != prefix)
+                    {
+                        continue;
+                    }
+                    let digest = match &digest {
+                        Some(digest) => digest,
+                        None => digest.insert(prism_video::tools::sha256_file(&downloaded)?),
+                    };
+                    if prism_video::tools::sha256_file(&existing).is_ok_and(|hash| hash == *digest)
+                    {
+                        std::fs::remove_file(&downloaded)?;
+                        if grouped {
+                            // Only remove an empty folder created for this batch; never its contents.
+                            if let Some(folder) = downloaded.parent() {
+                                let _ = std::fs::remove_dir(folder);
+                            }
+                        }
+                        return Ok(Some((existing_id, existing)));
+                    }
+                }
+                Ok(None)
+            })
+            .await;
+        match checked {
+            Ok(Ok(Some((existing_id, existing)))) => {
+                self.with_item(id, |item| {
+                    item.save_dir = existing.parent().unwrap_or(Path::new("")).to_path_buf();
+                    item.file_name = existing
+                        .file_name()
+                        .unwrap_or_default()
+                        .to_string_lossy()
+                        .into_owned();
+                    if let Some(media) = &mut item.media {
+                        media.duplicate_of = Some(existing_id);
+                    }
+                });
+                Some(existing)
+            }
+            Ok(Ok(None)) => None,
+            error => {
+                tracing::warn!(
+                    ?error,
+                    "duplicate check could not finish; keeping the new file"
+                );
+                None
+            }
+        }
+    }
+
     async fn handle_outcome(&self, outcome: JobOutcome) {
         let id = outcome.id.clone();
+        let remove_ephemeral_cookie = !matches!(&outcome.result, jobs::JobResult::Paused { .. });
         self.0.state.lock().jobs.remove(&id);
         platform_keep_awake(self);
         match outcome.result {
@@ -934,6 +1206,9 @@ impl Core {
                     }
                     _ => None,
                 };
+                if error.is_none() {
+                    self.deduplicate_post_file(&id, &path, size).await;
+                }
                 let item = self.with_item(&id, |i| {
                     i.finished_at = Some(now_ms());
                     if let Some(e) = &error {
@@ -942,8 +1217,6 @@ impl Core {
                     } else {
                         i.status = Status::Completed;
                         i.error = None;
-                        // Browser cookies and passwords were only needed to fetch the file.
-                        forget_credentials(i);
                         #[cfg(unix)]
                         if i.kind == ItemKind::Video {
                             // Tools can leave the output executable; a video never should be.
@@ -954,17 +1227,61 @@ impl Core {
                             );
                         }
                     }
+                    forget_credentials(i);
                     i.clone()
                 });
                 if let Some(item) = item {
                     let s = self.settings();
                     if item.status == Status::Completed {
-                        if s.sounds.enabled && s.sounds.on_complete {
-                            self.emit(CoreEvent::PlaySound {
-                                kind: "complete".into(),
-                            });
+                        let group = item.media.as_ref().and_then(|m| m.download_group.as_ref());
+                        let ready = group.is_none_or(|group| {
+                            self.0
+                                .state
+                                .lock()
+                                .items
+                                .values()
+                                .filter(|other| {
+                                    !other.trashed
+                                        && other
+                                            .media
+                                            .as_ref()
+                                            .and_then(|m| m.download_group.as_ref())
+                                            == Some(group)
+                                })
+                                .all(|other| other.status == Status::Completed)
+                        });
+                        if ready {
+                            let item = if let Some(group) = group {
+                                self.0
+                                    .state
+                                    .lock()
+                                    .items
+                                    .values()
+                                    .find(|other| {
+                                        !other.trashed
+                                            && other.media.as_ref().is_some_and(|media| {
+                                                media.download_group.as_ref() == Some(group)
+                                                    && media.duplicate_of.is_none()
+                                            })
+                                    })
+                                    .cloned()
+                                    .unwrap_or(item)
+                            } else {
+                                item
+                            };
+                            if s.sounds.enabled
+                                && s.sounds.on_complete
+                                && item
+                                    .media
+                                    .as_ref()
+                                    .is_none_or(|media| media.duplicate_of.is_none())
+                            {
+                                self.emit(CoreEvent::PlaySound {
+                                    kind: "complete".into(),
+                                });
+                            }
+                            self.emit(CoreEvent::Completed(item));
                         }
-                        self.emit(CoreEvent::Completed(item));
                     } else {
                         self.emit(CoreEvent::Failed(item));
                     }
@@ -980,7 +1297,9 @@ impl Core {
                     }
                 });
             }
-            jobs::JobResult::Cancelled => {}
+            jobs::JobResult::Cancelled => {
+                self.with_item(&id, forget_credentials);
+            }
             jobs::JobResult::Failed {
                 error,
                 resume,
@@ -995,6 +1314,7 @@ impl Core {
                     if let Some(r) = resumable {
                         i.resumable = Some(r);
                     }
+                    forget_credentials(i);
                     i.clone()
                 });
                 if let Some(item) = item {
@@ -1007,6 +1327,9 @@ impl Core {
                     self.emit(CoreEvent::Failed(item));
                 }
             }
+        }
+        if remove_ephemeral_cookie {
+            self.0.state.lock().ephemeral_cookies.remove(&id);
         }
         // Persist immediately: completion/failure must survive a crash right after.
         let item = self.item(&id);
@@ -1277,6 +1600,14 @@ fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
 }
 
 fn remove_item_files(item: &DownloadItem) {
+    // A skipped duplicate references the original file; it does not own that file.
+    if item
+        .media
+        .as_ref()
+        .is_some_and(|media| media.duplicate_of.is_some())
+    {
+        return;
+    }
     let _ = std::fs::remove_file(item.path());
     remove_partial_files(item);
 }
@@ -1317,6 +1648,15 @@ fn forget_credentials(item: &mut DownloadItem) {
     }
 }
 
+fn attach_ephemeral_cookie(item: &mut DownloadItem, cookie: &str) {
+    if let Some(request) = item.request.as_mut().and_then(|v| v.as_object_mut()) {
+        request.insert(
+            "cookies".into(),
+            serde_json::Value::String(cookie.to_owned()),
+        );
+    }
+}
+
 /// Where the engine keeps the in-progress file (may differ from the item's current name).
 fn resume_part_path(item: &DownloadItem) -> Option<PathBuf> {
     let r = item.resume.as_ref()?;
@@ -1349,5 +1689,41 @@ fn remove_partial_files(item: &DownloadItem) {
     let _ = std::fs::remove_dir_all(PathBuf::from(side));
     if item.kind == ItemKind::Video {
         let _ = std::fs::remove_dir_all(jobs::video_temp_dir(item));
+    }
+}
+
+#[cfg(test)]
+mod ephemeral_cookie_tests {
+    use super::{attach_ephemeral_cookie, forget_credentials};
+    use crate::model::DownloadItem;
+
+    #[test]
+    fn opt_in_cookie_is_added_only_to_the_engine_clone_and_scrubbed_at_end() {
+        let item = DownloadItem {
+            request: Some(serde_json::json!({"url":"https://cdn.example/file.jpg"})),
+            ..Default::default()
+        };
+        let mut engine_item = item.clone();
+        attach_ephemeral_cookie(&mut engine_item, "session=secret");
+        assert_eq!(
+            engine_item
+                .request
+                .as_ref()
+                .and_then(|r| r["cookies"].as_str()),
+            Some("session=secret")
+        );
+        assert!(
+            item.request
+                .as_ref()
+                .is_some_and(|r| r.get("cookies").is_none())
+        );
+
+        forget_credentials(&mut engine_item);
+        assert!(
+            engine_item
+                .request
+                .as_ref()
+                .is_some_and(|r| r.get("cookies").is_none())
+        );
     }
 }

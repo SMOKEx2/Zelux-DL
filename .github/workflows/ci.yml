@@ -29,7 +29,7 @@ jobs:
         with:
           persist-credentials: false
       - name: Validate updater manifest generation
-        run: python -m unittest tests.test_make_latest_json -v
+        run: python -m unittest discover -s tests -v
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
@@ -46,7 +46,7 @@ jobs:
         with:
           node-version: 24
       - name: Rust tests (engine, core, video, torrent, native host)
-        run: cargo test --workspace --exclude prism-app
+        run: cargo test --workspace --exclude zeluxdl-app
       - name: Frontend deps
         run: |
           npm ci --prefix app

@@ -101,7 +101,7 @@ pub fn probe_args(url: &str, ctx: &RequestContext) -> Vec<String> {
         "-J".into(),
         "--no-warnings".into(),
         "--flat-playlist".into(),
-        if ctx.want_playlist {
+        if ctx.want_playlist || is_single_post_media_url(url) {
             "--yes-playlist".into()
         } else {
             "--no-playlist".into()
@@ -109,6 +109,57 @@ pub fn probe_args(url: &str, ctx: &RequestContext) -> Vec<String> {
         "--".into(),
         url.into(),
     ]
+}
+
+/// Social post URLs may contain several images/videos; treat their media as a playlist even
+/// when a caller's generic video context would normally ask yt-dlp for one item only.
+pub fn is_single_post_media_url(raw: &str) -> bool {
+    let Ok(url) = url::Url::parse(raw) else {
+        return false;
+    };
+    let host = url
+        .host_str()
+        .unwrap_or_default()
+        .trim_start_matches("www.")
+        .trim_start_matches("m.");
+    let parts: Vec<_> = url.path_segments().into_iter().flatten().collect();
+    let site = |domain: &str| host == domain || host.ends_with(&format!(".{domain}"));
+    if site("instagram.com") {
+        return parts.len() >= 2 && matches!(parts[0], "p" | "reel" | "reels" | "tv");
+    }
+    if site("tiktok.com") {
+        return parts.len() >= 3
+            && parts[0].starts_with('@')
+            && matches!(parts[1], "photo" | "video")
+            && !parts[2].is_empty()
+            && parts[2].chars().all(|c| c.is_ascii_digit());
+    }
+    if site("facebook.com") || host == "fb.watch" {
+        if parts.len() >= 3 && matches!(parts[1], "posts" | "videos") && !parts[2].is_empty() {
+            return true;
+        }
+        if parts.len() >= 3 && parts[0] == "share" && matches!(parts[1], "p" | "v") {
+            return !parts[2].is_empty();
+        }
+        if parts.len() >= 2
+            && matches!(
+                parts[0],
+                "reel" | "reels" | "posts" | "videos" | "permalink"
+            )
+        {
+            return !parts[1].is_empty();
+        }
+        return (parts.first() == Some(&"watch")
+            && url.query_pairs().any(|(k, v)| k == "v" && !v.is_empty()))
+            || (url.path() == "/photo.php"
+                && url.query_pairs().any(|(k, v)| k == "fbid" && !v.is_empty()));
+    }
+    if site("x.com") || site("twitter.com") {
+        return parts.len() >= 3
+            && parts[1] == "status"
+            && parts[2].chars().all(|c| c.is_ascii_digit());
+    }
+    false
 }
 
 /// Build a Netscape cookies.txt for the page's site from a `Cookie` header value.
@@ -361,6 +412,59 @@ pub(crate) async fn run_job(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exact_social_posts_probe_their_carousel_entries() {
+        for url in [
+            "https://www.facebook.com/share/p/1G6LZUuqHy/",
+            "https://www.instagram.com/p/DerwTyBnT0l/",
+            "https://www.tiktok.com/@vexaro.4k/photo/7695439146944400660",
+            "https://x.com/Elliza_19/status/2057092275717427617",
+        ] {
+            let args = probe_args(url, &RequestContext::default());
+            assert!(
+                args.iter().any(|arg| arg == "--yes-playlist"),
+                "{url}: {args:?}"
+            );
+            assert!(
+                !args.iter().any(|arg| arg == "--no-playlist"),
+                "{url}: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn only_exact_social_posts_enable_media_playlist_mode() {
+        for url in [
+            "https://www.facebook.com/Anon.AstroFoto/posts/pfbid02cPvGUB5S8tFABxUgDrx3XscTZCiwQzRVo55jvy79LfsPZgbUaeFTiWtdqaHZy24fl",
+            "https://www.facebook.com/creator/videos/123456/",
+            "https://www.facebook.com/share/p/1G6LZUuqHy/",
+            "https://www.instagram.com/p/DerwTyBnT0l/",
+            "https://www.tiktok.com/@vexaro.4k/photo/7695439146944400660",
+            "https://x.com/Elliza_19/status/2057092275717427617",
+        ] {
+            assert!(is_single_post_media_url(url), "{url}");
+        }
+        for url in [
+            "https://www.instagram.com/explore/",
+            "https://www.facebook.com/Anon.AstroFoto/posts/",
+            "https://www.facebook.com/creator/videos/",
+            "https://www.tiktok.com/search?q=wallpaper",
+            "https://www.facebook.com/",
+            "https://x.com/home",
+        ] {
+            assert!(!is_single_post_media_url(url), "{url}");
+        }
+    }
+
+    #[test]
+    fn ordinary_video_pages_keep_single_video_probe_behavior() {
+        let args = probe_args(
+            "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+            &RequestContext::default(),
+        );
+        assert!(args.iter().any(|arg| arg == "--no-playlist"));
+    }
 
     #[test]
     fn linkedin_posts_are_read_without_the_session() {

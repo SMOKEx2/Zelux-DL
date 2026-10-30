@@ -68,7 +68,12 @@ pub fn resolve_data_dir(
                     return Some(PathBuf::from(x).join("zeluxdl"));
                 }
             }
-            non_empty(home).map(|h| PathBuf::from(h).join(".local").join("share").join("zeluxdl"))
+            non_empty(home).map(|h| {
+                PathBuf::from(h)
+                    .join(".local")
+                    .join("share")
+                    .join("zeluxdl")
+            })
         }
     }
 }
@@ -184,7 +189,10 @@ mod tests {
     #[cfg(windows)]
     fn host_launches_the_zeluxdl_executable_next_to_it() {
         let host = Path::new(r"C:\ZeluxDL\zeluxdl-native-host.exe");
-        assert_eq!(resolve_app_executable(None, None, host), PathBuf::from(r"C:\ZeluxDL\ZeluxDL.exe"));
+        assert_eq!(
+            resolve_app_executable(None, None, host),
+            PathBuf::from(r"C:\ZeluxDL\ZeluxDL.exe")
+        );
     }
 
     fn os(s: &str) -> Option<OsString> {
@@ -272,7 +280,9 @@ mod tests {
         let d = resolve_data_dir("macos", None, None, os("/Users/u"), None);
         assert_eq!(
             d,
-            Some(PathBuf::from("/Users/u/Library/Application Support/ZeluxDL"))
+            Some(PathBuf::from(
+                "/Users/u/Library/Application Support/ZeluxDL"
+            ))
         );
     }
 

@@ -8,6 +8,7 @@ import { formatBytes, formatClock, hostOf } from "../lib/format";
 import { t, tk } from "../lib/i18n";
 import { useApp } from "../lib/store";
 import { displayName } from "../lib/present";
+import { initialMediaSelection, isSinglePostMediaUrl } from "../lib/socialPost";
 import type { SniffedStream, StartMode, VideoCapture } from "../lib/types";
 import { attempt, toast } from "../lib/ui";
 import { pickFolder, win } from "../lib/win";
@@ -67,6 +68,7 @@ export default function VideoWindow({ id }: { id: string }) {
   const [dir, setDir] = useState("");
   const [oneByOne, setOneByOne] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [usePostSession, setUsePostSession] = useState(false);
   // The container set in Settings › Video & streams (MP4, MKV or WebM).
   const container = (["mp4", "mkv", "webm"] as const).find((c) => c === settings?.video.container) ?? "mp4";
   const containerName = container === "webm" ? "WebM" : container.toUpperCase();
@@ -77,7 +79,8 @@ export default function VideoWindow({ id }: { id: string }) {
       if (!c) return setError(t("This video request is no longer available."));
       setCap(c);
       try {
-        const p = await api.probeVideo(c.pageUrl);
+        const post = isSinglePostMediaUrl(c.pageUrl);
+        const p = await api.probeVideo(c.pageUrl, post && !usePostSession ? undefined : c.cookies, c.userAgent);
         setProbe(p);
         if (p.kind === "video") {
           const pref = settings?.video.preferredHeight ?? 1080;
@@ -85,13 +88,13 @@ export default function VideoWindow({ id }: { id: string }) {
           setChoice((c.preselected && p.choices.some((x) => x.id === c.preselected) ? c.preselected : pick?.id) ?? "");
         } else {
           setChoice("v1080");
-          setEntries(new Set(p.entries.map((e) => e.url)));
+          setEntries(initialMediaSelection(p.entries.map((e) => e.url), isSinglePostMediaUrl(c.pageUrl)));
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
       }
     })();
-  }, [id, settings?.video.preferredHeight]);
+  }, [id, settings?.video.preferredHeight, usePostSession]);
 
   const choices = probe?.kind === "video" ? probe.choices : PLAYLIST_CHOICES;
   const { video, mp3 } = useMemo(() => splitChoices(choices), [choices]);
@@ -100,10 +103,25 @@ export default function VideoWindow({ id }: { id: string }) {
   const named = (probe?.kind === "video" ? probe.title : probe?.kind === "playlist" ? probe.title : null) ?? cap?.title;
   // The English fallback goes to the core; only the shown one is translated.
   const title = named ?? "Video";
+  const postMedia = isSinglePostMediaUrl(cap?.pageUrl ?? "");
 
   const confirm = async (mode: StartMode) => {
     if (!cap || !picked) return;
     setBusy(true);
+    if (postMedia && probe?.kind === "playlist") {
+      const selected = probe.entries.flatMap((entry, i) =>
+        entries.has(entry.url)
+          ? [{ url: entry.url, extension: entry.extension ?? "", httpHeaders: entry.httpHeaders ?? {}, index: i + 1 }]
+          : [],
+      );
+      const count = await attempt(
+        api.addPostMedia({ pageUrl: cap.pageUrl, media: selected, cookies: usePostSession ? cap.cookies ?? undefined : undefined, userAgent: cap.userAgent ?? undefined, saveDir: dir || undefined, mode }),
+        t("Could not add the video"),
+      );
+      setBusy(false);
+      if (count !== undefined) void win.close();
+      return;
+    }
     const info = probe?.kind === "video" ? probe : null;
     const n = await attempt(
       api.confirmVideo({
@@ -124,6 +142,7 @@ export default function VideoWindow({ id }: { id: string }) {
         title,
         thumbnail: info?.thumbnail ?? undefined,
         duration: info?.duration ?? undefined,
+        context: cap.cookies || cap.userAgent ? { cookies: cap.cookies ?? "", userAgent: cap.userAgent ?? "", referer: cap.pageUrl } : undefined,
         entries:
           probe?.kind === "playlist"
             ? probe.entries.flatMap((e, i) => (entries.has(e.url) ? [{ url: e.url, title: e.title ?? null, index: i + 1 }] : []))
@@ -136,6 +155,7 @@ export default function VideoWindow({ id }: { id: string }) {
     setBusy(false);
     if (n !== undefined) void win.close();
   };
+  const canConfirm = !!picked && !busy && (probe?.kind !== "playlist" || entries.size > 0);
   const cancel = () => {
     if (cap) void api.cancelVideo(cap.id);
     void win.close();
@@ -155,7 +175,9 @@ export default function VideoWindow({ id }: { id: string }) {
               {probe?.kind === "video"
                 ? [probe.uploader ?? probe.channel, probe.isLive ? t("Live") : null, hostOf(cap?.pageUrl)].filter(Boolean).join(" · ")
                 : probe?.kind === "playlist"
-                  ? t("Playlist · {count} videos", { count: probe.entries.length })
+                  ? isSinglePostMediaUrl(cap?.pageUrl ?? "")
+                    ? t("Post media · {count} items", { count: probe.entries.length })
+                    : t("Playlist · {count} videos", { count: probe.entries.length })
                   : hostOf(cap?.pageUrl)}
             </small>
           </div>
@@ -177,7 +199,15 @@ export default function VideoWindow({ id }: { id: string }) {
         )}
 
         {probe?.kind === "playlist" && <Playlist entries={probe.entries} checked={entries} onChange={setEntries} />}
-        {probe?.kind === "playlist" && (
+        {postMedia && (
+          <div className="vopt">
+            <Checkbox checked={usePostSession} onChange={setUsePostSession}>
+              {t("Use my browser session for this post")}
+            </Checkbox>
+            <small className="text-tertiary">{t("Only sent to this PC for this post; removed when its download ends.")}</small>
+          </div>
+        )}
+        {probe?.kind === "playlist" && !postMedia && (
           <div className="vopt vopt--plist">
             <Checkbox checked={oneByOne} onChange={setOneByOne}>
               {t("One at a time")} <span className="text-tertiary">— {t("each video starts when the one before it is done")}</span>
@@ -185,7 +215,7 @@ export default function VideoWindow({ id }: { id: string }) {
           </div>
         )}
 
-        {probe && (
+        {probe && !postMedia && (
           <div className="vformat">
             <Segmented<Format>
               label={t("Format")}
@@ -199,7 +229,7 @@ export default function VideoWindow({ id }: { id: string }) {
           </div>
         )}
 
-        {probe && format === "mp4" && (
+        {probe && !postMedia && format === "mp4" && (
           <div className="choices" role="radiogroup" aria-label={t("Quality")}>
             <div className="qsec">{probe.kind === "playlist" ? t("Quality for every video") : t("Quality")}</div>
             {video.map((c) => (
@@ -207,7 +237,7 @@ export default function VideoWindow({ id }: { id: string }) {
             ))}
           </div>
         )}
-        {probe && format === "mp3" && mp3 && (
+        {probe && !postMedia && format === "mp3" && mp3 && (
           <div className="choices" role="radiogroup" aria-label={t("Audio")}>
             <div className="qsec">{t("Audio only")}</div>
             <ChoiceRow c={{ ...mp3, label: "MP3", subLabel: `320 kbps${mp3.estSize ? ` · ~${formatBytes(mp3.estSize)}` : ""}` }} on onPick={() => undefined} />
@@ -233,7 +263,7 @@ export default function VideoWindow({ id }: { id: string }) {
           </div>
         )}
 
-        {probe && more && (
+        {probe && !postMedia && more && (
           <div className="vopts">
             <div className="vopt">
               <span>
@@ -285,25 +315,27 @@ export default function VideoWindow({ id }: { id: string }) {
         </button>
         <span className="spacer" />
         <div className="split">
-          <button type="button" className="btn" disabled={!picked || busy} onClick={() => confirm({ type: "later" })}>
+          <button type="button" className="btn" disabled={!canConfirm} onClick={() => confirm({ type: "later" })}>
             {t("Later")}
           </button>
           <button
             type="button"
             className="btn"
             aria-label={t("Add to queue")}
-            disabled={!picked || busy}
+            disabled={!canConfirm}
             onClick={(e) => openMenuAt(e.currentTarget, [{ heading: t("Add to queue") }, ...useApp.getState().queues.map((q) => ({ label: displayName(q.name), icon: "queue" as const, onSelect: () => void confirm({ type: "queue", queueId: q.id }) }))])}
           >
             <Icon name="chevron-down" size={13} strokeWidth={2.2} />
           </button>
         </div>
-        <button type="button" className="btn btn--primary" disabled={!picked || busy || (probe?.kind === "playlist" && !entries.size)} onClick={() => confirm({ type: "now" })}>
+        <button type="button" className="btn btn--primary" disabled={!canConfirm} onClick={() => confirm({ type: "now" })}>
           <Icon name="download" size={15} />
           {probe?.kind === "playlist"
             ? format === "mp3"
               ? t("Download {number} as MP3", { number: entries.size })
-              : t("Download {count} videos", { count: entries.size })
+              : isSinglePostMediaUrl(cap?.pageUrl ?? "")
+                ? t("Download {count} selected items", { count: entries.size })
+                : t("Download {count} videos", { count: entries.size })
             : format === "mp3"
               ? t("Download MP3")
               : picked

@@ -21,6 +21,8 @@ export function useViewTitle(): string {
   return useApp((s) => {
     const v = s.view;
     switch (v.kind) {
+      case "duplicates":
+        return t("Duplicates");
       case "all":
         return t("All downloads");
       case "trash":

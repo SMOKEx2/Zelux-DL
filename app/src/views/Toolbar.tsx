@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { IconButton } from "../components/IconButton";
+import { openMenuAt } from "../components/MenuHost";
 import { Icon } from "../design/icons";
 import { actions } from "../lib/actions";
 import { api } from "../lib/api";
@@ -24,6 +25,17 @@ export function Toolbar() {
   const queue = queues.find((q) => q.id === (view.kind === "queue" ? view.id : "main")) ?? queues[0];
   const anyResumable = sel.some((i) => canResume(i.status) || i.status === "queued");
   const anyPausable = sel.some((i) => canPause(i.status));
+  const openMore = (e: React.MouseEvent<HTMLButtonElement>) => openMenuAt(e.currentTarget, [
+    { label: t("Stop all"), icon: "stop-all", onSelect: actions.pauseAll },
+    { label: t("Remove completed from the list"), icon: "delete-completed", disabled: !hasFinished, onSelect: () => void attempt(api.removeCompleted(), t("Could not remove completed downloads")) },
+    { separator: true },
+    { label: queue ? t("Stop {name}", { name: displayName(queue.name) }) : t("Stop queue"), icon: "stop-queue", disabled: !queue || !queue.running, onSelect: () => queue && void attempt(api.stopQueue(queue.id)) },
+    { label: t("Site grabber"), icon: "grabber", onSelect: () => ui().openSheet({ kind: "grabber" }) },
+    { label: t("Batch download"), icon: "batch", onSelect: () => ui().openDialog({ kind: "batch" }) },
+    { label: t("Download a model from Hugging Face"), icon: "model", onSelect: () => void attempt(api.openWindow("model")) },
+    { label: limiter ? t("Speed limiter on · {limit}", { limit: `${formatBytes(limit)}/s` }) : t("Speed limiter off"), icon: "speed-limiter", checked: limiter, onSelect: () => void actions.toggleLimiter() },
+    { label: t("Mini window"), icon: "mini-mode", onSelect: actions.toggleMini },
+  ]);
 
   return (
     <header className="toolbar" data-tauri-drag-region role="toolbar" aria-label={t("Download actions")}>
@@ -33,26 +45,28 @@ export function Toolbar() {
       </button>
       <IconButton icon="resume" label={t("Resume")} kbd="Space" disabled={!anyResumable} onClick={() => actions.resume(selection)} />
       <IconButton icon="pause" label={t("Pause")} kbd="Space" disabled={!anyPausable} onClick={() => actions.pause(selection)} />
-      <IconButton icon="stop-all" label={t("Stop all")} onClick={actions.pauseAll} />
+      <IconButton className="toolbar__secondary" icon="stop-all" label={t("Stop all")} onClick={actions.pauseAll} />
       <span className="tb-sep" />
       <IconButton icon="delete" label={t("Delete")} kbd="Del" disabled={!selection.length} onClick={() => actions.requestDelete(selection)} />
-      <IconButton icon="delete-completed" label={t("Remove completed from the list")} disabled={!hasFinished} onClick={() => void attempt(api.removeCompleted(), t("Could not remove completed downloads"))} />
+      <IconButton className="toolbar__secondary" icon="delete-completed" label={t("Remove completed from the list")} disabled={!hasFinished} onClick={() => void attempt(api.removeCompleted(), t("Could not remove completed downloads"))} />
       <span className="tb-sep" />
       <IconButton icon="start-queue" label={queue ? t("Start {name}", { name: displayName(queue.name) }) : t("Start queue")} disabled={!queue || queue.running} onClick={() => queue && void attempt(api.startQueue(queue.id))} />
-      <IconButton icon="stop-queue" label={queue ? t("Stop {name}", { name: displayName(queue.name) }) : t("Stop queue")} disabled={!queue || !queue.running} onClick={() => queue && void attempt(api.stopQueue(queue.id))} />
+      <IconButton className="toolbar__secondary" icon="stop-queue" label={queue ? t("Stop {name}", { name: displayName(queue.name) }) : t("Stop queue")} disabled={!queue || !queue.running} onClick={() => queue && void attempt(api.stopQueue(queue.id))} />
       <IconButton icon="scheduler" label={t("Scheduler")} onClick={() => ui().openSheet({ kind: "scheduler", queueId: queue?.id })} />
       <span className="tb-sep" />
-      <IconButton icon="grabber" label={t("Site grabber")} onClick={() => ui().openSheet({ kind: "grabber" })} />
-      <IconButton icon="batch" label={t("Batch download")} onClick={() => ui().openDialog({ kind: "batch" })} />
-      <IconButton icon="model" label={t("Download a model from Hugging Face")} onClick={() => void attempt(api.openWindow("model"))} />
+      <IconButton className="toolbar__secondary" icon="grabber" label={t("Site grabber")} onClick={() => ui().openSheet({ kind: "grabber" })} />
+      <IconButton className="toolbar__secondary" icon="batch" label={t("Batch download")} onClick={() => ui().openDialog({ kind: "batch" })} />
+      <IconButton className="toolbar__secondary" icon="model" label={t("Download a model from Hugging Face")} onClick={() => void attempt(api.openWindow("model"))} />
       <IconButton
+        className="toolbar__secondary"
         icon="speed-limiter"
         label={limiter ? t("Speed limiter on · {limit}", { limit: `${formatBytes(limit)}/s` }) : t("Speed limiter off")}
         kbd="Ctrl L"
         pressed={limiter}
         onClick={() => void actions.toggleLimiter()}
       />
-      <IconButton icon="mini-mode" label={t("Mini window")} kbd="Ctrl Shift M" onClick={actions.toggleMini} />
+      <IconButton className="toolbar__secondary" icon="mini-mode" label={t("Mini window")} kbd="Ctrl Shift M" onClick={actions.toggleMini} />
+      <IconButton className="toolbar__overflow" icon="more" label={t("More actions")} onClick={openMore} />
       <span className="spacer" data-tauri-drag-region />
       <SearchBox />
       <IconButton icon="options" label={t("Settings")} kbd="Ctrl ," onClick={() => ui().openSheet({ kind: "settings" })} />

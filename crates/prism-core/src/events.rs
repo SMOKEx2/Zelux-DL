@@ -77,6 +77,9 @@ pub struct VideoCapture {
     pub streams: Vec<SniffedStream>,
     /// Pre-selected choice from the in-page button menu.
     pub preselected: Option<String>,
+    /// Temporary browser context for a post picker; never persisted.
+    pub cookies: Option<String>,
+    pub user_agent: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

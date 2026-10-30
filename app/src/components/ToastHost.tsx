@@ -17,7 +17,7 @@ export function ToastHost() {
             layout
             className={`toast glass-strong blur-md toast--${item.kind}`}
             role={item.kind === "error" ? "alert" : "status"}
-            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            initial={{ opacity: 0, x: 18, y: 4, scale: 0.98 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, x: 24, transition: { duration: 0.16 } }}
             transition={{ duration: 0.24, ease: [0.16, 1, 0.3, 1] }}

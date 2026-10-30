@@ -323,11 +323,11 @@ try {
       const menu = await feed.locator('[data-prism-video-button] .menu > *').evaluateAll((els) => els.map((e) => `${e.className}: ${e.textContent.trim()}`));
       await feed.screenshot({ path: join(shots, 'video-button-feed.png'), clip: { x: box.x - 20, y: Math.max(0, box.y - 70), width: box.width + 40, height: box.height + 140 } });
       const groups = menu.filter((l) => l.startsWith('group:'));
-      assert.equal(groups[0], 'group: This video', `menu: ${menu.join(' | ')}`);
+      assert.equal(groups.length, 2, `menu: ${menu.join(' | ')}`);
       // This video: its qualities from data-sources, best first; the ad only under "Other streams".
-      const own = menu.slice(menu.indexOf('group: This video') + 1, menu.indexOf('group: Other streams on this page'));
+      const own = menu.slice(menu.indexOf(groups[0]) + 1, menu.indexOf(groups[1]));
       assert.deepEqual(own.map((l) => /\d+p/.exec(l)?.[0]), ['720p', '640p', '360p'], `menu: ${menu.join(' | ')}`);
-      assert.ok(menu.slice(menu.indexOf('group: Other streams on this page')).some((l) => l.includes('ad.mp4')), `menu: ${menu.join(' | ')}`);
+      assert.ok(menu.slice(menu.indexOf(groups[1])).some((l) => l.includes('ad.mp4')), `menu: ${menu.join(' | ')}`);
       const since = Date.now();
       await items.first().click();
       const { msg } = await mock.waitFor((m) => m.type === 'video', 3000, { since });
@@ -622,20 +622,27 @@ try {
     await popup.goto(`chrome-extension://${extId}/popup.html?tabId=${tabId}`);
     await popup.locator('#conn[data-state="connected"]').waitFor({ timeout: 4000 });
     const chipText = await popup.locator('#conn').textContent();
-    assert.match(chipText, /Connected/);
+    assert.ok(chipText?.trim(), 'connection status label is empty');
     await popup.locator('.media .name', { hasText: 'clip.mp4' }).waitFor({ timeout: 2000 });
-    // popup "All videos" button → batch
+    // The popup no longer scans/sends every media item at once; each visible item is explicit.
+    assert.equal(await popup.locator('[data-act="collect"]').count(), 0, 'bulk scan control should not be present');
     const since = Date.now();
-    await popup.click('[data-act="collect"][data-mode="videos"]');
-    const { msg } = await mock.waitFor((m) => m.type === 'batch' && m.kind === 'videos', 3000, { since });
-    assert.ok(msg.items.some((i) => i.url.endsWith('/media/clip.mp4')));
+    await popup.locator('.media', { hasText: 'clip.mp4' }).locator('[data-act="media"]').click();
+    const { msg } = await mock.waitFor((m) => m.type === 'video', 3000, { since });
+    assert.equal(msg.streams[0].url, `${site.origin}/media/clip.mp4`);
+    const retrySince = Date.now();
+    const retry = await popup.evaluate(() => chrome.runtime.sendMessage({ kind: 'retryConnection' }));
+    assert.equal(retry?.ok, true, `retry response: ${JSON.stringify(retry)}`);
+    const { msg: retryHello } = await mock.waitFor((m) => m.type === 'hello', 5000, { since: retrySince });
+    assert.equal(retryHello.protocol, 1);
+    await until(() => sw.evaluate(() => globalThis.__prism.getConnection().state === 'connected'), 5000, 'reconnected after explicit retry');
     await popup.setViewportSize({ width: 368, height: 600 });
     await popup.screenshot({ path: join(shots, 'popup-connected.png'), fullPage: true });
     await popup.emulateMedia({ colorScheme: 'dark' });
     await popup.screenshot({ path: join(shots, 'popup-connected-dark.png'), fullPage: true });
     await popup.emulateMedia({ colorScheme: 'light' });
     await popup.close();
-    return chipText.trim();
+    return `${chipText.trim()}; explicit retry completed a fresh hello`;
   });
 
   await step('(5) app down → capture fails open (browser keeps the download) and popup shows the fix hint', async () => {

@@ -183,6 +183,10 @@ pub struct MediaInfo {
     pub page_url: Option<String>,
     /// 1-based position in the playlist it was picked from.
     pub playlist_index: Option<u32>,
+    /// Files selected together from one social post share a completion notice.
+    pub download_group: Option<String>,
+    /// Identical content already exists at another completed download's path.
+    pub duplicate_of: Option<String>,
 }
 
 /// Live, non-persisted progress of a running item (sent ~4×/s to the UI).

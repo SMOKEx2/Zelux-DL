@@ -8,6 +8,7 @@ import { useUi } from "../lib/ui";
 export function EmptyState() {
   const view = useApp((s) => s.view);
   const search = useApp((s) => s.search.trim());
+  const duplicateScanStatus = useApp((s) => s.duplicateScanStatus);
   const filter = useUi((s) => s.filter);
   const queueName = useApp((s) => (s.view.kind === "queue" ? s.queues.find((q) => q.id === (s.view as { id: string }).id)?.name : undefined));
 
@@ -21,6 +22,11 @@ export function EmptyState() {
     title = t("No matches for “{search}”", { search });
     text = t("Search looks at file names, addresses and descriptions.");
     cta = { label: t("Clear search"), run: () => useApp.getState().setSearch("") };
+  } else if (view.kind === "duplicates") {
+    icon = "copy";
+    title = duplicateScanStatus === "scanning" ? t("Scanning duplicates…") : duplicateScanStatus === "error" ? t("Could not scan duplicate files") : duplicateScanStatus === "idle" ? t("Scan for duplicates") : t("No duplicate files found");
+    text = t("Only completed files still present on disk are checked.");
+    cta = null;
   } else if (filter !== "all") {
     icon = "filter";
     title = t("Nothing here with this filter");

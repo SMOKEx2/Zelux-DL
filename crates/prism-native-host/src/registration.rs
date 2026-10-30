@@ -344,9 +344,7 @@ mod platform {
         match b {
             // Keep the shared Chrome key for older Brave versions as well.
             Browser::Brave => &["BraveSoftware\\Brave-Browser", "Google\\Chrome"],
-            Browser::Chrome | Browser::Vivaldi | Browser::Opera => {
-                &["Google\\Chrome"]
-            }
+            Browser::Chrome | Browser::Vivaldi | Browser::Opera => &["Google\\Chrome"],
             // Verified with Chrome for Testing 156 (Playwright's build): it reads the Chromium key.
             Browser::ChromeForTesting => &["Chromium"],
             Browser::Chromium => &["Chromium"],
@@ -866,21 +864,32 @@ mod tests {
     #[test]
     #[cfg(windows)]
     fn brave_registration_writes_its_own_registry_key() {
-        use winreg::{enums::HKEY_CURRENT_USER, RegKey};
+        use winreg::{RegKey, enums::HKEY_CURRENT_USER};
         let dir = tempfile::tempdir().unwrap();
         let host = dir.path().join(crate::HOST_BINARY_NAME);
         fs::write(&host, b"").unwrap();
         let unique = format!("Software\\ZeluxDLBraveTest{}", std::process::id());
-        let loc = Locations { manifest_dir: Some(dir.path().join("nm")), home: None, registry_root: Some(unique.clone()) };
+        let loc = Locations {
+            manifest_dir: Some(dir.path().join("nm")),
+            home: None,
+            registry_root: Some(unique.clone()),
+        };
         let mut opts = RegisterOptions::new(&host);
         opts.browsers = vec![Browser::Brave];
         opts.locations = loc.clone();
         register(&opts).unwrap();
-        let key = format!("{unique}\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\{HOST_NAME}");
-        let actual: String = RegKey::predef(HKEY_CURRENT_USER).open_subkey(&key).unwrap().get_value("").unwrap();
+        let key =
+            format!("{unique}\\BraveSoftware\\Brave-Browser\\NativeMessagingHosts\\{HOST_NAME}");
+        let actual: String = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(&key)
+            .unwrap()
+            .get_value("")
+            .unwrap();
         assert!(Path::new(&actual).is_file());
         unregister(&[Browser::Brave], &loc).unwrap();
-        RegKey::predef(HKEY_CURRENT_USER).delete_subkey_all(&unique).unwrap();
+        RegKey::predef(HKEY_CURRENT_USER)
+            .delete_subkey_all(&unique)
+            .unwrap();
     }
 
     /// Full register → status → unregister cycle against a sandboxed location

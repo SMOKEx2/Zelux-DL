@@ -1,4 +1,7 @@
 /target
+/target-dev
+/memory
+/BRAVE-EXTENSION-CONNECTION-STATUS.md
 **/node_modules
 **/dist
 **/__pycache__/

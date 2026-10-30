@@ -4,6 +4,8 @@ import type { DownloadRequest, VideoRequest } from '../shared/protocol';
 import { filenameFromUrl, isHandoffUrl } from '../shared/rules';
 import { showUnreachable } from './badge';
 import { collectAndSend } from './collect';
+import { openPostMediaPicker } from './video';
+import { isSinglePostMediaUrl } from '../shared/social-post';
 import { actionTimeout, cookieHeaderFor, userAgent } from './context';
 import { native } from './native';
 
@@ -88,10 +90,16 @@ export async function handleMenuClick(info: chrome.contextMenus.OnClickData, tab
       if (tabId !== undefined) await collectAndSend(tabId, 'links');
       break;
     case 'prism-all-images':
-      if (tabId !== undefined) await collectAndSend(tabId, 'images');
+      if (tabId !== undefined) {
+        if (isSinglePostMediaUrl(tab?.url ?? '')) await openPostMediaPicker(tabId);
+        else await collectAndSend(tabId, 'images');
+      }
       break;
     case 'prism-all-videos':
-      if (tabId !== undefined) await collectAndSend(tabId, 'videos');
+      if (tabId !== undefined) {
+        if (isSinglePostMediaUrl(tab?.url ?? '')) await openPostMediaPicker(tabId);
+        else await collectAndSend(tabId, 'videos');
+      }
       break;
   }
 }

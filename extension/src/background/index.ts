@@ -17,7 +17,7 @@ import { native } from './native';
 import { initRequestTracking } from './requests';
 import { getTabMedia, initSniffer } from './sniffer';
 import { applyAppSettings, getConnection, getState, markConnected, markFailure, onConnectionChange, updateState } from './state';
-import { downloadMedia, sendVideo, videoOptions } from './video';
+import { downloadMedia, downloadPostMedia, openPostMediaPicker, probePostMedia, sendVideo, videoOptions } from './video';
 
 // ---- wiring -------------------------------------------------------------------
 
@@ -84,15 +84,15 @@ async function handle(msg: InternalMessage, sender: chrome.runtime.MessageSender
       bypass.record(msg.url, Date.now());
       return { ok: true };
     case 'videoOptions':
-      return videoOptions(msg, sender.tab);
+      return videoOptions(msg, sender.tab ?? (msg.tabId !== undefined ? await tabInfo(msg.tabId) : undefined));
     case 'videoDownload':
-      await sendVideo(msg.pageUrl, msg.title, msg.option, sender.tab);
+      await sendVideo(msg.pageUrl, msg.title, msg.option, sender.tab ?? (msg.tabId !== undefined ? await tabInfo(msg.tabId) : undefined));
       return { ok: true } satisfies ActionResult;
     case 'popupState': {
       const [state, media, tab] = await Promise.all([getState(), getTabMedia(msg.tabId), tabInfo(msg.tabId)]);
       const visible = visibleMedia(media);
       setTabCount(msg.tabId, visible.length);
-      return { connection: getConnection(), media: visible, state, ...(tab?.url ? { tabUrl: tab.url } : {}) } satisfies PopupState;
+      return { connection: getConnection(), media: visible, state, ...(tab?.url ? { tabUrl: tab.url } : {}), ...(tab?.title ? { tabTitle: tab.title } : {}) } satisfies PopupState;
     }
     case 'refreshStatus':
       try {
@@ -104,9 +104,24 @@ async function handle(msg: InternalMessage, sender: chrome.runtime.MessageSender
         /* state already updated by onResult */
       }
       return getConnection();
+    case 'retryConnection':
+      native.retry();
+      try {
+        await hello();
+        return { ok: true } satisfies ActionResult;
+      } catch (e) {
+        return { ok: false, error: (e as Error).message } satisfies ActionResult;
+      }
     case 'downloadMedia':
       await downloadMedia(msg.tabId, msg.key);
       return { ok: true } satisfies ActionResult;
+    case 'openPostMediaPicker':
+      await openPostMediaPicker(msg.tabId);
+      return { ok: true } satisfies ActionResult;
+    case 'probePostMedia':
+      return { ok: true, ...(await probePostMedia(msg.tabId, msg.useSession)) };
+    case 'downloadPostMedia':
+      return { ok: true, count: await downloadPostMedia(msg.tabId, msg.useSession, msg.media) } satisfies ActionResult;
     case 'collect': {
       const count = await collectAndSend(msg.tabId, msg.mode, msg.frameId);
       return { ok: true, count } satisfies ActionResult;

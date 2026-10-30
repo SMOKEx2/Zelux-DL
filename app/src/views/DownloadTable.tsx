@@ -45,9 +45,15 @@ export function DownloadTable() {
 
   // Rows added after the first render play a short entrance animation (only those).
   const known = useRef<Set<string> | null>(null);
-  const fresh = useMemo(() => known.current ? new Set(ids.filter((id) => !known.current!.has(id))) : new Set<string>(), [ids]);
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   useEffect(() => {
+    if (!ids.length && !known.current) return;
+    const added = known.current ? new Set(ids.filter((id) => !known.current!.has(id))) : new Set<string>();
     known.current = new Set(ids);
+    setFresh(previous => previous.size || added.size ? added : previous);
+    if (!added.size) return;
+    const timer = window.setTimeout(() => setFresh(new Set()), 1600);
+    return () => window.clearTimeout(timer);
   }, [ids]);
 
   const template = gridTemplate(cols, widths);

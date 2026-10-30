@@ -36,6 +36,14 @@ Local build directories, development data and personal session notes are exclude
 Actual presentation rate requires compatible display hardware, WebView configuration and a
 hardware capture; the headless preview checks do not establish a 240 FPS result.
 
+The production-preview 10,000-item scroll profile measured approximately 1.43 ms/frame of
+JavaScript and 6.94 ms/frame of total renderer task time after selector caching (120 frames).
+Earlier samples measured 8.73 ms/frame of JavaScript and 14.33 ms/frame of renderer task time.
+These are local headless observations, not a portable FPS guarantee. Initial rows no longer
+replay the new-item animation whenever virtualization remounts them.
+The optimized native Dev v2.0.5 was opened with the existing download data for user testing,
+and the user approved publishing after testing on 2026-10-31.
+
 ## Verification commands
 
 Local results: app tests 81/81; extension tests 72/72; Chromium native-messaging checks 15/15;

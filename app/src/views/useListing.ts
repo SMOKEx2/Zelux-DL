@@ -1,4 +1,5 @@
 import { useShallow } from "zustand/react/shallow";
+import { useMemo } from "react";
 import { t } from "../lib/i18n";
 import { matchesFilter } from "../lib/present";
 import { type AppState, useApp, visibleItems } from "../lib/store";
@@ -13,7 +14,22 @@ export function listIds(s: AppState, filter: StatusFilter): string[] {
 /** Same as listIds, re-rendering only when the ordered list actually changes. */
 export function useVisibleIds(): string[] {
   const filter = useUi((s) => s.filter);
-  return useApp(useShallow((s) => listIds(s, filter)));
+  const selector = useMemo(() => {
+    let previous: AppState | undefined;
+    let result: string[] = [];
+    return (state: AppState) => {
+      const liveOrder = filter !== "all" || ["progress", "speed", "eta"].includes(state.sort.key);
+      if (!previous || state.items !== previous.items || state.view !== previous.view
+        || state.search !== previous.search || state.sort !== previous.sort
+        || state.duplicateIds !== previous.duplicateIds
+        || (liveOrder && state.progress !== previous.progress)) {
+        result = listIds(state, filter);
+      }
+      previous = state;
+      return result;
+    };
+  }, [filter]);
+  return useApp(useShallow(selector));
 }
 
 /** Title for the current sidebar view. */

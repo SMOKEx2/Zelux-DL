@@ -78,8 +78,17 @@ jobs:
           for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_ID APPLE_PASSWORD APPLE_TEAM_ID; do
             [ -n "${!v}" ] || unset "$v"
           done
-          # Signed in-app update bundles only for official releases (needs the signing key).
-          npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          if [ "${RUNNER_OS:-}" = "Windows" ]; then
+            pwsh ../scripts/generate-windows-installer-art.ps1
+          fi
+          # Signed in-app update bundles only when the release signing key is configured.
+          # Keep normal installers available when maintainers have not configured that key.
+          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          else
+            echo "No updater signing key configured; building regular release installers without updater artifacts."
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          fi
       - name: Name the macOS update bundle per architecture
         if: runner.os == 'macOS'
         run: |
@@ -87,8 +96,12 @@ jobs:
           M=target/${{ matrix.target }}/release/bundle/macos
           V=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
           A=$([ "${{ matrix.target }}" = aarch64-apple-darwin ] && echo aarch64 || echo x64)
-          mv "$M/ZeluxDL.app.tar.gz" "$M/ZeluxDL_${V}_${A}.app.tar.gz"
-          mv "$M/ZeluxDL.app.tar.gz.sig" "$M/ZeluxDL_${V}_${A}.app.tar.gz.sig"
+          if [ -f "$M/ZeluxDL.app.tar.gz" ]; then
+            mv "$M/ZeluxDL.app.tar.gz" "$M/ZeluxDL_${V}_${A}.app.tar.gz"
+          fi
+          if [ -f "$M/ZeluxDL.app.tar.gz.sig" ]; then
+            mv "$M/ZeluxDL.app.tar.gz.sig" "$M/ZeluxDL_${V}_${A}.app.tar.gz.sig"
+          fi
       - name: DMG with the browser extension next to the app (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -148,10 +161,15 @@ jobs:
           mkdir -p out
           find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' \
             -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.zip' -o -name '*.app.tar.gz' \) -exec cp {} out/ \;
-          # Manifest for the in-app updater (signatures come from the .sig files).
-          python3 scripts/make-latest-json.py artifacts "${GITHUB_REF_NAME}" docs/RELEASE_NOTES.md > latest.json
-          cat latest.json
-          cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt && mv ../latest.json .
+          # Publish a signed updater manifest only when signed bundles exist. Regular
+          # installers remain available without updater signing secrets.
+          if find artifacts -type f -name '*.sig' -print -quit | grep -q .; then
+            python3 scripts/make-latest-json.py artifacts "${GITHUB_REF_NAME}" docs/RELEASE_NOTES.md > out/latest.json
+            cat out/latest.json
+          else
+            echo "No signed updater bundles found; omitting latest.json. Users can update by downloading the installer."
+          fi
+          cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:

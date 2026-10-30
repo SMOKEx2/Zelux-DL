@@ -75,7 +75,11 @@
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "../../packaging/windows/installer-hooks.nsh",
-        "displayLanguageSelector": false
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "uninstallerIcon": "icons/icon.ico",
+        "headerImage": "../../packaging/windows/installer-header.bmp",
+        "sidebarImage": "../../packaging/windows/installer-sidebar.bmp"
       },
       "wix": {
         "fragmentPaths": [
@@ -83,7 +87,9 @@
         ],
         "componentRefs": [
           "PrismNativeHostRegistration"
-        ]
+        ],
+        "bannerPath": "../../packaging/windows/installer-banner.bmp",
+        "dialogImagePath": "../../packaging/windows/installer-dialog.bmp"
       }
     },
     "linux": {

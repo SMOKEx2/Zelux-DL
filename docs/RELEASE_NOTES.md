@@ -1,13 +1,15 @@
-# ZeluxDL 2.0.2
+# ZeluxDL 2.0.3
 
-Windows installers include ZeluxDL branding, the application icon, and Noto Sans Thai typography. If updater-signing keys are not configured for this release, download and run the installer manually; the signed in-app update manifest is published only with signed update bundles.
+This transition release enables verified in-app updates. Existing installations must install this release once from GitHub because the previous updater signing key was unavailable; later signed releases can be installed from within ZeluxDL.
 
 ## What's new
 
 - Turbo Multi-Thread Booster now has integration coverage that verifies it raises the live connection target on a healthy transfer and respects the disabled setting.
 - Updated ZeluxDL's install and browser integration guides to match the actual release assets and supported manual extension installation flow.
-- Fixed macOS release packaging to use the ZeluxDL app bundle name, and refreshed the product version to 2.0.2.
+- Fixed macOS release packaging to use the ZeluxDL app bundle name.
 - The About page now identifies the upstream Prism Download Manager as the source project; the rest of the product is presented as ZeluxDL.
+- All release platforms now require signed updater bundles; release publishing fails rather than silently omitting the update manifest or shipping an incomplete manifest.
+- The updater requires a signed version field and verifies every platform bundle against the configured ZeluxDL signing key.
 
 ## Notes
 
@@ -15,4 +17,4 @@ Browser integration is distributed in the GitHub Release archives. It is not cur
 
 ## Earlier project history
 
-Release notes for the upstream Prism Download Manager releases through v1.1.7 are preserved in the [upstream project history](https://github.com/FortoGraphy/prism-download-manager/blob/main/docs/RELEASE_NOTES.md). ZeluxDL's own release notes continue here from v2.0.2.
+Release notes for the upstream Prism Download Manager releases through v1.1.7 are preserved in the [upstream project history](https://github.com/FortoGraphy/prism-download-manager/blob/main/docs/RELEASE_NOTES.md). ZeluxDL's own release notes continue here from v2.0.3.

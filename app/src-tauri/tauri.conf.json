@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ZeluxDL",
   "mainBinaryName": "ZeluxDL",
-  "version": "2.0.2",
+  "version": "2.0.3",
   "identifier": "dev.zeluxdl.manager",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -127,7 +127,8 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDY2RUU0OTdFODgyRDc0Q0IKUldUTGRDMklma251Wm82Z3NkUEtFcFFiQURoOEJDT3Q2N3NQZE4rQ2s4UXZyMnRyOVlxRGpmdHMK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMyNzMyRDE1NURCMURCMUYKUldRZjI3RmRGUzF6d29aNFlVZmV0YlFFb2ZIL0RTZTZzdmJYaVFhbWZlOXBqcmxmdmh3a1dVTksK",
+      "requireSignedVersion": true,
       "endpoints": [
         "https://github.com/SMOKEx2/Zelux-DL/releases/latest/download/latest.json"
       ],

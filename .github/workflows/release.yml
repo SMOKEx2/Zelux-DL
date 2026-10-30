@@ -81,12 +81,15 @@ jobs:
           if [ "${RUNNER_OS:-}" = "Windows" ]; then
             pwsh ../scripts/generate-windows-installer-art.ps1
           fi
-          # Signed in-app update bundles only when the release signing key is configured.
-          # Keep normal installers available when maintainers have not configured that key.
-          if [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+              echo "TAURI_SIGNING_PRIVATE_KEY is required for tagged releases; refusing to publish a broken auto-update release." >&2
+              exit 1
+            fi
+            npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":true}}'
+          elif [ -n "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
             npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config '{"bundle":{"createUpdaterArtifacts":true}}'
           else
-            echo "No updater signing key configured; building regular release installers without updater artifacts."
             npx tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
           fi
       - name: Name the macOS update bundle per architecture
@@ -161,14 +164,8 @@ jobs:
           mkdir -p out
           find artifacts -type f \( -name '*.exe' -o -name '*.msi' -o -name '*.dmg' -o -name '*.deb' \
             -o -name '*.rpm' -o -name '*.AppImage' -o -name '*.zip' -o -name '*.app.tar.gz' \) -exec cp {} out/ \;
-          # Publish a signed updater manifest only when signed bundles exist. Regular
-          # installers remain available without updater signing secrets.
-          if find artifacts -type f -name '*.sig' -print -quit | grep -q .; then
-            python3 scripts/make-latest-json.py artifacts "${GITHUB_REF_NAME}" docs/RELEASE_NOTES.md > out/latest.json
-            cat out/latest.json
-          else
-            echo "No signed updater bundles found; omitting latest.json. Users can update by downloading the installer."
-          fi
+          python3 scripts/make-latest-json.py artifacts "${GITHUB_REF_NAME}" docs/RELEASE_NOTES.md > out/latest.json
+          python3 -m json.tool out/latest.json
           cd out && sha256sum * > SHA256SUMS.txt && cat SHA256SUMS.txt
       - name: Create release
         uses: softprops/action-gh-release@v2

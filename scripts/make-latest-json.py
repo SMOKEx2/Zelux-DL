@@ -2,7 +2,7 @@
 
     python scripts/make-latest-json.py <dir with bundles and .sig files> <tag> <notes.md> > latest.json
 
-Prism's in-app updater reads it from releases/latest/download/latest.json.
+ZeluxDL's in-app updater reads it from releases/latest/download/latest.json.
 """
 import datetime
 import json
@@ -24,19 +24,20 @@ PLATFORMS = {
 }
 
 platforms = {}
+missing = []
 for key, suffix in PLATFORMS.items():
     bundle = next((p for p in src.rglob(f"*{suffix}") if p.name.startswith(("ZeluxDL_", "Prism_"))), None)
-    if bundle and not (bundle.name.startswith(f"ZeluxDL_{version}_") or bundle.name.startswith(f"Prism_{version}_")):
+    if bundle and not bundle.name.startswith(f"ZeluxDL_{version}_"):
         # The app would report another version than the manifest and be offered it forever.
         sys.exit(f"{bundle.name} doesn't match tag {tag}: bump the version in tauri.conf.json, Cargo.toml and app/package.json")
     sig = bundle and bundle.with_name(bundle.name + ".sig")
-    if not bundle or not sig.exists():
-        print(f"warning: no signed bundle for {key}", file=sys.stderr)
+    if not bundle or not sig.exists() or not sig.read_text(encoding="utf-8").strip():
+        missing.append(key)
         continue
     platforms[key] = {"signature": sig.read_text().strip(), "url": base + bundle.name}
 
-if not platforms:
-    sys.exit("no signed update bundles found")
+if missing:
+    sys.exit("missing signed update bundle(s): " + ", ".join(missing))
 notes = pathlib.Path(notes_path).read_text(encoding="utf-8")
 whats_new = notes.split("## What's new", 1)[-1].split("\n## ", 1)[0] if "## What's new" in notes else ""
 json.dump(

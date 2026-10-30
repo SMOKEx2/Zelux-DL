@@ -1,6 +1,7 @@
 /target
 **/node_modules
 **/dist
+**/__pycache__/
 /app/src-tauri/gen
 /app/src-tauri/target
 /extension/build

@@ -7,6 +7,7 @@ import { api } from "../lib/api";
 import { t } from "../lib/i18n";
 import { isTorrentLink, looksLikeUrl } from "../lib/present";
 import { hexEncode } from "../lib/route";
+import { isSinglePostMediaUrl } from "../lib/socialPost";
 import { readClipboardText, win } from "../lib/win";
 
 export default function AddUrlWindow() {
@@ -36,6 +37,7 @@ export default function AddUrlWindow() {
     try {
       if (model) await api.openWindow("model", hexEncode(url.trim()));
       else if (torrent) await api.openWindow("torrent", hexEncode(url.trim()));
+      else if (isSinglePostMediaUrl(url.trim())) await api.openVideoUrl(url.trim());
       else await api.addUrl({ url: url.trim(), username: auth ? user : undefined, password: auth ? pass : undefined });
       await win.close();
     } catch (e) {

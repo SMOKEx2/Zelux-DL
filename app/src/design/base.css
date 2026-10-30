@@ -293,17 +293,23 @@ table { border-collapse: collapse; border-spacing: 0; }
 }
 
 /* Laser glow head that tracks the leading edge of active downloads */
+.progress__head-track {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  transition: transform var(--dur-progress) var(--ease-linear);
+}
 .progress__head {
   position: absolute;
   top: -2px;
   bottom: -2px;
   width: 3px;
+  left: -1.5px;
   border-radius: 2px;
   background: #ffffff;
   box-shadow: 0 0 4px 1px #ffffff, 0 0 10px 3px var(--spectrum-4, var(--accent)), 0 0 16px 5px var(--spectrum-1, var(--accent));
   pointer-events: none;
   z-index: 2;
-  transition: left var(--dur-progress) var(--ease-linear);
 }
 
 /* Shimmer: a soft highlight travelling across the *filled* part only. It is
@@ -334,6 +340,7 @@ table { border-collapse: collapse; border-spacing: 0; }
   width: 35%;
   animation: prism-indeterminate 1.4s var(--ease-in-out) infinite;
 }
+.progress[data-state="indeterminate"] { overflow: hidden; }
 
 /* ---- Progress Bar FX Variants (Rainbow, Neon, Cyber, Clean) -------------- */
 
@@ -497,7 +504,7 @@ table { border-collapse: collapse; border-spacing: 0; }
     scroll-behavior: auto !important;
   }
   .progress[data-state="active"] .progress__fill::after { display: none; }
-  .progress__fill { transition: none; }
+  .progress__fill, .progress__head-track { transition: none; }
 }
 /* App-level override (Settings → Appearance → Reduce motion). */
 .reduce-motion *, .reduce-motion *::before, .reduce-motion *::after {

@@ -18,15 +18,14 @@ type Change = { icon: IconName; title: string; body: string; credit?: string; ac
  */
 const CHANGES: Change[] = [
   {
-    icon: "bolt",
-    title: tk("Turbo Multi-Thread Booster"),
-    body: tk("ZeluxDL gradually adds more connections during a healthy download, up to the configured limit."),
-    action: "downloads",
+    icon: "folder-open",
+    title: tk("Social post folders and duplicate skips"),
+    body: tk("Posts from Facebook, Instagram, and X are grouped into a folder named for the site and post time; single images stay in the main folder. Duplicate post images are skipped and reported."),
   },
   {
-    icon: "star",
-    title: tk("ZeluxDL branding and source credit"),
-    body: tk("The About page now credits the upstream project directly; the rest of the app uses ZeluxDL branding."),
+    icon: "images",
+    title: tk("Image previews and smoother selection"),
+    body: tk("Completed images now show thumbnails in the download list. Select multiple downloads at once; the details pane adjusts with a smooth open and close."),
   },
 ];
 
@@ -41,8 +40,8 @@ export function WhatsNewSheet() {
       <header className="whatsnew__head">
         <BrandTile size={52} />
         <div>
-          <h2>{t("Prism {version} is here", { version })}</h2>
-          <p className="text-secondary">{t("Turbo connection scaling and updated browser setup.")}</p>
+          <h2>{t("ZeluxDL {version} is here", { version })}</h2>
+          <p className="text-secondary">{t("Post folders, duplicate checks, and image previews.")}</p>
         </div>
       </header>
 

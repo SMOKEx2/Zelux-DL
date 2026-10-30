@@ -17,9 +17,11 @@ export function TitleRow() {
   const title = useViewTitle();
   const view = useApp((s) => s.view);
   const items = useApp((s) => s.items);
+  const duplicateIds = useApp((s) => s.duplicateIds);
   const filter = useUi((s) => s.filter);
   const queues = useApp((s) => s.queues);
   const density = useApp((s) => s.settings?.appearance.density ?? "comfortable");
+  const duplicateScanStatus = useApp((s) => s.duplicateScanStatus);
 
   // Counts for the segmented filter within the current view (search ignored on purpose).
   const stats = useMemo(() => {
@@ -27,6 +29,7 @@ export function TitleRow() {
     const scoped = Object.values(items).filter((i) => {
       if (view.kind === "trash") return i.trashed;
       if (i.trashed) return false;
+      if (view.kind === "duplicates") return duplicateIds.includes(i.id);
       if (view.kind === "category") return i.category === view.id;
       if (view.kind === "queue") return i.queueId === view.id;
       if (view.kind === "grabber") return i.grabberProject === view.id;
@@ -40,7 +43,7 @@ export function TitleRow() {
       bytes: scoped.reduce((sum, i) => sum + (i.size ?? 0), 0),
       byFilter: { all: scoped.length, active: f("active"), queued: f("queued"), completed: f("completed"), failed: f("failed") },
     };
-  }, [items, view]);
+  }, [items, view, duplicateIds]);
 
   const queue = view.kind === "queue" ? queues.find((q) => q.id === view.id) : undefined;
   const columns = () => {
@@ -81,6 +84,11 @@ export function TitleRow() {
       {view.kind === "trash" && stats.total > 0 && (
         <button type="button" className="btn btn--sm btn--danger" onClick={() => void attempt(api.emptyTrash(), t("Could not empty the trash"))}>
           <Icon name="delete" size={15} /> {t("Empty trash")}
+        </button>
+      )}
+      {view.kind === "duplicates" && (
+        <button type="button" className="btn btn--sm" disabled={duplicateScanStatus === "scanning"} onClick={() => void attempt(useApp.getState().scanDuplicates(), t("Could not scan duplicate files"))}>
+          <Icon name="refresh-url" size={15} /> {duplicateScanStatus === "scanning" ? t("Scanning duplicates…") : t("Scan again")}
         </button>
       )}
       {view.kind === "grabber" && (

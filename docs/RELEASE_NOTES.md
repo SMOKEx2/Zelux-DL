@@ -1,3 +1,18 @@
+# ZeluxDL 2.0.5
+
+## What's new
+
+- Download images and videos from individual Facebook, Instagram, X and TikTok posts. Optional browser-session cookies are kept in memory for the selected downloads.
+- Multiple files from a post use a dated, post-specific folder and a single completion notice. Single images go directly to the download folder.
+- Social-media filenames include a source abbreviation and post identifier. Identical downloaded files are skipped, with an existing-file notification.
+- Review duplicate downloads, select or clear multiple rows, and preview completed images in a translucent full-window viewer.
+- Restore completed-video thumbnails and duration labels, and improve progress, selection and details-panel animations.
+- Adapt the toolbar at narrow window widths with an overflow menu while keeping the window controls visible.
+
+## Compatibility
+
+Photo-post extraction downloads a pinned, SHA-256-verified gallery-dl executable on first use. Native extractor builds are available for Windows x64/x86, Linux x64 and Intel macOS. Other architectures retain yt-dlp video extraction; photo-post extraction is not available there yet. Private posts may require the optional signed-in browser session.
+
 # ZeluxDL 2.0.4
 
 ## Fixed

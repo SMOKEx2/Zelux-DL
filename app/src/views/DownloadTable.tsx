@@ -1,13 +1,15 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { memo, useEffect, useLayoutEffect, useMemo, useRef } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Checkbox } from "../components/Controls";
 import { IconButton } from "../components/IconButton";
+import { Modal } from "../components/Modal";
 import { openMenuAt } from "../components/MenuHost";
 import { FileTile, ProgressBar } from "../components/Visuals";
 import { Icon } from "../design/icons";
 import { actions } from "../lib/actions";
 import { type ColumnDef, gridTemplate, minRowWidth, resolveColumns } from "../lib/columns";
 import { formatBytes, formatDate, formatDuration, formatSpeed } from "../lib/format";
+import { api } from "../lib/api";
 import { t } from "../lib/i18n";
 import { bytesLine, canPause, formatPct, metaLine, progressOf, statusView } from "../lib/present";
 import { clickSelect, type MoveKey, moveSelect } from "../lib/selection";
@@ -20,6 +22,8 @@ import { useVisibleIds } from "./useListing";
 const ROW = { comfortable: 44, compact: 30 } as const;
 
 export function DownloadTable() {
+  const [imageViewer, setImageViewer] = useState<{ url: string; name: string } | null>(null);
+  const openImage = useCallback((url: string, name: string) => setImageViewer({ url, name }), []);
   const ids = useVisibleIds();
   const visible = useApp((s) => s.settings?.appearance.visibleColumns);
   const density = useApp((s) => s.settings?.appearance.density ?? "comfortable");
@@ -41,10 +45,15 @@ export function DownloadTable() {
 
   // Rows added after the first render play a short entrance animation (only those).
   const known = useRef<Set<string> | null>(null);
-  const fresh = known.current ? new Set(ids.filter((id) => !known.current!.has(id))) : new Set<string>();
+  const [fresh, setFresh] = useState<Set<string>>(() => new Set());
   useEffect(() => {
-    known.current ??= new Set();
-    ids.forEach((id) => known.current!.add(id));
+    if (!ids.length && !known.current) return;
+    const added = known.current ? new Set(ids.filter((id) => !known.current!.has(id))) : new Set<string>();
+    known.current = new Set(ids);
+    setFresh(previous => previous.size || added.size ? added : previous);
+    if (!added.size) return;
+    const timer = window.setTimeout(() => setFresh(new Set()), 1600);
+    return () => window.clearTimeout(timer);
   }, [ids]);
 
   const template = gridTemplate(cols, widths);
@@ -75,22 +84,23 @@ export function DownloadTable() {
     e.preventDefault();
   };
 
-  const onRowMouseDown = (e: React.MouseEvent, id: string) => {
-    if (e.button === 2 && selected.has(id)) return; // right-click keeps a multi-selection
+  const onRowMouseDown = useCallback((e: React.MouseEvent, id: string) => {
     const st = useApp.getState();
+    if (e.button === 2 && st.selection.includes(id)) return; // right-click keeps a multi-selection
     const next = clickSelect(ids, { selection: st.selection, anchor: st.anchor }, id, { ctrl: e.ctrlKey || e.metaKey, shift: e.shiftKey });
     st.select(next.selection, next.anchor);
-  };
+  }, [ids]);
 
-  const onContextMenu = (e: React.MouseEvent, id: string) => {
+  const onContextMenu = useCallback((e: React.MouseEvent, id: string) => {
     e.preventDefault();
     const st = useApp.getState();
     const target = st.selection.includes(id) ? st.selection : [id];
     if (!st.selection.includes(id)) st.select([id], id);
     openMenuAt({ x: e.clientX, y: e.clientY }, itemMenu(target));
-  };
+  }, []);
 
   return (
+    <>
     <section className="table" style={{ ["--grid" as string]: template, ["--row-min" as string]: `${minWidth}px`, ["--row-h" as string]: `${rowH}px` }}>
       <div
         ref={scrollRef}
@@ -119,6 +129,7 @@ export function DownloadTable() {
                 selected={selected.has(id)}
                 fresh={fresh.has(id)}
                 compact={density === "compact"}
+                onOpenImage={openImage}
                 onMouseDown={onRowMouseDown}
                 onContextMenu={onContextMenu}
               />
@@ -128,6 +139,18 @@ export function DownloadTable() {
         {!ids.length && <EmptyState />}
       </div>
     </section>
+    <Modal
+      open={!!imageViewer}
+      onClose={() => setImageViewer(null)}
+      title={imageViewer?.name}
+      variant="sheet"
+      className="image-viewer"
+      width={Math.max(320, window.innerWidth - 48)}
+      height={Math.max(240, window.innerHeight - 48)}
+    >
+      {imageViewer && <img className="image-viewer__image" src={imageViewer.url} alt={imageViewer.name} draggable={false} />}
+    </Modal>
+    </>
   );
 }
 
@@ -183,19 +206,46 @@ interface RowProps {
   selected: boolean;
   fresh: boolean;
   compact: boolean;
+  onOpenImage: (url: string, name: string) => void;
   onMouseDown: (e: React.MouseEvent, id: string) => void;
   onContextMenu: (e: React.MouseEvent, id: string) => void;
 }
 
-const Row = memo(function Row({ id, index, top, cols, selected, fresh, compact, onMouseDown, onContextMenu }: RowProps) {
+const Row = memo(function Row({ id, index, top, cols, selected, fresh, compact, onOpenImage, onMouseDown, onContextMenu }: RowProps) {
   const item = useApp((s) => s.items[id]);
   const progress = useApp((s) => s.progress[id]);
   const categories = useApp((s) => s.categories);
+  const status = progress?.status ?? item?.status;
+  const [videoDuration, setVideoDuration] = useState<number | null>(null);
+  const previousStatus = useRef(status);
+  const [justCompleted, setJustCompleted] = useState(false);
+  const [imagePreview, setImagePreview] = useState<string | null>(null);
+  const previewableImage = /\.(?:avif|bmp|gif|jfif|jpe?g|png|webp)$/i.test(item?.fileName ?? "");
+  useEffect(() => {
+    const completedNow = status === "completed" && previousStatus.current !== "completed";
+    previousStatus.current = status;
+    if (!completedNow) return;
+    setJustCompleted(true);
+    const timer = window.setTimeout(() => setJustCompleted(false), 720);
+    return () => window.clearTimeout(timer);
+  }, [status]);
+  useEffect(() => {
+    let current = true;
+    setImagePreview(null);
+    if (!item || item.status !== "completed" || status !== "completed" || item.trashed || !previewableImage) return () => { current = false; };
+    void api.imagePreviewUrl(id).then((url) => { if (current) setImagePreview(url); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [id, status, item?.status, item?.trashed, item?.fileName, item?.saveDir, previewableImage]);
+  useEffect(() => {
+    let current = true;
+    if (!item || item.kind !== "video" || item.media?.duration || status !== "completed") return () => { current = false; };
+    void api.videoFileDuration(id).then((duration) => { if (current) setVideoDuration(duration); }).catch(() => undefined);
+    return () => { current = false; };
+  }, [id, item?.kind, item?.media?.duration, status]);
   if (!item) return null;
   const sv = statusView(item, progress);
   const p = progressOf(item, progress);
   const statusShown = cols.some((c) => c.key === "status");
-  const status = progress?.status ?? item.status;
   const live = status === "downloading";
 
   const cell = (c: ColumnDef) => {
@@ -204,7 +254,7 @@ const Row = memo(function Row({ id, index, top, cols, selected, fresh, compact, 
         return (
           <div className="namecell" key="name">
             <span className="row-lead">
-              <FileTile item={item} size={compact ? 20 : 28} thumbWidth={compact ? 28 : 44} />
+              <FileTile item={item} size={compact ? 20 : 28} thumbWidth={compact ? 28 : 44} previewUrl={imagePreview} duration={videoDuration} onPreview={imagePreview ? () => onOpenImage(imagePreview, item.fileName) : undefined} />
             </span>
             <div className="name">
               <div className="name__t" title={item.fileName}>
@@ -228,7 +278,12 @@ const Row = memo(function Row({ id, index, top, cols, selected, fresh, compact, 
           </div>
         );
       case "progress": {
-        const left = !statusShown && !live ? (
+        const left = status === "completed" ? (
+          <span className={`st st--${sv.tone} prog__complete`}>
+            <Icon name={sv.icon} size={12} strokeWidth={2} />
+            {!statusShown && <span>{sv.label}</span>}
+          </span>
+        ) : !statusShown && !live ? (
           <span className={`st st--${sv.tone}`}>
             <Icon name={sv.icon} size={12} strokeWidth={2} />
             <span>{status === "paused" && p.pct != null ? t("Paused · {percent}", { percent: formatPct(p.pct) }) : sv.detail}</span>
@@ -242,7 +297,7 @@ const Row = memo(function Row({ id, index, top, cols, selected, fresh, compact, 
               {left}
               {!compact && <span>{bytesLine(item, progress)}</span>}
             </div>
-            <ProgressBar value={status === "processing" ? null : p.fraction} state={sv.bar} label={t("{name} progress", { name: item.fileName })} />
+            <ProgressBar value={status === "processing" ? null : status === "completed" ? 1 : p.fraction} state={sv.bar} label={t("{name} progress", { name: item.fileName })} />
           </div>
         );
       }
@@ -303,6 +358,7 @@ const Row = memo(function Row({ id, index, top, cols, selected, fresh, compact, 
       onDoubleClick={() => actions.activate(id)}
       onContextMenu={(e) => onContextMenu(e, id)}
     >
+      {justCompleted && <span className="row__complete-flash" aria-hidden="true" />}
       {/* The row selects on mouse-down; the checkbox toggles on click. Without stopping the
           mouse-down here a click would select the row and then immediately unselect it. */}
       <div className="chk" onMouseDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>

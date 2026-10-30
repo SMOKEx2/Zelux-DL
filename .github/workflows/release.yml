@@ -24,11 +24,11 @@ jobs:
             target: x86_64-unknown-linux-gnu
             bundles: deb,rpm,appimage
           - name: macos-arm64
-            os: macos-14
+            os: macos-15
             target: aarch64-apple-darwin
             bundles: app,dmg
           - name: macos-x64
-            os: macos-14            # cross-compiles x86_64 on Apple Silicon (Intel runners are being retired)
+            os: macos-15            # cross-compiles x86_64 on Apple Silicon (Intel runners are being retired)
             target: x86_64-apple-darwin
             bundles: app,dmg
     runs-on: ${{ matrix.os }}

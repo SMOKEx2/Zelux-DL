@@ -1,7 +1,7 @@
 // Small data visuals: progress bar, file tile/thumbnail, speed chart, sparkline,
 // connection lanes and file map.
 
-import { memo, useId } from "react";
+import { memo, useEffect, useId, useState } from "react";
 import { Icon } from "../design/icons";
 import { formatBytes, formatClock, formatSpeed } from "../lib/format";
 import { t } from "../lib/i18n";
@@ -26,23 +26,35 @@ export function ProgressBar({ value, state, size, label }: { value: number | nul
       <div className="progress__fill" />
       {state === "active" && numValue > 0.005 && numValue < 0.999 && (
         <span
-          className="progress__head"
-          style={{ left: `calc(${Math.min(100, Math.max(0, numValue * 100))}% - 1.5px)` }}
+          className="progress__head-track"
+          style={{ transform: `translateX(${Math.min(100, Math.max(0, numValue * 100))}%)` }}
           aria-hidden="true"
-        />
+        ><span className="progress__head" /></span>
       )}
     </div>
   );
 }
 
 /** 28 px type tile, or a 44×28 thumbnail for media with artwork. */
-export const FileTile = memo(function FileTile({ item, size = 28, thumbWidth = 44 }: { item: Pick<DownloadItem, "fileName" | "kind" | "category" | "media">; size?: number; thumbWidth?: number }) {
-  const thumb = item.media?.thumbnail;
+export const FileTile = memo(function FileTile({ item, size = 28, thumbWidth = 44, previewUrl, duration, onPreview }: { item: Pick<DownloadItem, "fileName" | "kind" | "category" | "media">; size?: number; thumbWidth?: number; previewUrl?: string | null; duration?: number | null; onPreview?: () => void }) {
+  const [previewFailed, setPreviewFailed] = useState(false);
+  useEffect(() => setPreviewFailed(false), [previewUrl]);
+  const thumb = item.media?.thumbnail || youtubeThumbnail(item.kind, item.media?.pageUrl);
+  const thumbDuration = item.media?.duration ?? duration;
   if (thumb) {
+    const thumbStyle = { width: thumbWidth, height: size, backgroundImage: `url("${thumb}")` };
+    const contents = thumbDuration ? <span className="thumb__dur">{formatClock(thumbDuration)}</span> : null;
+    if (onPreview) return <button type="button" className="thumb thumb--button" style={thumbStyle} aria-label={item.fileName} onClick={onPreview}>{contents}</button>;
     return (
-      <span className="thumb" style={{ width: thumbWidth, height: size, backgroundImage: `url("${thumb}")` }}>
-        {item.media?.duration ? <span className="thumb__dur">{formatClock(item.media.duration)}</span> : null}
-      </span>
+      <span className="thumb" style={thumbStyle}>{contents}</span>
+    );
+  }
+  if (previewUrl && !previewFailed) {
+    const thumbStyle = { width: size, height: size };
+    const image = <img src={previewUrl} alt="" loading="lazy" decoding="async" draggable={false} onError={() => setPreviewFailed(true)} />;
+    if (onPreview) return <button type="button" className="thumb thumb--file thumb--button" style={thumbStyle} aria-label={item.fileName} onClick={onPreview}>{image}</button>;
+    return (
+      <span className="thumb thumb--file" style={thumbStyle}>{image}</span>
     );
   }
   const v = fileVisual(item);
@@ -52,6 +64,22 @@ export const FileTile = memo(function FileTile({ item, size = 28, thumbWidth = 4
     </span>
   );
 });
+
+/** Older video jobs may lack a stored thumbnail; recover YouTube's stable preview from its page URL. */
+function youtubeThumbnail(kind: DownloadItem["kind"], pageUrl?: string | null): string | undefined {
+  if (kind !== "video" || !pageUrl) return undefined;
+  try {
+    const url = new URL(pageUrl);
+    const host = url.hostname.toLowerCase().replace(/^www\./, "");
+    if (!["youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be", "youtube-nocookie.com"].includes(host)) return undefined;
+    const id = host === "youtu.be"
+      ? url.pathname.split("/").filter(Boolean)[0]
+      : url.searchParams.get("v") ?? url.pathname.match(/^\/(?:shorts|embed|live)\/([^/?]+)/)?.[1];
+    return id && /^[\w-]{11}$/.test(id) ? `https://i.ytimg.com/vi/${id}/mqdefault.jpg` : undefined;
+  } catch {
+    return undefined;
+  }
+}
 
 /** Area chart for speed history. Horizontal gridlines with labels in MB/s. */
 export function SpeedChart({ samples, height = 160, labels = true }: { samples: number[]; height?: number; labels?: boolean }) {
@@ -113,9 +141,16 @@ export function Sparkline({ samples, width = 196, height = 38 }: { samples: numb
           <stop offset="0" stopColor="var(--accent)" stopOpacity=".35" />
           <stop offset="1" stopColor="var(--accent)" stopOpacity="0" />
         </linearGradient>
+        <linearGradient id={`${id}rainbow`} x1="0" x2="1" y1="0" y2="0">
+          <stop offset="0%" stopColor="var(--spectrum-1)" />
+          <stop offset="25%" stopColor="var(--spectrum-3)" />
+          <stop offset="50%" stopColor="var(--spectrum-4)" />
+          <stop offset="75%" stopColor="var(--spectrum-6)" />
+          <stop offset="100%" stopColor="var(--spectrum-7)" />
+        </linearGradient>
       </defs>
       <path d={area} fill={`url(#${id}s)`} />
-      <path d={line} stroke="var(--accent)" strokeWidth="1.5" fill="none" vectorEffect="non-scaling-stroke" />
+      <path d={line} stroke={`url(#${id}rainbow)`} strokeWidth="1.5" fill="none" vectorEffect="non-scaling-stroke" />
     </svg>
   );
 }

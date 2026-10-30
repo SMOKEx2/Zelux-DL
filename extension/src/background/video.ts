@@ -2,13 +2,14 @@
 import type { NativeError } from '../shared/correlator';
 import { type ElementSource, type MediaItem, elementMedia, mediaDetail, mediaLabel, visibleMedia } from '../shared/media';
 import type { VideoOption, VideoOptionsResult } from '../shared/messages';
-import type { VideoRequest, VideoStream } from '../shared/protocol';
+import type { PostMediaEntry, VideoRequest, VideoStream } from '../shared/protocol';
 import { siteMatches } from '../shared/rules';
 import { variantOptions } from '../shared/variants';
 import { actionTimeout, cookieHeaderFor, tabInfo, userAgent } from './context';
 import { native } from './native';
 import { getTabMedia } from './sniffer';
 import { getState } from './state';
+import { isSinglePostMediaUrl } from '../shared/social-post';
 
 export function isVideoSite(url: string | undefined, sites: string[]): boolean {
   return !!url && sites.some((s) => siteMatches(url, s));
@@ -170,4 +171,62 @@ export async function downloadMedia(tabId: number, key: string): Promise<void> {
   const m = (await getTabMedia(tabId)).find((x) => x.key === key);
   if (!m) throw new Error('media item is gone (page navigated?)');
   await sendVideo(tab?.url ?? m.frameUrl ?? '', tab?.title ?? m.name, { id: `s:${m.key}`, label: mediaLabel(m), group: 'stream', stream: streamOf(m) }, tab);
+}
+
+/** Open a picker for the active, exact post URL; never scrape the surrounding feed. */
+export async function openPostMediaPicker(tabId: number): Promise<void> {
+  const tab = await tabInfo(tabId);
+  const pageUrl = tab?.url ?? '';
+  if (!isSinglePostMediaUrl(pageUrl)) throw new Error('Open a single Instagram, TikTok, Facebook or X post first.');
+  const reply = await native.request(
+    {
+      type: 'openMediaPicker',
+      pageUrl,
+      title: tab?.title ?? '',
+      userAgent: userAgent(),
+    },
+    { timeoutMs: 12_000 },
+  );
+  if (reply.accepted === false) throw new Error('ZeluxDL could not open this post.');
+}
+
+/** Resolve exactly the active social post for the extension's inline media selector. */
+export async function probePostMedia(tabId: number, useSession: boolean): Promise<{ title?: string; entries: PostMediaEntry[] }> {
+  const tab = await tabInfo(tabId);
+  const pageUrl = tab?.url ?? '';
+  if (!isSinglePostMediaUrl(pageUrl)) throw new Error('Open a single Instagram, TikTok, Facebook or X post first.');
+  const reply = await native.request(
+    {
+      type: 'probePostMedia',
+      pageUrl,
+      ...(useSession ? { cookies: await cookieHeaderFor(pageUrl, !!tab?.incognito) } : {}),
+      userAgent: userAgent(),
+    },
+    { timeoutMs: 90_000 },
+  );
+  return { ...(reply.title ? { title: reply.title } : {}), entries: reply.entries ?? [] };
+}
+
+/** Send only the user's selected URLs to the app; session cookies stay out of the queue. */
+export async function downloadPostMedia(
+  tabId: number,
+  useSession: boolean,
+  media: { url: string; extension: string; httpHeaders?: Record<string, string>; index: number }[],
+): Promise<number> {
+  const tab = await tabInfo(tabId);
+  const pageUrl = tab?.url ?? '';
+  if (!isSinglePostMediaUrl(pageUrl)) throw new Error('Open a single social media post before downloading.');
+  if (!media.length) throw new Error('Select at least one image or video.');
+  const reply = await native.request(
+    {
+      type: 'addPostMedia',
+      pageUrl,
+      media,
+      userAgent: userAgent(),
+      ...(useSession ? { cookies: await cookieHeaderFor(pageUrl, !!tab?.incognito) } : {}),
+    },
+    { timeoutMs: actionTimeout() },
+  );
+  if (reply.accepted === false) throw new Error('ZeluxDL could not queue the selected media.');
+  return reply.count ?? media.length;
 }

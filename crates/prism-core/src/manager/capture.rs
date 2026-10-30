@@ -9,6 +9,7 @@ use crate::model::*;
 use crate::settings::{ConflictAction, Settings};
 use anyhow::{Result, anyhow};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 /// How a newly added download should begin.
@@ -83,6 +84,16 @@ pub struct BatchDecision {
     pub urls: Vec<String>,
     pub save_dir: Option<PathBuf>,
     pub mode: StartMode,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PostMediaSelection {
+    pub url: String,
+    pub extension: String,
+    pub index: u32,
+    #[serde(default)]
+    pub http_headers: std::collections::BTreeMap<String, String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Default)]
@@ -214,7 +225,247 @@ pub(crate) fn name_from_url(url: &str) -> String {
     }
 }
 
+fn post_media_identity(page_url: &str) -> Result<(&'static str, String)> {
+    let page = url::Url::parse(page_url)?;
+    let host = page.host_str().unwrap_or_default();
+    let parts: Vec<_> = page
+        .path()
+        .split('/')
+        .filter(|part| !part.is_empty())
+        .collect();
+    let (site, post) =
+        if host == "facebook.com" || host.ends_with(".facebook.com") || host == "fb.watch" {
+            let id = page
+                .query_pairs()
+                .find(|(key, _)| key == "v" || key == "fbid")
+                .map(|(_, value)| value.into_owned())
+                .or_else(|| {
+                    parts
+                        .windows(2)
+                        .find(|pair| {
+                            matches!(pair[0], "posts" | "videos" | "reel" | "reels" | "permalink")
+                        })
+                        .map(|pair| pair[1].to_owned())
+                })
+                .unwrap_or_else(|| parts.join("/"));
+            ("FB", id)
+        } else if host == "instagram.com" || host.ends_with(".instagram.com") {
+            ("IG", parts.get(1).unwrap_or(&"").to_string())
+        } else if host == "x.com"
+            || host.ends_with(".x.com")
+            || host == "twitter.com"
+            || host.ends_with(".twitter.com")
+        {
+            ("X", parts.get(2).unwrap_or(&"").to_string())
+        } else {
+            ("TT", parts.join("/"))
+        };
+    let digest = hex::encode_upper(Sha256::digest(format!("{site}:{post}").as_bytes()));
+    Ok((site, digest[..8].to_owned()))
+}
+
+fn post_media_item(
+    page_url: &str,
+    media_url: &str,
+    extension: Option<&str>,
+    headers: &std::collections::BTreeMap<String, String>,
+    user_agent: Option<&str>,
+    index: usize,
+) -> Result<NewItem> {
+    if !prism_video::probe::is_single_post_media_url(page_url) {
+        return Err(anyhow!("expected a supported social post URL"));
+    }
+    let parsed = url::Url::parse(media_url).map_err(|_| anyhow!("invalid media URL"))?;
+    if parsed.scheme() != "https" || parsed.host_str().is_none() {
+        return Err(anyhow!("post media must be an HTTPS URL"));
+    }
+    let is_visual_extension = |ext: &str| {
+        matches!(
+            ext,
+            "jpg"
+                | "jpeg"
+                | "png"
+                | "webp"
+                | "gif"
+                | "avif"
+                | "heic"
+                | "bmp"
+                | "tif"
+                | "tiff"
+                | "mp4"
+                | "webm"
+                | "mov"
+                | "m4v"
+        )
+    };
+    let ext = extension
+        .map(str::to_ascii_lowercase)
+        .filter(|ext| is_visual_extension(ext))
+        .or_else(|| {
+            parsed
+                .path()
+                .rsplit('/')
+                .next()
+                .and_then(|name| {
+                    name.rsplit_once('.')
+                        .map(|(_, ext)| ext.to_ascii_lowercase())
+                })
+                .filter(|ext| is_visual_extension(ext))
+        })
+        .unwrap_or_else(|| "bin".into());
+    let (site, post) = post_media_identity(page_url)?;
+    let title = format!("{site}-{post}-{index:03}");
+    const ALLOWED_HEADERS: &[&str] = &["accept", "accept-language", "origin"];
+    let headers = headers
+        .iter()
+        .filter(|(name, value)| {
+            ALLOWED_HEADERS.contains(&name.to_ascii_lowercase().as_str())
+                && !value.contains('\r')
+                && !value.contains('\n')
+                && value.len() <= 4096
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect();
+    Ok(NewItem {
+        url: media_url.to_owned(),
+        kind: Some(ItemKind::Http),
+        file_name: Some(format!("{title}.{ext}")),
+        referer: Some(page_url.to_owned()),
+        user_agent: user_agent.map(str::to_owned),
+        headers,
+        cookies: None,
+        media: Some(MediaInfo {
+            title: Some(title),
+            site: url::Url::parse(page_url)
+                .ok()
+                .and_then(|u| u.host_str().map(str::to_owned)),
+            page_url: Some(page_url.to_owned()),
+            playlist_index: Some(index as u32),
+            ..Default::default()
+        }),
+        ..Default::default()
+    })
+}
+
+fn create_post_media_folder(base: &std::path::Path, page_url: &str) -> Result<PathBuf> {
+    let url = url::Url::parse(page_url)?;
+    let host = url
+        .host_str()
+        .unwrap_or("post")
+        .trim_start_matches("www.")
+        .trim_start_matches("m.");
+    let site = host.split('.').next().unwrap_or("post");
+    let (_, post) = post_media_identity(page_url)?;
+    let name = format!(
+        "{site}-{}-{post}",
+        chrono::Local::now().format("%m-%d-%y-%H-%M")
+    );
+    std::fs::create_dir_all(base)?;
+    let mut suffix = 1;
+    loop {
+        let folder = base.join(if suffix == 1 {
+            name.clone()
+        } else {
+            format!("{name}-{suffix}")
+        });
+        match std::fs::create_dir(&folder) {
+            Ok(()) => return Ok(folder),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => suffix += 1,
+            Err(error) => return Err(error.into()),
+        }
+    }
+}
+
+fn post_cookie_allowed(page: &str, target: &str) -> bool {
+    match (url::Url::parse(page), url::Url::parse(target)) {
+        (Ok(page), Ok(target)) => {
+            target.scheme() == "https"
+                && page.host_str().is_some()
+                && page.host_str() == target.host_str()
+        }
+        _ => false,
+    }
+}
+
+#[test]
+fn post_session_cookies_stay_on_the_page_host() {
+    assert!(post_cookie_allowed(
+        "https://www.facebook.com/posts/1",
+        "https://www.facebook.com/media/1.jpg"
+    ));
+    for target in [
+        "https://cdn.example/1.jpg",
+        "https://www.facebook.com.evil.test/1.jpg",
+        "http://www.facebook.com/1.jpg",
+    ] {
+        assert!(!post_cookie_allowed(
+            "https://www.facebook.com/posts/1",
+            target
+        ));
+    }
+}
+
 impl Core {
+    /// Add selected direct files extracted from one social post to the normal download queue.
+    pub fn add_post_media(
+        &self,
+        page_url: &str,
+        media: Vec<PostMediaSelection>,
+        cookies: Option<String>,
+        user_agent: Option<String>,
+        save_dir: Option<PathBuf>,
+        mode: StartMode,
+    ) -> Result<Vec<DownloadItem>> {
+        if media.is_empty() || media.len() > 500 {
+            return Err(anyhow!("select between 1 and 500 post media items"));
+        }
+        if cookies.as_ref().is_some_and(|value| {
+            value.len() > 64 * 1024 || value.contains('\r') || value.contains('\n')
+        }) {
+            return Err(anyhow!("invalid temporary session cookie"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        let mut items = Vec::with_capacity(media.len());
+        for selection in media {
+            if selection.index == 0 || selection.index > 500 {
+                return Err(anyhow!("post media index is outside the supported range"));
+            }
+            if !seen.insert(selection.url.clone()) {
+                continue;
+            }
+            let mut item = post_media_item(
+                page_url,
+                &selection.url,
+                Some(&selection.extension),
+                &selection.http_headers,
+                user_agent.as_deref(),
+                selection.index as usize,
+            )?;
+            item.save_dir = save_dir.clone();
+            items.push(item);
+        }
+        if items.is_empty() {
+            return Err(anyhow!("no unique post media items were selected"));
+        }
+        if items.len() > 1 {
+            let settings = self.settings();
+            let category = {
+                let st = self.0.state.lock();
+                categories::classify(&st.categories, items[0].file_name.as_deref().unwrap_or(""))
+            };
+            let base = save_dir.unwrap_or_else(|| self.resolve_save_dir(&settings, &category));
+            let folder = create_post_media_folder(&base, page_url)?;
+            let group = new_id();
+            for item in &mut items {
+                item.save_dir = Some(folder.clone());
+                if let Some(media) = &mut item.media {
+                    media.download_group = Some(group.clone());
+                }
+            }
+        }
+        self.add_items_with_ephemeral_cookies(items, mode, cookies)
+    }
+
     pub(crate) fn resolve_save_dir(&self, settings: &Settings, category: &str) -> PathBuf {
         let st = self.0.state.lock();
         let cat = st.categories.iter().find(|c| c.id == category);
@@ -294,6 +545,15 @@ impl Core {
 
     /// Add items directly (no dialog).
     pub fn add_items(&self, entries: Vec<NewItem>, mode: StartMode) -> Result<Vec<DownloadItem>> {
+        self.add_items_with_ephemeral_cookies(entries, mode, None)
+    }
+
+    pub(crate) fn add_items_with_ephemeral_cookies(
+        &self,
+        entries: Vec<NewItem>,
+        mode: StartMode,
+        cookies: Option<String>,
+    ) -> Result<Vec<DownloadItem>> {
         let _rt = crate::rt::enter();
         let settings = self.settings();
         let mut items = Vec::with_capacity(entries.len());
@@ -308,7 +568,26 @@ impl Core {
             item.position = position;
             items.push(item);
         }
-        self.insert_items(items.clone())?;
+        if let Some(cookie) = cookies.filter(|cookie| !cookie.is_empty()) {
+            let mut st = self.0.state.lock();
+            for item in &items {
+                // Page-session cookies must never be forwarded to an unrelated CDN host.
+                if item
+                    .referer
+                    .as_deref()
+                    .is_some_and(|page| post_cookie_allowed(page, &item.url))
+                {
+                    st.ephemeral_cookies.insert(item.id.clone(), cookie.clone());
+                }
+            }
+        }
+        if let Err(error) = self.insert_items(items.clone()) {
+            let mut st = self.0.state.lock();
+            for item in &items {
+                st.ephemeral_cookies.remove(&item.id);
+            }
+            return Err(error);
+        }
         match mode {
             StartMode::Now => {
                 self.start_items(&items.iter().map(|i| i.id.clone()).collect::<Vec<_>>())
@@ -699,12 +978,26 @@ impl Core {
         streams: Vec<SniffedStream>,
         preselected: Option<String>,
     ) -> VideoCapture {
+        self.open_video_with_context(page_url, title, streams, preselected, None, None)
+    }
+
+    pub fn open_video_with_context(
+        &self,
+        page_url: String,
+        title: Option<String>,
+        streams: Vec<SniffedStream>,
+        preselected: Option<String>,
+        cookies: Option<String>,
+        user_agent: Option<String>,
+    ) -> VideoCapture {
         let v = VideoCapture {
             id: new_id(),
             page_url,
             title,
             streams,
             preselected,
+            cookies,
+            user_agent,
         };
         self.0.state.lock().videos.insert(v.id.clone(), v.clone());
         self.emit(CoreEvent::VideoRequested(v.clone()));
@@ -756,6 +1049,8 @@ impl Core {
                 .and_then(|u| u.host_str().map(String::from)),
             page_url: Some(url.clone()),
             playlist_index: None,
+            download_group: None,
+            duplicate_of: None,
         };
         let title = media.title.clone().unwrap_or_else(|| "Video".into());
         let ext = jobs::video_ext(choice, options, settings);
@@ -1328,6 +1623,88 @@ impl Core {
                     }
                 }
             }
+            "probePostMedia" => {
+                let Some(page_url) = s("pageUrl") else {
+                    return fail("bad_request", "missing pageUrl".into());
+                };
+                if !is_single_post_media_url(&page_url) {
+                    return fail(
+                        "not_a_single_post",
+                        "Open one Instagram, TikTok, Facebook or X post—not a feed or profile."
+                            .into(),
+                    );
+                }
+                let ctx = prism_video::RequestContext {
+                    cookies: s("cookies"),
+                    user_agent: s("userAgent"),
+                    referer: Some(page_url.clone()),
+                    ..Default::default()
+                };
+                match self.probe_video(&page_url, ctx).await {
+                    Ok(probe) if probe.get("kind").and_then(|v| v.as_str()) == Some("playlist") => {
+                        let entries = probe.get("entries").cloned().unwrap_or_default();
+                        if entries.as_array().is_none_or(Vec::is_empty) {
+                            return fail(
+                                "no_post_media",
+                                "No downloadable images or videos were found in this post.".into(),
+                            );
+                        }
+                        serde_json::json!({"ok": true, "title": probe.get("title"), "entries": entries})
+                    }
+                    Ok(_) => fail(
+                        "no_post_media",
+                        "No downloadable images or videos were found in this post.".into(),
+                    ),
+                    Err(e) => {
+                        let raw = format!("{e:#}");
+                        tracing::info!(error = %raw, "probePostMedia failed");
+                        fail("app_error", readable_probe_error(&raw))
+                    }
+                }
+            }
+            "addPostMedia" => {
+                let Some(page_url) = s("pageUrl") else {
+                    return fail("bad_request", "missing pageUrl".into());
+                };
+                let media = match msg
+                    .get("media")
+                    .cloned()
+                    .and_then(|v| serde_json::from_value::<Vec<PostMediaSelection>>(v).ok())
+                {
+                    Some(media) => media,
+                    None => return fail("bad_request", "invalid selected media list".into()),
+                };
+                match self.add_post_media(
+                    &page_url,
+                    media,
+                    s("cookies"),
+                    s("userAgent"),
+                    None,
+                    StartMode::Now,
+                ) {
+                    Ok(items) => {
+                        serde_json::json!({"ok": true, "accepted": true, "count": items.len()})
+                    }
+                    Err(e) => fail("app_error", e.to_string()),
+                }
+            }
+            "openMediaPicker" => {
+                let Some(page_url) = s("pageUrl") else {
+                    return fail("bad_request", "missing pageUrl".into());
+                };
+                if !is_single_post_media_url(&page_url) {
+                    return fail("not_a_single_post", "Open one Instagram, TikTok, Facebook or X post URL—not a feed, profile or search page.".into());
+                }
+                self.open_video_with_context(
+                    page_url,
+                    s("title"),
+                    Vec::new(),
+                    None,
+                    s("cookies"),
+                    s("userAgent"),
+                );
+                serde_json::json!({"ok": true, "accepted": true})
+            }
             "probeStream" => {
                 // A sniffed HLS/DASH manifest: list its declared variants (no download) so the
                 // page menu can show the real quality breakdown instead of one generic entry.
@@ -1381,7 +1758,15 @@ impl Core {
                         let mut st = self.0.state.lock();
                         st.video_probes
                             .retain(|_, (t, _)| t.elapsed() < std::time::Duration::from_secs(1800));
-                        st.video_probes.get(&page_url).map(|(_, p)| p.clone())
+                        let ctx = prism_video::RequestContext {
+                            cookies: s("cookies"),
+                            user_agent: s("userAgent"),
+                            referer: Some(page_url.clone()),
+                            ..Default::default()
+                        };
+                        st.video_probes
+                            .get(&jobs::probe_cache_key(&page_url, &ctx))
+                            .map(|(_, p)| p.clone())
                     };
                     let choice = cached
                         .as_ref()
@@ -1554,6 +1939,10 @@ const VIDEO_SITES: &[&str] = &[
     "ok.ru",
     "linkedin.com",
 ];
+
+fn is_single_post_media_url(raw: &str) -> bool {
+    prism_video::probe::is_single_post_media_url(raw)
+}
 
 /// Pages of sites whose yt-dlp extractor only reads single posts (LinkedIn, Instagram): a
 /// feed, profile or Explore page has nothing to read, and yt-dlp's answer (an "Unsupported URL"
@@ -1762,7 +2151,154 @@ impl IpcHandler for Core {
 
 #[cfg(test)]
 mod tests {
-    use super::is_video_page;
+    use super::{is_video_page, post_media_item};
+    use crate::model::ItemKind;
+
+    #[test]
+    fn social_post_file_names_identify_the_source_site() {
+        for (page, prefix) in [
+            ("https://www.facebook.com/creator/posts/123", "FB-"),
+            ("https://m.facebook.com/creator/posts/123", "FB-"),
+            ("https://www.instagram.com/p/abc/", "IG-"),
+            ("https://x.com/creator/status/123", "X-"),
+            ("https://twitter.com/creator/status/123", "X-"),
+        ] {
+            let item = post_media_item(
+                page,
+                "https://cdn.example/photo.jpg",
+                Some("jpg"),
+                &Default::default(),
+                None,
+                1,
+            )
+            .unwrap();
+            let name = item.file_name.unwrap();
+            assert!(
+                name.starts_with(prefix) && name.ends_with("-001.jpg"),
+                "{page}: {name}"
+            );
+        }
+    }
+
+    #[test]
+    fn social_post_file_names_distinguish_posts_and_ignore_tracking_and_media_position() {
+        let name = |page: &str, index| {
+            post_media_item(
+                page,
+                "https://cdn.example/photo.jpg",
+                Some("jpg"),
+                &Default::default(),
+                None,
+                index,
+            )
+            .unwrap()
+            .file_name
+            .unwrap()
+        };
+        assert_ne!(
+            name("https://x.com/creator/status/123", 1),
+            name("https://x.com/creator/status/456", 1)
+        );
+        assert_eq!(
+            name("https://x.com/creator/status/123", 1),
+            name(
+                "https://twitter.com/creator/status/123/photo/2?s=20#view",
+                1
+            )
+        );
+        assert_eq!(
+            name("https://www.instagram.com/p/abc/", 1),
+            name("https://www.instagram.com/p/abc/?img_index=2", 1)
+        );
+        assert_eq!(
+            name("https://www.facebook.com/creator/posts/123", 1),
+            name("https://m.facebook.com/creator/posts/123?tracking=value", 1)
+        );
+        assert_ne!(
+            name("https://www.facebook.com/watch/?v=123", 1),
+            name("https://www.facebook.com/watch/?v=456", 1)
+        );
+        assert_ne!(
+            name("https://x.com/creator/status/123", 1),
+            name("https://x.com/creator/status/123", 2)
+        );
+    }
+
+    #[test]
+    fn social_post_media_item_keeps_session_cookies_out_of_persisted_metadata() {
+        let item = post_media_item(
+            "https://www.instagram.com/p/DerwTyBnT0l/",
+            "https://cdn.example/path/photo.webp?sig=secret",
+            Some("webp"),
+            &Default::default(),
+            Some("Mozilla/5.0 test"),
+            2,
+        )
+        .unwrap();
+        assert_eq!(item.kind, Some(ItemKind::Http));
+        assert_eq!(item.file_name.as_deref(), Some("IG-53E56185-002.webp"));
+        assert_eq!(
+            item.referer.as_deref(),
+            Some("https://www.instagram.com/p/DerwTyBnT0l/")
+        );
+        assert_eq!(item.cookies, None);
+        assert_eq!(item.user_agent.as_deref(), Some("Mozilla/5.0 test"));
+        assert!(item.headers.is_empty());
+        assert_eq!(item.media.as_ref().and_then(|m| m.playlist_index), Some(2));
+    }
+
+    #[test]
+    fn social_post_media_rejects_non_https_targets_and_non_post_pages() {
+        assert!(
+            post_media_item(
+                "https://x.com/user/status/123",
+                "http://cdn.example/a.jpg",
+                None,
+                &Default::default(),
+                None,
+                1
+            )
+            .is_err()
+        );
+        assert!(
+            post_media_item(
+                "https://www.instagram.com/explore/",
+                "https://cdn.example/a.jpg",
+                None,
+                &Default::default(),
+                None,
+                1
+            )
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn social_post_media_keeps_safe_cdn_headers_but_drops_cookie_and_untrusted_headers() {
+        let headers = std::collections::BTreeMap::from([
+            ("Origin".into(), "https://cdn.example".into()),
+            ("Accept".into(), "image/*".into()),
+            ("Cookie".into(), "session=secret".into()),
+            ("Host".into(), "attacker.example".into()),
+            ("X-Injected".into(), "bad".into()),
+        ]);
+        let item = post_media_item(
+            "https://www.tiktok.com/@user/photo/123",
+            "https://cdn.example/photo.jpg",
+            Some("jpg"),
+            &headers,
+            Some("Browser UA"),
+            1,
+        )
+        .unwrap();
+        assert_eq!(item.headers.len(), 2);
+        assert!(item.headers.iter().any(|(name, _)| name == "Origin"));
+        assert!(item.headers.iter().any(|(name, _)| name == "Accept"));
+        assert!(item.headers.iter().all(|(name, _)| {
+            !name.eq_ignore_ascii_case("cookie") && !name.eq_ignore_ascii_case("host")
+        }));
+        assert_eq!(item.cookies, None);
+    }
 
     #[test]
     fn video_pages_are_detected() {
@@ -1880,7 +2416,30 @@ mod name_template_tests {
 
 #[cfg(test)]
 mod probe_message_tests {
-    use super::{not_a_single_video, readable_probe_error, version_older};
+    use super::{
+        is_single_post_media_url, not_a_single_video, readable_probe_error, version_older,
+    };
+
+    #[test]
+    fn exact_post_picker_rejects_feeds_and_search_pages() {
+        for url in [
+            "https://www.instagram.com/p/DerwTyBnTOI/",
+            "https://www.tiktok.com/@vexaro.4k/photo/7692114864516418868?q=wallpaper",
+            "https://www.facebook.com/share/p/1F5BkZh6xF/",
+            "https://www.facebook.com/reel/123456",
+            "https://x.com/Elliza_19/status/2057092275717427617",
+        ] {
+            assert!(is_single_post_media_url(url), "{url}");
+        }
+        for url in [
+            "https://www.tiktok.com/search?q=wallpaper",
+            "https://www.instagram.com/explore/",
+            "https://www.instagram.com/creator/",
+            "https://www.facebook.com/",
+        ] {
+            assert!(!is_single_post_media_url(url), "{url}");
+        }
+    }
 
     #[test]
     fn feed_and_profile_pages_of_post_only_sites_are_not_probed() {

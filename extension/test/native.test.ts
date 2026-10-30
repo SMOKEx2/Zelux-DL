@@ -84,6 +84,17 @@ describe('NativeClient', () => {
     expect(chromeMock.runtime.sendNativeMessage).not.toHaveBeenCalled();
   });
 
+  it('explicit retry clears missing-host backoff and opens a fresh native port', async () => {
+    nextBehavior = (_m, p) => queueMicrotask(() => p.die('Specified native messaging host not found.'));
+    const c = new NativeClient();
+    await expect(c.request({ type: 'status' })).rejects.toMatchObject({ code: 'host_missing' });
+    c.retry();
+    nextBehavior = null;
+    await c.request({ type: 'hello', protocol: 1, version: '2.0.4', browser: 'chromium', userAgent: 'test' });
+    expect(chromeMock.runtime.connectNative).toHaveBeenCalledTimes(2);
+    expect(ports[1]!.posted[0]).toMatchObject({ type: 'hello' });
+  });
+
   it('falls back to sendNativeMessage when the port dies mid-request, then reconnects', async () => {
     nextBehavior = (_m, p) => queueMicrotask(() => p.die('Native host has exited.'));
     const c = new NativeClient();

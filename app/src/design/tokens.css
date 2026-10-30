@@ -203,7 +203,7 @@
      makes the sidebar / toolbar glass read as glass rather than flat grey. */
   --bg-canvas: #07080b;
   --ambient-1: rgb(var(--accent-rgb) / 0.34);
-  --ambient-2: rgb(47 203 230 / 0.17);
+  --ambient-2: rgb(72 74 82 / 0.17);
   --ambient-3: rgb(255 127 143 / 0.08);
   --bg-ambient:
     radial-gradient(60% 55% at 0% 0%, var(--ambient-1) 0%, transparent 70%),
@@ -318,7 +318,7 @@
 
   --bg-canvas: #e6e8ee;
   --ambient-1: rgb(var(--accent-rgb) / 0.22);
-  --ambient-2: rgb(47 203 230 / 0.16);
+  --ambient-2: rgb(92 95 104 / 0.16);
   --ambient-3: rgb(255 127 143 / 0.10);
   --bg-ambient:
     radial-gradient(60% 55% at 0% 0%, var(--ambient-1) 0%, transparent 70%),

@@ -117,6 +117,10 @@ pub struct PlaylistEntry {
     pub id: Option<String>,
     pub url: String,
     pub title: Option<String>,
+    /// Original file extension when a gallery extractor knows it but the signed URL omits it.
+    pub extension: Option<String>,
+    /// Safe per-asset request headers returned by a metadata resolver (cookies are excluded).
+    pub http_headers: BTreeMap<String, String>,
     pub duration: Option<f64>,
     pub thumbnail: Option<String>,
     pub uploader: Option<String>,
@@ -882,6 +886,8 @@ impl RawInfo {
                     id: e.id.clone(),
                     url,
                     title: e.title.clone(),
+                    extension: None,
+                    http_headers: BTreeMap::new(),
                     duration: e.duration,
                     thumbnail: e
                         .thumbnails

@@ -19,7 +19,9 @@ pub fn set_language(code: &str) -> bool {
 /// `key` (the English text) in the UI language, with `{name}` placeholders filled in.
 pub fn tr(key: &str, vars: &[(&str, &str)]) -> String {
     let lang = LANGUAGE.read().unwrap_or_else(|e| e.into_inner()).clone();
-    let mut text = lookup(&lang, key).unwrap_or(key).replace("Prism", "ZeluxDL");
+    let mut text = lookup(&lang, key)
+        .unwrap_or(key)
+        .replace("Prism", "ZeluxDL");
     for (name, value) in vars {
         text = text.replace(&format!("{{{name}}}"), value);
     }
@@ -38,15 +40,21 @@ fn lookup(lang: &str, key: &str) -> Option<&'static str> {
             "Drop zone" => Some("พื้นที่วางลิงก์"),
             "Quit Prism" | "Quit ZeluxDL" => Some("ออกจาก ZeluxDL"),
             "Prism — idle" | "ZeluxDL — idle" => Some("ZeluxDL — ไม่มีการดาวน์โหลด"),
-            "Prism — {count} downloading · {speed}" | "ZeluxDL — {count} downloading · {speed}" => Some("ZeluxDL — กำลังดาวน์โหลด {count} รายการ · {speed}"),
+            "Prism — {count} downloading · {speed}" | "ZeluxDL — {count} downloading · {speed}" => {
+                Some("ZeluxDL — กำลังดาวน์โหลด {count} รายการ · {speed}")
+            }
             "Download added" => Some("เพิ่มรายการดาวน์โหลดแล้ว"),
             "Download complete" => Some("ดาวน์โหลดเสร็จแล้ว"),
+            "Already downloaded" => Some("เคยดาวน์โหลดแล้ว"),
+            "{count} duplicate files skipped" => Some("ข้ามไฟล์ซ้ำ {count} ไฟล์"),
             "Download failed" => Some("ดาวน์โหลดไม่สำเร็จ"),
             "Queue finished" => Some("คิวดาวน์โหลดเสร็จแล้ว"),
             "{name} has no more downloads." => Some("ไม่มีรายการดาวน์โหลดเหลือใน {name}"),
             "Added to the list" => Some("เพิ่มลงในรายการแล้ว"),
             "Downloading in the browser" => Some("กำลังดาวน์โหลดในเบราว์เซอร์"),
-            "{host} lets only a web browser download this file, so the browser is downloading it." => Some("{host} อนุญาตให้ดาวน์โหลดผ่านเบราว์เซอร์เท่านั้น จึงให้เบราว์เซอร์ดาวน์โหลดไฟล์นี้"),
+            "{host} lets only a web browser download this file, so the browser is downloading it." => {
+                Some("{host} อนุญาตให้ดาวน์โหลดผ่านเบราว์เซอร์เท่านั้น จึงให้เบราว์เซอร์ดาวน์โหลดไฟล์นี้")
+            }
             _ => None,
         };
     }

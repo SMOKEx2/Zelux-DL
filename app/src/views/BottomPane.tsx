@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { IconButton } from "../components/IconButton";
 import { useItemDetails } from "../components/useItemDetails";
 import { ConnectionLanes, FileMap, SpeedChart } from "../components/Visuals";
@@ -13,6 +14,7 @@ import { useApp } from "../lib/store";
 import type { ItemDetails } from "../lib/types";
 import { useUi } from "../lib/ui";
 import { copyText } from "../lib/win";
+import { useVisibleIds } from "./useListing";
 
 const TABS = [
   { id: "connections", label: tk("Connections") },
@@ -25,9 +27,11 @@ export function BottomPane() {
   const open = useUi((s) => s.bottomOpen);
   const tab = useUi((s) => s.bottomTab);
   const height = useUi((s) => s.bottomHeight);
-  const focus = useApp((s) => s.selection[s.selection.length - 1] ?? null);
+  const selection = useApp((s) => s.selection);
+  const ids = useVisibleIds();
+  const focus = selection[selection.length - 1] ?? null;
   const item = useApp((s) => (focus ? s.items[focus] : undefined));
-  const details = useItemDetails(item && item.status !== "completed" ? focus : null, 500, open);
+  const details = useItemDetails(item && item.status !== "completed" ? focus : null, 500, open && selection.length === 1);
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
@@ -45,35 +49,83 @@ export function BottomPane() {
     window.addEventListener("pointerup", up);
   };
 
-  // The pane only appears for a selection; with nothing selected the list gets the room.
-  if (!open || !item) return null;
+  const multiple = selection.length > 1;
+  const allVisibleSelected = ids.length > 0 && ids.every((id) => selection.includes(id));
+  const paneHeight = multiple ? 36 + 30 : height;
   return (
-    <section className="pane" aria-label={t("Selected download")}>
-      <div className="pane__resize" onPointerDown={startResize} aria-hidden="true" />
-      <div className="pane__tabs" role="tablist">
-        {TABS.map((x) => (
-          <button key={x.id} type="button" role="tab" aria-selected={tab === x.id} className={`pane__tab${tab === x.id ? " on" : ""}`} onClick={() => useUi.getState().setBottom({ bottomTab: x.id })}>
-            {t(x.label)}
-          </button>
-        ))}
-        <span className="spacer" />
-        <span className="pane__file">
-          <span className="ellipsis">{item.fileName}</span>
-          {details?.segments.length ? <span className="badge badge--accent">{t("{count} conn", { count: details.segments.filter((s) => s.state === "active").length })}</span> : null}
-        </span>
-        <IconButton icon="external" size={15} label={t("Open details window")} onClick={() => actions.details(item.id)} />
-        <IconButton icon="chevron-down" size={15} label={t("Hide pane")} onClick={() => useUi.getState().setBottom({ bottomOpen: false })} />
-      </div>
-      <div className="pane__body">
-        {tab === "connections" ? (
-          <ConnectionsTab details={details} done={item.status === "completed"} />
-        ) : tab === "speed" ? (
-          <SpeedTab details={details} id={item.id} />
+    <AnimatePresence initial={false}>
+    {open && item && <motion.section
+      key="bottom-pane"
+      className={`pane${multiple ? " pane--selection" : ""}`}
+      aria-label={multiple ? t("Selection") : t("Selected download")}
+      initial={{ height: 0, y: 16, opacity: 0 }}
+      animate={{ height: paneHeight, y: 0, opacity: 1 }}
+      exit={{ height: 0, y: 16, opacity: 0 }}
+      transition={{ height: { duration: 0.22, ease: [0.16, 1, 0.3, 1] }, y: { duration: 0.22, ease: [0.16, 1, 0.3, 1] }, opacity: { duration: 0.14 } }}
+      style={{ overflow: "hidden" }}
+    >
+      {!multiple && <div className="pane__resize" onPointerDown={startResize} aria-hidden="true" />}
+      <div className="pane__tabs" role={multiple ? "toolbar" : "tablist"} aria-label={multiple ? t("Selection") : undefined}>
+        {multiple ? (
+          <>
+            <span className="pane__selection-count">
+              <AnimatePresence mode="wait" initial={false}>
+                <motion.span
+                  key={`${selection.length}-${ids.length}`}
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -3 }}
+                  transition={{ duration: 0.12, ease: [0.2, 0, 0, 1] }}
+                >
+                  {t("{count} of {total} selected", { count: selection.length, total: ids.length })}
+                </motion.span>
+              </AnimatePresence>
+            </span>
+            <button type="button" className="btn btn--primary btn--sm pane__select-all" disabled={!ids.length} aria-pressed={allVisibleSelected} onClick={() => useApp.getState().select(allVisibleSelected ? [] : ids, allVisibleSelected ? null : ids[ids.length - 1] ?? null)}>
+              <Icon name="check" size={13} />
+              {allVisibleSelected ? t("Clear selection") : t("Select all")}
+            </button>
+          </>
         ) : (
-          <InfoTab id={item.id} />
+          <>
+            {TABS.map((x) => (
+              <button key={x.id} type="button" role="tab" aria-selected={tab === x.id} className={`pane__tab${tab === x.id ? " on" : ""}`} onClick={() => useUi.getState().setBottom({ bottomTab: x.id })}>
+                {t(x.label)}
+                {tab === x.id && <motion.span className="pane__tab-indicator" layoutId="pane-tab-indicator" transition={{ type: "spring", stiffness: 520, damping: 42 }} />}
+              </button>
+            ))}
+            <span className="spacer" />
+            <span className="pane__file">
+              <span className="ellipsis">{item.fileName}</span>
+              {details?.segments.length ? <span className="badge badge--accent">{t("{count} conn", { count: details.segments.filter((s) => s.state === "active").length })}</span> : null}
+            </span>
+            <IconButton icon="external" size={15} label={t("Open details window")} onClick={() => actions.details(item.id)} />
+            <IconButton icon="chevron-down" size={15} label={t("Hide pane")} onClick={() => useUi.getState().setBottom({ bottomOpen: false })} />
+          </>
         )}
       </div>
-    </section>
+      {!multiple && <div className="pane__body">
+        <AnimatePresence mode="wait" initial={false}>
+          <motion.div
+            key={tab}
+            className="pane__tab-content"
+            initial={{ opacity: 0, y: 5 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -3 }}
+            transition={{ duration: 0.14, ease: [0.2, 0, 0, 1] }}
+          >
+            {tab === "connections" ? (
+              <ConnectionsTab details={details} done={item.status === "completed"} />
+            ) : tab === "speed" ? (
+              <SpeedTab details={details} id={item.id} />
+            ) : (
+              <InfoTab id={item.id} />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </div>}
+    </motion.section>}
+    </AnimatePresence>
   );
 }
 

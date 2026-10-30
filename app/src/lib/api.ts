@@ -94,6 +94,7 @@ export interface VideoDecision {
   title?: string;
   thumbnail?: string;
   duration?: number;
+  context?: { cookies?: string; userAgent?: string; referer?: string };
   /** Playlist entries to download (each with its title and 1-based position). */
   entries: VideoEntry[];
   mode: StartMode;
@@ -167,6 +168,15 @@ export interface HfPresent {
 
 export const api = {
   bootstrap: () => invoke<Bootstrap>("bootstrap"),
+  findDuplicates: () => invoke<string[]>("find_duplicates"),
+  imagePreviewUrl: async (id: string): Promise<string | null> => {
+    if (!inTauri) return null;
+    const path = await invoke<string | null>("image_preview_path", { id });
+    if (!path) return null;
+    const { convertFileSrc } = await import("@tauri-apps/api/core");
+    return convertFileSrc(path);
+  },
+  videoFileDuration: (id: string) => invoke<number | null>("video_file_duration", { id }),
   updateSettings: (patch: unknown) => invoke<Settings>("update_settings", { patch }),
   toggleSpeedLimiter: () => invoke<boolean>("toggle_speed_limiter"),
 
@@ -187,8 +197,10 @@ export const api = {
 
   getVideo: (id: string) => invoke<VideoCapture | null>("get_video", { id }),
   openVideoUrl: (url: string) => invoke<VideoCapture>("open_video_url", { url }),
-  probeVideo: (url: string) => invoke<VideoProbe>("probe_video", { url }),
+  probeVideo: (url: string, cookies?: string | null, userAgent?: string | null) => invoke<VideoProbe>("probe_video", { url, cookies, userAgent }),
   confirmVideo: (decision: VideoDecision) => invoke<number>("confirm_video", { decision }),
+  addPostMedia: (args: { pageUrl: string; media: { url: string; extension: string; httpHeaders?: Record<string, string>; index: number }[]; cookies?: string; userAgent?: string; saveDir?: string; mode: StartMode }) =>
+    invoke<number>("add_post_media", { args }),
   cancelVideo: (id: string) => invoke<void>("cancel_video", { id }),
   addStream: (stream: SniffedStream, pageUrl?: string, title?: string) =>
     invoke<DownloadItem>("add_stream", { args: { stream, pageUrl, title } }),
@@ -393,6 +405,8 @@ export interface PlaylistEntry {
   id: string;
   url: string;
   title?: string | null;
+  extension?: string | null;
+  httpHeaders?: Record<string, string>;
   duration?: number | null;
   thumbnail?: string | null;
   uploader?: string | null;

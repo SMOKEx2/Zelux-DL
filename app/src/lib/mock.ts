@@ -433,6 +433,7 @@ function details(id: string): ItemDetails | null {
 }
 
 const commands: Record<string, (args: Record<string, unknown>) => unknown> = {
+  image_preview_path: () => null,
   bootstrap: (): Bootstrap => ({
     version: "1.1.7",
     items: Object.values(items),

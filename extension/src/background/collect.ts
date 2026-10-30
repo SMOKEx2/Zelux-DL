@@ -7,6 +7,8 @@ import type { BatchItem, BatchKind, BatchRequest } from '../shared/protocol';
 import { filenameFromUrl } from '../shared/rules';
 import { actionTimeout, cookieCache, tabInfo, userAgent } from './context';
 import { native } from './native';
+import { isSinglePostMediaUrl, isSocialMediaUrl } from '../shared/social-post';
+import { openPostMediaPicker } from './video';
 
 export interface CollectedItem {
   url: string;
@@ -131,6 +133,14 @@ export async function collectFromTab(tabId: number, mode: BatchKind, frameId?: n
 
 /** Collect + send `batch`. Returns the number of items sent. */
 export async function collectAndSend(tabId: number, mode: BatchKind, frameId?: number): Promise<number> {
+  const activeTab = await tabInfo(tabId);
+  if (isSocialMediaUrl(activeTab?.url ?? '') && mode !== 'selection') {
+    if (!isSinglePostMediaUrl(activeTab?.url ?? '')) {
+      throw new Error('For Instagram, TikTok, Facebook and X, open one post first. Page-wide collection is disabled to prevent unrelated media from being mixed in.');
+    }
+    await openPostMediaPicker(tabId);
+    return 1;
+  }
   const res = await collectFromTab(tabId, mode, frameId);
   if (!res.items.length) return 0;
   const tab = await tabInfo(tabId);

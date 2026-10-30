@@ -18,6 +18,7 @@ use prism_video::{
     SponsorBlockMode, Stage, StreamRole, VideoOptions, YtProgress,
 };
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -1363,10 +1364,16 @@ impl TorrentJob {
 /// window); the download itself still probes fresh.
 pub(crate) const PROBE_REUSE: Duration = Duration::from_secs(600);
 
-fn recent_probe(core: &Core, page_url: &str) -> Option<serde_json::Value> {
+pub(crate) fn probe_cache_key(page_url: &str, ctx: &RequestContext) -> String {
+    let context = serde_json::to_vec(ctx).unwrap_or_default();
+    let digest = Sha256::digest(context);
+    format!("{page_url}#{}", hex::encode(digest))
+}
+
+fn recent_probe(core: &Core, key: &str) -> Option<serde_json::Value> {
     let st = core.0.state.lock();
     st.video_probes
-        .get(page_url)
+        .get(key)
         .filter(|(at, _)| at.elapsed() < PROBE_REUSE)
         .map(|(_, p)| p.clone())
 }
@@ -1378,19 +1385,20 @@ pub(crate) async fn probe_video(
     page_url: &str,
     ctx: RequestContext,
 ) -> Result<serde_json::Value> {
-    if let Some(p) = recent_probe(core, page_url) {
+    let key = probe_cache_key(page_url, &ctx);
+    if let Some(p) = recent_probe(core, &key) {
         return Ok(p);
     }
     let lock = core
         .0
         .probe_locks
         .lock()
-        .entry(page_url.to_string())
+        .entry(key.clone())
         .or_default()
         .clone();
     let res = {
         let _same_page = lock.lock().await;
-        match recent_probe(core, page_url) {
+        match recent_probe(core, &key) {
             Some(p) => Ok(p),
             None => {
                 let res = run_probe_video(core, page_url, ctx).await;
@@ -1399,18 +1407,15 @@ pub(crate) async fn probe_video(
                         .state
                         .lock()
                         .video_probes
-                        .insert(page_url.to_string(), (std::time::Instant::now(), p.clone()));
+                        .insert(key.clone(), (std::time::Instant::now(), p.clone()));
                 }
                 res
             }
         }
     };
     let mut locks = core.0.probe_locks.lock();
-    if locks
-        .get(page_url)
-        .is_some_and(|l| Arc::strong_count(l) <= 2)
-    {
-        locks.remove(page_url);
+    if locks.get(&key).is_some_and(|l| Arc::strong_count(l) <= 2) {
+        locks.remove(&key);
     }
     res
 }
@@ -1476,43 +1481,47 @@ fn adopt_title(
     page_url: &str,
 ) -> DownloadItem {
     let untitled = item.media.as_ref().is_some_and(|m| m.title.is_none());
-    if !untitled || info.title.trim().is_empty() || item.downloaded > 0 {
-        return item.clone();
-    }
-    let template = &settings.video.file_template;
-    let id = super::capture::video_id(page_url);
-    let file = Path::new(&item.file_name);
-    let stem = file
-        .file_stem()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_default();
-    let placeholder = super::sanitize_name(&super::capture::render_name_template(
-        template,
-        "Video",
-        id.as_deref(),
-    ));
-    let Some(prefix) = stem.strip_suffix(placeholder.as_str()) else {
-        return item.clone();
-    };
-    let numbered = prefix
-        .strip_suffix(" - ")
-        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
-    if !prefix.is_empty() && !numbered {
-        return item.clone();
-    }
-    let titled = super::sanitize_name(&super::capture::render_name_template(
-        template,
-        &info.title,
-        id.as_deref(),
-    ));
-    let name = match file.extension() {
-        Some(ext) => format!("{prefix}{titled}.{}", ext.to_string_lossy()),
-        None => format!("{prefix}{titled}"),
+    let rename = if untitled && !info.title.trim().is_empty() && item.downloaded == 0 {
+        let template = &settings.video.file_template;
+        let id = super::capture::video_id(page_url);
+        let file = Path::new(&item.file_name);
+        let stem = file
+            .file_stem()
+            .map(|s| s.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let placeholder = super::sanitize_name(&super::capture::render_name_template(
+            template,
+            "Video",
+            id.as_deref(),
+        ));
+        stem.strip_suffix(placeholder.as_str()).and_then(|prefix| {
+            let numbered = prefix
+                .strip_suffix(" - ")
+                .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()));
+            if !prefix.is_empty() && !numbered {
+                return None;
+            }
+            let titled = super::sanitize_name(&super::capture::render_name_template(
+                template,
+                &info.title,
+                id.as_deref(),
+            ));
+            Some(match file.extension() {
+                Some(ext) => format!("{prefix}{titled}.{}", ext.to_string_lossy()),
+                None => format!("{prefix}{titled}"),
+            })
+        })
+    } else {
+        None
     };
     core.with_item(&item.id, |i| {
-        i.file_name = name.clone();
+        if let Some(name) = &rename {
+            i.file_name = name.clone();
+        }
         if let Some(m) = i.media.as_mut() {
-            m.title = Some(info.title.clone());
+            if m.title.is_none() && !info.title.trim().is_empty() {
+                m.title = Some(info.title.clone());
+            }
             m.thumbnail = m.thumbnail.take().or_else(|| info.thumbnail.clone());
             m.duration = m.duration.or(info.duration);
         }
@@ -1573,6 +1582,21 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn probe_cache_key_is_scoped_to_the_browser_session_without_storing_cookies() {
+        let anonymous = RequestContext::default();
+        let signed_in = RequestContext {
+            cookies: Some("session=secret".into()),
+            ..Default::default()
+        };
+        let anonymous_key = probe_cache_key("https://example.com/post", &anonymous);
+        let signed_in_key = probe_cache_key("https://example.com/post", &signed_in);
+
+        assert_ne!(anonymous_key, signed_in_key);
+        assert!(!anonymous_key.contains("secret"));
+        assert!(!signed_in_key.contains("secret"));
+    }
 
     #[test]
     fn checksum_parsing() {

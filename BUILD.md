@@ -34,7 +34,7 @@ then open http://localhost:1420) — handy for UI work without compiling Rust.
 ## Tests
 
 ```bash
-cargo test --workspace --exclude prism-app        # engine, core, video, torrent, native host
+cargo test --workspace --exclude zeluxdl-app      # engine, core, video, torrent, native host
 cargo clippy --workspace --all-targets -- -D warnings
 npm test --prefix app && npm run typecheck --prefix app
 npm test --prefix extension && npm run typecheck --prefix extension
@@ -82,15 +82,15 @@ npm run build --prefix extension && (cd app && npm run tauri:build)
 
 * **NSIS / MSI (Windows):** install per user (NSIS) or per machine (MSI), add Start-menu
   entries and an uninstaller, associate `.torrent` files, register the `magnet:` handler,
-  and run `prism-native-host register` so Chrome, Edge, Brave, Opera, Vivaldi, Chromium
+  and run `zeluxdl-native-host register` so Chrome, Edge, Brave, Opera, Vivaldi, Chromium
   and Firefox can reach the app. Uninstalling removes the registrations.
-* **deb / rpm (Linux):** install `/usr/bin/prism` + `/usr/bin/prism-native-host`, a
+* **deb / rpm (Linux):** install the app and `/usr/bin/zeluxdl-native-host`, a
   `.desktop` entry, and system-wide native messaging manifests for Chrome, Chromium, Edge
   and Firefox (`packaging/linux/postinst.sh`). Brave, Vivaldi and Opera get per-user
   manifests written by the app on every start.
-* **AppImage:** the app copies the host to `~/.local/share/prism/bin/` (the AppImage mount
+* **AppImage:** the app copies the host to `~/.local/share/zeluxdl/bin/` (the AppImage mount
   path changes every run) and registers per-user manifests.
-* **Autostart** is a setting (on by default) handled by the app itself.
+* **Autostart** is a setting (off by default) handled by the app itself.
 
 ## Continuous integration
 

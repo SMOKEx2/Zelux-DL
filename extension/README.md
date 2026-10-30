@@ -24,7 +24,7 @@ npm run e2e          # Playwright + real Chromium + real native host + mock app 
 Install for development:
 
 1. Build the host: `cargo build -p prism-native-host --release`.
-2. Register it: `target/release/prism-native-host register` (all browsers; per-user, no admin).
+2. Register it: `target/release/zeluxdl-native-host register` (all browsers; per-user, no admin).
    The Prism app does this itself on every start / from *Settings › Browser integration › Repair*.
 3. Chromium-family: `chrome://extensions` → Developer mode → *Load unpacked* → `extension/build/chromium`.
    Firefox: `about:debugging#/runtime/this-firefox` → *Load Temporary Add-on* → `extension/build/firefox/manifest.json`
@@ -177,6 +177,31 @@ else under *Video*; `label` is displayed verbatim, `note` as a second line):
     { "id": "140", "label": "Audio · M4A · 4 MB", "kind": "audio", "ext": "m4a", "size": 4194304, "note": "AAC 128k" } ] }
 ```
 `ok: false` or an empty list → the menu falls back to sniffed streams and shows the message.
+
+### `probePostMedia` and `addPostMedia`
+The popup uses these only when the current tab is one exact Facebook, Instagram, TikTok or X post;
+feeds, profiles and search pages are never scanned for this picker. `probePostMedia` resolves the
+post with temporary site cookies only when the user explicitly opts in, and returns only its
+image/video entries (including safe per-file `httpHeaders` for CDN requests). The popup renders
+previews and the user selects the items. `addPostMedia` sends only those selected direct URLs, their
+index, extension, and safe headers to ZeluxDL. If the user opted in, cookies stay in memory for the
+download engine and are never serialized in the queue/database; they are dropped when the job ends.
+
+```json
+{ "id": "…", "type": "probePostMedia", "pageUrl": "https://www.instagram.com/p/…/",
+  "cookies": "…", "userAgent": "…" }
+```
+
+```json
+{ "id": "…", "type": "addPostMedia", "pageUrl": "https://www.instagram.com/p/…/",
+  "media": [{ "url": "https://cdn.example/image.jpg", "extension": "jpg",
+               "httpHeaders": { "Accept": "image/*", "Origin": "https://www.instagram.com" }, "index": 1 }],
+  "userAgent": "…", "cookies": "…" }
+```
+Only `Accept`, `Accept-Language`, and `Origin` are copied from resolver metadata; the post URL and
+browser User-Agent supply `Referer` and `User-Agent`. Cookies, `Host`, and hop-by-hop headers are
+rejected before items enter the queue. `cookies` is optional and must only be sent after explicit
+user consent; the app keeps it in memory for this job and clears it on completion, failure or cancel.
 
 ### `video`
 Sent when the user picks an entry in the video-button menu or clicks *Download* on a popup media

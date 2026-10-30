@@ -29,6 +29,211 @@ async fn core_in(dir: &Path) -> Core {
     core
 }
 
+#[tokio::test]
+async fn post_media_groups_unique_selections_but_keeps_single_files_in_the_main_folder() {
+    use prism_core::manager::PostMediaSelection;
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_in(dir.path()).await;
+    let selection = |index| PostMediaSelection {
+        url: format!("https://cdn.example/{index}.jpg"),
+        extension: "jpg".into(),
+        http_headers: Default::default(),
+        index,
+    };
+    let add = |media| {
+        core.add_post_media(
+            "https://www.facebook.com/creator/posts/123",
+            media,
+            None,
+            None,
+            None,
+            StartMode::Later,
+        )
+        .unwrap()
+    };
+    let single = add(vec![selection(1), selection(1)]);
+    assert_eq!(single.len(), 1);
+    assert_eq!(single[0].save_dir, dir.path().join("dl"));
+    let first = add(vec![selection(1), selection(2)]);
+    let second = add(vec![selection(1), selection(2)]);
+    assert_eq!(first[0].save_dir, first[1].save_dir);
+    assert_eq!(
+        first[0].save_dir.parent(),
+        Some(dir.path().join("dl").as_path())
+    );
+    assert!(
+        first[0]
+            .save_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("facebook-")
+    );
+    assert!(first[0].save_dir.is_dir());
+    assert_ne!(first[0].save_dir, second[0].save_dir);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn grouped_downloads_emit_one_completion_after_every_file_finishes() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_in(dir.path()).await;
+    let server = TestServer::start(ServerConfig::default()).await.unwrap();
+    let mut rx = core.subscribe();
+    let items = core
+        .add_items(
+            (1..=2)
+                .map(|i| NewItem {
+                    url: server.url(&format!("/file/group-{i}.bin?size=1024")),
+                    media: Some(
+                        serde_json::from_value(serde_json::json!({"downloadGroup":"test-group"}))
+                            .unwrap(),
+                    ),
+                    ..Default::default()
+                })
+                .collect(),
+            StartMode::Now,
+        )
+        .unwrap();
+    let mut finished = std::collections::HashSet::new();
+    let mut notifications = 0;
+    wait_event(&mut rx, 30, |event| {
+        match event {
+            CoreEvent::ItemUpdated(item) if item.status == Status::Completed => {
+                finished.insert(item.id.clone());
+            }
+            CoreEvent::Completed(_) => {
+                notifications += 1;
+                if finished.len() == items.len() {
+                    return Some(());
+                }
+            }
+            CoreEvent::Failed(item) => panic!("{:?}", item.error),
+            _ => {}
+        }
+        None
+    })
+    .await;
+    assert_eq!(notifications, 1);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn social_duplicates_use_file_content_and_keep_the_existing_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_in(dir.path()).await;
+    let server = TestServer::start(ServerConfig::default()).await.unwrap();
+    let mut rx = core.subscribe();
+    let add = |name: &str, seed| {
+        core.add_items(vec![NewItem {
+        url: server.url(&format!("/file/{name}?size=1024&seed={seed}")),
+        media: Some(serde_json::from_value(serde_json::json!({"pageUrl":"https://x.com/user/status/123", "playlistIndex":1})).unwrap()),
+        ..Default::default()
+    }], StartMode::Now).unwrap().remove(0)
+    };
+    let original = add("first.jpg", 7);
+    let original_path = wait_completed(&mut rx, &original.id).await;
+    let duplicate = add("different-name.jpg", 7);
+    let duplicate_path = wait_completed(&mut rx, &duplicate.id).await;
+    assert_eq!(duplicate_path, original_path);
+    assert_eq!(sha256_file(&original_path), expected_sha256(7, 1024));
+    let duplicate = core.item(&duplicate.id).unwrap();
+    assert_eq!(
+        serde_json::to_value(duplicate.media).unwrap()["duplicateOf"],
+        original.id
+    );
+    assert!(
+        core.update_item(
+            &duplicate.id,
+            prism_core::manager::ItemPatch {
+                file_name: Some("do-not-rename-original.jpg".into()),
+                ..Default::default()
+            }
+        )
+        .is_err()
+    );
+    core.delete_items(std::slice::from_ref(&duplicate.id), true, true)
+        .await
+        .unwrap();
+    assert_eq!(sha256_file(&original_path), expected_sha256(7, 1024));
+    let different = add("first.jpg", 8);
+    let different_path = wait_completed(&mut rx, &different.id).await;
+    assert_ne!(different_path, original_path);
+    assert_eq!(sha256_file(&different_path), expected_sha256(8, 1024));
+    std::fs::write(&original_path, vec![0u8; 1024]).unwrap();
+    let changed = add("modified-original.jpg", 7);
+    assert_ne!(wait_completed(&mut rx, &changed.id).await, original_path);
+    core.shutdown().await;
+}
+
+#[tokio::test]
+async fn social_groups_skip_duplicates_and_complete_once_with_the_saved_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let core = core_in(dir.path()).await;
+    let server = TestServer::start(ServerConfig::default()).await.unwrap();
+    let mut rx = core.subscribe();
+    let original = core
+        .add_items(
+            vec![NewItem {
+                url: server.url("/file/original.jpg?size=1024&seed=7"),
+                ..Default::default()
+            }],
+            StartMode::Now,
+        )
+        .unwrap()
+        .remove(0);
+    let original_path = wait_completed(&mut rx, &original.id).await;
+    for (group, seeds, expected_duplicates) in [
+        ("mixed", vec![7, 8, 7], 2),
+        ("all-duplicates", vec![7, 7], 2),
+    ] {
+        let folder = dir.path().join(group);
+        std::fs::create_dir(&folder).unwrap();
+        let items = core.add_items(seeds.into_iter().enumerate().map(|(index, seed)| NewItem {
+            url: server.url(&format!("/file/{group}-{index}.jpg?size=1024&seed={seed}")),
+            save_dir: Some(folder.clone()),
+            media: Some(serde_json::from_value(serde_json::json!({"pageUrl":"https://x.com/user/status/123", "playlistIndex":index + 1, "downloadGroup":group})).unwrap()),
+            ..Default::default()
+        }).collect(), StartMode::Now).unwrap();
+        let completed = wait_event(&mut rx, 30, |event| match event {
+            CoreEvent::Completed(item)
+                if item
+                    .media
+                    .as_ref()
+                    .and_then(|media| media.download_group.as_deref())
+                    == Some(group) =>
+            {
+                Some(item.clone())
+            }
+            CoreEvent::Failed(item) => panic!("{:?}", item.error),
+            _ => None,
+        })
+        .await;
+        let members: Vec<_> = items
+            .iter()
+            .map(|item| core.item(&item.id).unwrap())
+            .collect();
+        assert!(members.iter().all(|item| item.status == Status::Completed));
+        assert_eq!(
+            members
+                .iter()
+                .filter(|item| item.media.as_ref().unwrap().duplicate_of.is_some())
+                .count(),
+            expected_duplicates
+        );
+        if group == "mixed" {
+            assert_eq!(completed.save_dir, folder);
+            assert!(completed.media.unwrap().duplicate_of.is_none());
+            assert_eq!(std::fs::read_dir(folder).unwrap().count(), 1);
+        } else {
+            assert!(!folder.exists());
+            assert_eq!(completed.path(), original_path);
+        }
+    }
+    assert_eq!(sha256_file(&original_path), expected_sha256(7, 1024));
+    core.shutdown().await;
+}
+
 fn sha256_file(path: &Path) -> String {
     let data = std::fs::read(path).unwrap();
     sha256_hex(&data)

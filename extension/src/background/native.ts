@@ -82,6 +82,13 @@ export class NativeClient {
     this.corr.rejectAll(new NativeError('disconnected', 'port closed'));
   }
 
+  /** Bypasses the missing-host cooldown when the user explicitly retries. */
+  retry(): void {
+    this.hostMissingUntil = 0;
+    this.lastMissingError = null;
+    this.disconnect();
+  }
+
   async request<K extends AppRequest['type']>(
     msg: Extract<AppRequest, { type: K }>,
     opts: RequestOptions = {},

@@ -33,9 +33,9 @@ npm run tauri:build
 # Or a universal binary:
 node ../scripts/build-sidecar.mjs --target aarch64-apple-darwin
 node ../scripts/build-sidecar.mjs --target x86_64-apple-darwin
-lipo -create -output src-tauri/binaries/prism-native-host-universal-apple-darwin \
-  src-tauri/binaries/prism-native-host-aarch64-apple-darwin \
-  src-tauri/binaries/prism-native-host-x86_64-apple-darwin
+lipo -create -output src-tauri/binaries/zeluxdl-native-host-universal-apple-darwin \
+  src-tauri/binaries/zeluxdl-native-host-aarch64-apple-darwin \
+  src-tauri/binaries/zeluxdl-native-host-x86_64-apple-darwin
 npx tauri build --target universal-apple-darwin
 ```
 
@@ -53,7 +53,7 @@ Artifacts: `target/<target>/release/bundle/macos/ZeluxDL.app` and the matching D
 | Keep awake while downloading | `caffeinate -i` child process |
 | Autostart | LaunchAgent via `tauri-plugin-autostart` (`--background`) |
 | Data directory | `~/Library/Application Support/ZeluxDL` |
-| Native messaging | per-user manifests written by the app and by `prism-native-host register`: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts`, `.../Chromium/...`, `.../Microsoft Edge/...`, `.../BraveSoftware/Brave-Browser/...`, `.../Vivaldi/...`, `~/Library/Application Support/Mozilla/NativeMessagingHosts` (Opera reads the Chrome location) |
+| Native messaging | per-user manifests written by the app and by `zeluxdl-native-host register`: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts`, `.../Chromium/...`, `.../Microsoft Edge/...`, `.../BraveSoftware/Brave-Browser/...`, `.../Vivaldi/...`, `~/Library/Application Support/Mozilla/NativeMessagingHosts` (Opera reads the Chrome location) |
 | Host path | the host binary lives inside the bundle: `ZeluxDL.app/Contents/MacOS/zeluxdl-native-host`; it starts the app in the background when it is not running |
 | Entitlements | `packaging/macos/entitlements.plist` (hardened runtime, network client/server, user-selected + Downloads read/write). ZeluxDL is intentionally **not sandboxed**: the App Sandbox blocks native messaging hosts and arbitrary download folders. |
 | Wake timers | not supported (`pmset schedule` needs admin) — schedules run when the Mac is awake |
@@ -102,7 +102,7 @@ Notes:
 ## 6. CI
 
 `.github/workflows/release.yml` builds `aarch64-apple-darwin` and `x86_64-apple-darwin`
-DMGs on Apple Silicon runners (`macos-14`; the Intel build is cross-compiled). This already
+DMGs on Apple Silicon runners (`macos-15`; the Intel build is cross-compiled). This already
 works: release builds produce ZeluxDL-named `.dmg` files for both architectures.
 
 Without signing secrets the app gets an **ad-hoc signature** (`bundle.macOS.signingIdentity

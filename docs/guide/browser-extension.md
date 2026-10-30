@@ -5,7 +5,7 @@ The optional browser extension can hand supported downloads and media links to t
 ## Install
 
 1. Install and open ZeluxDL once so its native messaging host is registered.
-2. Download `ZeluxDL-extension-chromium.zip` for Chrome, Edge, Brave, Opera, Vivaldi, or another Chromium browser, or `ZeluxDL-extension-firefox.zip` for Firefox-based browsers.
+2. Download `zeluxdl-chromium.zip` for Chrome, Edge, Brave, Opera, Vivaldi, or another Chromium browser, or `zeluxdl-firefox.zip` for Firefox-based browsers. Recovery releases may name these archives `ZeluxDL-extension-chromium.zip` and `ZeluxDL-extension-firefox.zip` instead.
 3. Extract the archive into a folder that you will keep in place.
 4. Open the browser's extensions page. For Chromium, enable **Developer mode** and choose **Load unpacked**, then select the extracted folder. For Firefox, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on…**, and select `manifest.json` in the extracted folder. Firefox temporary add-ons may need to be loaded again after restarting the browser.
 5. In ZeluxDL, open **Settings → Browser integration** and choose **Repair** if the extension does not connect. Reload the extension in the browser if you replaced its files during an update.

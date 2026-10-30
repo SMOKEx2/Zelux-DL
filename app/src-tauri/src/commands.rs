@@ -4,8 +4,8 @@ use crate::windows;
 use prism_core::events::{BatchInfo, CaptureInfo, CaptureSource, VideoCapture};
 use prism_core::grabber::GrabberConfig;
 use prism_core::manager::{
-    BatchDecision, Bootstrap, CaptureDecision, Core, ItemDetails, ItemPatch, NewItem, StartMode,
-    VideoDecision,
+    BatchDecision, Bootstrap, CaptureDecision, Core, ItemDetails, ItemPatch, NewItem,
+    PostMediaSelection, StartMode, VideoDecision,
 };
 use prism_core::model::*;
 use prism_core::settings::Settings;
@@ -156,17 +156,55 @@ pub async fn open_video_url(core: State<'_, Core>, url: String) -> CmdResult<Vid
 }
 
 #[tauri::command]
-pub async fn probe_video(core: State<'_, Core>, url: String) -> CmdResult<serde_json::Value> {
-    // Typed in the app: no browser context to bring (yt-dlp still reads the
-    // "Cookies from browser" setting itself).
-    core.probe_video(&url, Default::default())
-        .await
-        .map_err(|e| format!("{e:#}"))
+pub async fn probe_video(
+    core: State<'_, Core>,
+    url: String,
+    cookies: Option<String>,
+    user_agent: Option<String>,
+) -> CmdResult<serde_json::Value> {
+    // Typed URLs leave these fields empty; the browser extension can attach its active-tab
+    // context after the user explicitly opens the single-post picker.
+    core.probe_video(
+        &url,
+        prism_video::RequestContext {
+            cookies,
+            user_agent,
+            referer: Some(url.clone()),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
 pub async fn confirm_video(core: State<'_, Core>, decision: VideoDecision) -> CmdResult<usize> {
     core.confirm_video(decision).map(|v| v.len()).map_err(err)
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AddPostMediaArgs {
+    page_url: String,
+    media: Vec<PostMediaSelection>,
+    cookies: Option<String>,
+    user_agent: Option<String>,
+    save_dir: Option<PathBuf>,
+    mode: StartMode,
+}
+
+#[tauri::command]
+pub async fn add_post_media(core: State<'_, Core>, args: AddPostMediaArgs) -> CmdResult<usize> {
+    core.add_post_media(
+        &args.page_url,
+        args.media,
+        args.cookies,
+        args.user_agent,
+        args.save_dir,
+        args.mode,
+    )
+    .map(|items| items.len())
+    .map_err(err)
 }
 
 #[tauri::command]
@@ -295,6 +333,11 @@ pub async fn hf_add(
 // ----- item control -----------------------------------------------------------------------
 
 #[tauri::command]
+pub async fn find_duplicates(core: State<'_, Core>) -> CmdResult<Vec<String>> {
+    core.find_duplicate_items().await.map_err(err)
+}
+
+#[tauri::command]
 pub async fn start_items(core: State<'_, Core>, ids: Vec<String>) -> CmdResult<()> {
     core.start_items(&ids);
     Ok(())
@@ -366,6 +409,11 @@ pub async fn item_details(core: State<'_, Core>, id: String) -> CmdResult<Option
 }
 
 #[tauri::command]
+pub async fn video_file_duration(core: State<'_, Core>, id: String) -> CmdResult<Option<f64>> {
+    core.video_file_duration(&id).await.map_err(err)
+}
+
+#[tauri::command]
 pub async fn open_item(core: State<'_, Core>, app: AppHandle, id: String) -> CmdResult<()> {
     let item = core.item(&id).ok_or("unknown item")?;
     app.opener()
@@ -395,6 +443,39 @@ pub async fn open_path(app: AppHandle, path: PathBuf) -> CmdResult<()> {
     app.opener()
         .open_path(path.to_string_lossy(), None::<&str>)
         .map_err(err)
+}
+
+#[tauri::command]
+pub async fn image_preview_path(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+) -> CmdResult<Option<String>> {
+    let Some(item) = core.item(&id) else {
+        return Ok(None);
+    };
+    if item.status != Status::Completed || item.trashed {
+        return Ok(None);
+    }
+    let path = item.path();
+    let is_image = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_ascii_lowercase().as_str(),
+                "avif" | "bmp" | "gif" | "jfif" | "jpeg" | "jpg" | "png" | "webp"
+            )
+        });
+    // shortcut: preview image files up to 24 MiB in WebView; generate cached thumbnails if huge images need support.
+    let Ok(metadata) = std::fs::metadata(&path) else {
+        return Ok(None);
+    };
+    if !is_image || metadata.len() > 24 * 1024 * 1024 || !metadata.is_file() {
+        return Ok(None);
+    }
+    app.asset_protocol_scope().allow_file(&path).map_err(err)?;
+    Ok(Some(path.to_string_lossy().into_owned()))
 }
 
 // ----- queues & categories ----------------------------------------------------------------

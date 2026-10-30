@@ -1,7 +1,7 @@
 {
-  "name": "prism-app",
+  "name": "zeluxdl-app",
   "private": true,
-  "version": "2.0.4",
+  "version": "2.0.5",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,7 +13,8 @@
     "build:sidecar": "node ../scripts/build-sidecar.mjs",
     "build:sidecar:debug": "node ../scripts/build-sidecar.mjs --debug",
     "tauri:build": "npm run build:sidecar && tauri build",
-    "tauri:dev": "npm run build:sidecar:debug && tauri dev"
+    "tauri:dev": "npm run build:sidecar:debug && tauri dev",
+    "tauri:dev:test": "npm run build:sidecar:debug && node ../scripts/tauri-dev-test.mjs"
   },
   "dependencies": {
     "@fontsource-variable/noto-sans-thai": "^5.3.0",

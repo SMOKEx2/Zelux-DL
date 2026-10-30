@@ -1,5 +1,5 @@
 [package]
-name = "prism-app"
+name = "zeluxdl-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -16,9 +16,10 @@ tauri-build = { version = "2.7", features = [] }
 
 [dependencies]
 prism-core = { workspace = true }
+prism-video = { workspace = true }
 prism-native-host = { path = "../../crates/prism-native-host" }
 prism-torrent = { path = "../../crates/prism-torrent" }
-tauri = { version = "2.12", features = ["tray-icon", "image-png", "macos-private-api"] }
+tauri = { version = "2.12", features = ["tray-icon", "image-png", "macos-private-api", "protocol-asset"] }
 tauri-plugin-single-instance = "2.5"
 tauri-plugin-notification = "2.6"
 tauri-plugin-autostart = "2.7"

@@ -1,4 +1,5 @@
 import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "motion/react";
 import { BrandTile } from "../components/LogoMark";
 import { openMenuAt } from "../components/MenuHost";
 import { Sparkline } from "../components/Visuals";
@@ -14,14 +15,14 @@ import { attempt, useUi } from "../lib/ui";
 
 const same = (a: View, b: View) => a.kind === b.kind && ("id" in a ? a.id : "") === ("id" in b ? b.id : "");
 
-function NavItem({ view, icon, label, extra, onContext }: { view: View; icon: IconName; label: string; extra?: ReactNode; onContext?: (e: React.MouseEvent) => void }) {
+function NavItem({ view, icon, label, extra, onClick, onContext }: { view: View; icon: IconName; label: string; extra?: ReactNode; onClick?: () => void; onContext?: (e: React.MouseEvent) => void }) {
   const current = useApp((s) => same(s.view, view));
   return (
     <button
       type="button"
       className="side-item"
       aria-current={current ? "true" : undefined}
-      onClick={() => useApp.getState().setView(view)}
+      onClick={() => (onClick ? onClick() : useApp.getState().setView(view))}
       onContextMenu={
         onContext &&
         ((e) => {
@@ -37,7 +38,13 @@ function NavItem({ view, icon, label, extra, onContext }: { view: View; icon: Ic
   );
 }
 
-const Count = ({ n }: { n: number }) => <span className="count">{n}</span>;
+const Count = ({ n }: { n: number }) => (
+  <span className="count">
+    <AnimatePresence initial={false} mode="popLayout">
+      <motion.span key={n} initial={{ y: 5, opacity: 0 }} animate={{ y: 0, opacity: 1 }} exit={{ y: -5, opacity: 0 }} transition={{ duration: 0.16, ease: [0.16, 1, 0.3, 1] }}>{n}</motion.span>
+    </AnimatePresence>
+  </span>
+);
 
 export function Sidebar() {
   const items = useApp((s) => s.items);
@@ -45,6 +52,9 @@ export function Sidebar() {
   const categories = useApp((s) => s.categories);
   const queues = useApp((s) => s.queues);
   const projects = useApp((s) => s.grabberProjects);
+  const duplicateIds = useApp((s) => s.duplicateIds);
+  const duplicateScanStatus = useApp((s) => s.duplicateScanStatus);
+  const scanDuplicates = useApp((s) => s.scanDuplicates);
   const ui = useUi.getState;
 
   const categoryMenu = (id: string) => (e: React.MouseEvent) => {
@@ -137,6 +147,17 @@ export function Sidebar() {
             }
           />
         ))}
+        <NavItem
+          view={{ kind: "duplicates" }}
+          icon="copy"
+          label={t("Duplicates")}
+          extra={duplicateScanStatus === "done" ? <Count n={duplicateIds.length} /> : undefined}
+          onClick={() => {
+            useApp.getState().setView({ kind: "duplicates" });
+            useUi.getState().setFilter("all");
+            void attempt(scanDuplicates(), t("Could not scan duplicate files"));
+          }}
+        />
         <NavItem
           view={{ kind: "trash" }}
           icon="trash"

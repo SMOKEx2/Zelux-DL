@@ -15,6 +15,7 @@
 pub mod choices;
 pub mod error;
 pub mod ffmpeg;
+mod gallery;
 pub mod model;
 pub mod plan;
 pub mod probe;
@@ -276,12 +277,28 @@ impl VideoService {
     /// `yt-dlp -J` the URL. Playlists/channels (or `list=` URLs with
     /// `ctx.want_playlist`) are listed flat.
     pub async fn probe(&self, url: &str, ctx: &RequestContext) -> Result<Probe> {
+        if probe::is_single_post_media_url(url) {
+            let binary = {
+                let _install = self.inner.install_lock.lock().await;
+                gallery::ensure_binary(&self.inner.tools_dir, &self.options()).await
+            };
+            match binary {
+                Ok(exe) => {
+                    return gallery::extract_with_binary(&exe, url, ctx, &self.options())
+                        .await
+                        .map(Probe::Playlist);
+                }
+                // Preserve yt-dlp video support where the photo extractor has no native build.
+                Err(VideoError::Unsupported(_)) => {}
+                Err(error) => return Err(error),
+            }
+        }
         match self.probe_opts(url, ctx).await {
+            Ok(probe) => Ok(probe),
             Err(e) => match without_page_cookies(url, ctx, &e) {
                 Some(clean) => self.probe_opts(url, &clean).await,
                 None => Err(e),
             },
-            r => r,
         }
     }
 

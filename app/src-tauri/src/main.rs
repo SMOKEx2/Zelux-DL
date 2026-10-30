@@ -167,6 +167,7 @@ fn main() {
             commands::open_video_url,
             commands::probe_video,
             commands::confirm_video,
+            commands::add_post_media,
             commands::cancel_video,
             commands::add_stream,
             commands::inspect_torrent,
@@ -177,6 +178,7 @@ fn main() {
             commands::hf_search,
             commands::hf_present,
             commands::hf_add,
+            commands::find_duplicates,
             commands::start_items,
             commands::pause_items,
             commands::pause_all,
@@ -188,9 +190,11 @@ fn main() {
             commands::redownload,
             commands::update_item,
             commands::item_details,
+            commands::video_file_duration,
             commands::open_item,
             commands::reveal_item,
             commands::open_path,
+            commands::image_preview_path,
             commands::assign_to_queue,
             commands::move_in_queue,
             commands::upsert_queue,
@@ -549,7 +553,62 @@ fn side_effects(
             } else if settings.general.show_completion_dialog {
                 let _ = windows::open(app, "complete", Some(&item.id));
             } else {
-                notify("Download complete", &item.file_name);
+                let grouped = item
+                    .media
+                    .as_ref()
+                    .is_some_and(|m| m.download_group.is_some());
+                let name = if grouped {
+                    item.save_dir
+                        .file_name()
+                        .map(|name| name.to_string_lossy().into_owned())
+                        .unwrap_or_else(|| item.file_name.clone())
+                } else {
+                    item.file_name.clone()
+                };
+                let group = item
+                    .media
+                    .as_ref()
+                    .and_then(|media| media.download_group.as_ref());
+                let skipped = if let Some(group) = group {
+                    core.bootstrap()
+                        .items
+                        .iter()
+                        .filter(|other| {
+                            !other.trashed
+                                && other.media.as_ref().is_some_and(|media| {
+                                    media.download_group.as_ref() == Some(group)
+                                        && media.duplicate_of.is_some()
+                                })
+                        })
+                        .count()
+                } else {
+                    usize::from(
+                        item.media
+                            .as_ref()
+                            .is_some_and(|media| media.duplicate_of.is_some()),
+                    )
+                };
+                let title = if item
+                    .media
+                    .as_ref()
+                    .is_some_and(|media| media.duplicate_of.is_some())
+                {
+                    "Already downloaded"
+                } else {
+                    "Download complete"
+                };
+                let body = if skipped > 0 {
+                    format!(
+                        "{name}\n{}",
+                        i18n::tr(
+                            "{count} duplicate files skipped",
+                            &[("count", &skipped.to_string())]
+                        )
+                    )
+                } else {
+                    name
+                };
+                notify(title, &body);
             }
         }
         CoreEvent::Failed(item) => {

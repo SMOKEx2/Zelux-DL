@@ -4,7 +4,7 @@ labels: [bug]
 body:
   - type: markdown
     attributes:
-      value: Thanks for taking the time! Please check the [troubleshooting guide](https://github.com/FortoGraphy/prism-download-manager/blob/main/docs/guide/browser-extension.md#troubleshooting) first.
+      value: Thanks for taking the time! Please check the [troubleshooting guide](https://github.com/SMOKEx2/Zelux-DL/blob/main/docs/guide/browser-extension.md#troubleshooting) first.
   - type: textarea
     id: what
     attributes:
@@ -15,7 +15,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: Prism version
+      label: ZeluxDL version
       placeholder: "1.0.0 (Settings → About)"
     validations:
       required: true

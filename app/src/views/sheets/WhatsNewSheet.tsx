@@ -10,62 +10,28 @@ import { useUi } from "../../lib/ui";
 import { versionNewer } from "../../lib/version";
 import { BrowserConnect, useExtensionStatus } from "../BrowserConnect";
 
-type Change = { icon: IconName; title: string; body: string; credit?: string; action?: "sounds" | "language" | "appearance" | "model" };
+type Change = { icon: IconName; title: string; body: string; credit?: string; action?: "sounds" | "language" | "appearance" | "model" | "downloads" };
 
 /**
- * What this version brings (shown once after an update, and from About Prism), then what the
- * version before brought, for people updating from older ones. Titles and bodies are translated
- * where they're shown; `credit` is the contributor's handle.
+ * Current ZeluxDL release notes, shown after an update and from About. Titles and bodies are
+ * translated where they're shown; `credit` is the contributor's handle.
  */
 const CHANGES: Change[] = [
   {
-    icon: "model",
-    title: tk("AI models from Hugging Face"),
-    body: tk("Download a model by its name, a link or a search. Prism picks the files you need (one GGUF version, the weights in one format) and downloads them over many connections, checked against Hugging Face."),
-    credit: "Vasili-Sk",
-    action: "model",
+    icon: "bolt",
+    title: tk("Turbo Multi-Thread Booster"),
+    body: tk("ZeluxDL gradually adds more connections during a healthy download, up to the configured limit."),
+    action: "downloads",
   },
   {
-    icon: "globe",
-    title: tk("Turkish"),
-    body: tk("Prism now speaks Turkish too."),
-    action: "language",
-  },
-  {
-    icon: "monitor",
-    title: tk("Windows on Linux"),
-    body: tk("On KDE Plasma, Prism's windows no longer sometimes open empty."),
-  },
-  {
-    icon: "sun",
-    title: tk("Background that matches the theme"),
-    body: tk("On Linux the window no longer shows the desktop through it, and on Windows the glass switches too when Windows changes between light and dark."),
+    icon: "star",
+    title: tk("ZeluxDL branding and source credit"),
+    body: tk("The About page now credits the upstream project directly; the rest of the app uses ZeluxDL branding."),
   },
 ];
 
-/** The previous version's changes, shown below the new ones. */
-const PREVIOUS = { version: "1.1.6", changes: [
-  {
-    icon: "sun",
-    title: tk("Light theme"),
-    body: tk("When the theme matches Windows, the glass behind the window is now light in the light theme too."),
-  },
-  {
-    icon: "browser",
-    title: tk("Brave Origin"),
-    body: tk("The browser extension now connects in Brave Origin too."),
-  },
-  {
-    icon: "video",
-    title: tk("VK and YouTube videos"),
-    body: tk("The Download video button works on vk.ru and vkvideo.ru, and videos from a browser signed in to YouTube no longer fail."),
-    credit: "BiparJoy",
-  },
-] satisfies Change[] };
-
 /**
- * "What's new" after an update: the browser extension from the Chrome Web Store first (one
- * click, updates itself; replaces one added by hand), then what else changed.
+ * "What's new" after an update: current release changes and the live browser integration status.
  */
 export function WhatsNewSheet() {
   const version = useApp((s) => s.version);
@@ -76,7 +42,7 @@ export function WhatsNewSheet() {
         <BrandTile size={52} />
         <div>
           <h2>{t("Prism {version} is here", { version })}</h2>
-          <p className="text-secondary">{t("AI models from Hugging Face, Turkish, and a fix for Linux.")}</p>
+          <p className="text-secondary">{t("Turbo connection scaling and updated browser setup.")}</p>
         </div>
       </header>
 
@@ -91,8 +57,6 @@ export function WhatsNewSheet() {
       </section>
 
       <ChangeList changes={CHANGES} />
-      <h3 className="whatsnew__older t-small text-tertiary">{t("New in Prism {version}", { version: PREVIOUS.version })}</h3>
-      <ChangeList changes={PREVIOUS.changes} />
       <p className="whatsnew__star t-small text-secondary">
         <Icon name="star" size={14} className="text-accent" />
         <span>
@@ -138,6 +102,11 @@ function ChangeList({ changes }: { changes: Change[] }) {
               {c.action === "language" && (
                 <button type="button" className="linkbtn" onClick={() => openSheet({ kind: "settings", section: "general" })}>
                   {t("Choose a language")}
+                </button>
+              )}
+              {c.action === "downloads" && (
+                <button type="button" className="linkbtn" onClick={() => openSheet({ kind: "settings", section: "downloads" })}>
+                  {t("Try it")}
                 </button>
               )}
             </div>

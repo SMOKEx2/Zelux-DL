@@ -93,6 +93,69 @@ async fn multi_segment_32_connections() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn turbo_booster_scales_healthy_download_above_requested_connections() {
+    let srv = default_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let eng = prism_engine::Engine::new(prism_engine::EngineConfig {
+        max_connections_cap: 8,
+        initial_connections: 2,
+        turbo_mode: true,
+        ..prism_engine::EngineConfig::default()
+    });
+    let size = 64 * MIB;
+    let h = eng.start(
+        request(
+            &srv.url(&format!("/file/turbo.bin?size={size}&seed=88&throttle=1M")),
+            dir.path(),
+            2,
+        ),
+        None,
+        vec![],
+    );
+
+    let snapshot = wait_until(&h, "Turbo Booster to raise the connection target", |s| {
+        s.target_connections >= 6
+    })
+    .await;
+    assert!(snapshot.active_connections >= 2);
+    assert!(srv.stats().max_concurrent >= 2);
+
+    h.cancel(true);
+    assert_eq!(wait(&h, 10).await.unwrap_err(), EngineError::Cancelled);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn disabled_turbo_booster_keeps_requested_connection_target() {
+    let srv = default_server().await;
+    let dir = tempfile::tempdir().unwrap();
+    let eng = prism_engine::Engine::new(prism_engine::EngineConfig {
+        max_connections_cap: 8,
+        initial_connections: 2,
+        turbo_mode: false,
+        ..prism_engine::EngineConfig::default()
+    });
+    let size = 64 * MIB;
+    let h = eng.start(
+        request(
+            &srv.url(&format!(
+                "/file/no-turbo.bin?size={size}&seed=89&throttle=1M"
+            )),
+            dir.path(),
+            2,
+        ),
+        None,
+        vec![],
+    );
+
+    wait_for_progress(&h, 7 * MIB).await;
+    assert_eq!(h.snapshot().target_connections, 2);
+    assert!(srv.stats().max_concurrent <= 2);
+
+    h.cancel(true);
+    assert_eq!(wait(&h, 10).await.unwrap_err(), EngineError::Cancelled);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn throttled_server_benefits_from_connections() {
     let srv = default_server().await;
     let size = 16 * MIB;

@@ -1,6 +1,6 @@
-# Building Prism on macOS
+# Building ZeluxDL on macOS
 
-Prism was developed and tested on Windows and Linux. The code base is fully
+ZeluxDL is developed and tested primarily on Windows and Linux. The code base is fully
 macOS-buildable — every OS-specific piece sits behind `#[cfg(target_os = "macos")]`
 implementations — but it has **not been run on a Mac yet**. Follow these steps exactly and
 report anything that differs.
@@ -15,7 +15,7 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin   # both, for a unive
 brew install node@24 ffmpeg                  # ffmpeg is optional but recommended
 ```
 
-> ffmpeg: Prism uses a system ffmpeg on macOS (there is no official checksummed static
+> ffmpeg: ZeluxDL uses a system ffmpeg on macOS (there is no official checksummed static
 > macOS build to auto-download). Without it, video muxing falls back to yt-dlp-only paths
 > and HLS/DASH downloads keep `.ts`/`.m4s` output.
 
@@ -39,8 +39,8 @@ lipo -create -output src-tauri/binaries/prism-native-host-universal-apple-darwin
 npx tauri build --target universal-apple-darwin
 ```
 
-Artifacts: `target/<target>/release/bundle/macos/Prism.app` and
-`target/<target>/release/bundle/dmg/Prism_<version>_<arch>.dmg`.
+Artifacts: `target/<target>/release/bundle/macos/ZeluxDL.app` and the matching DMG in
+`target/<target>/release/bundle/dmg/`.
 
 ## 3. What is macOS-specific (already implemented)
 
@@ -52,15 +52,15 @@ Artifacts: `target/<target>/release/bundle/macos/Prism.app` and
 | Power actions | `osascript` shut down, `pmset sleepnow`, `pmset displaysleepnow` (lock) |
 | Keep awake while downloading | `caffeinate -i` child process |
 | Autostart | LaunchAgent via `tauri-plugin-autostart` (`--background`) |
-| Data directory | `~/Library/Application Support/Prism` |
+| Data directory | `~/Library/Application Support/ZeluxDL` |
 | Native messaging | per-user manifests written by the app and by `prism-native-host register`: `~/Library/Application Support/Google/Chrome/NativeMessagingHosts`, `.../Chromium/...`, `.../Microsoft Edge/...`, `.../BraveSoftware/Brave-Browser/...`, `.../Vivaldi/...`, `~/Library/Application Support/Mozilla/NativeMessagingHosts` (Opera reads the Chrome location) |
-| Host path | the host binary lives inside the bundle: `Prism.app/Contents/MacOS/prism-native-host`; it starts `Contents/MacOS/prism --background` when the app is not running |
-| Entitlements | `packaging/macos/entitlements.plist` (hardened runtime, network client/server, user-selected + Downloads read/write). Prism is intentionally **not sandboxed**: the App Sandbox blocks native messaging hosts and arbitrary download folders. |
+| Host path | the host binary lives inside the bundle: `ZeluxDL.app/Contents/MacOS/zeluxdl-native-host`; it starts the app in the background when it is not running |
+| Entitlements | `packaging/macos/entitlements.plist` (hardened runtime, network client/server, user-selected + Downloads read/write). ZeluxDL is intentionally **not sandboxed**: the App Sandbox blocks native messaging hosts and arbitrary download folders. |
 | Wake timers | not supported (`pmset schedule` needs admin) — schedules run when the Mac is awake |
 
 ## 4. First run checks
 
-1. Open `Prism.app` (right-click → Open the first time if unsigned).
+1. Open `ZeluxDL.app` (right-click → Open the first time if unsigned).
 2. Settings → Browser integration → **Repair** — every installed browser should show
    "Registered".
 3. Load the extension (Chrome: `chrome://extensions` → Developer mode → Load unpacked →
@@ -87,15 +87,15 @@ Tauri signs the app (hardened runtime + the entitlements file referenced in
 to `notarytool` and staples the ticket. Verify:
 
 ```bash
-codesign --verify --deep --strict --verbose=2 "target/universal-apple-darwin/release/bundle/macos/Prism.app"
-spctl --assess --type execute --verbose "target/universal-apple-darwin/release/bundle/macos/Prism.app"
+codesign --verify --deep --strict --verbose=2 "target/universal-apple-darwin/release/bundle/macos/ZeluxDL.app"
+spctl --assess --type execute --verbose "target/universal-apple-darwin/release/bundle/macos/ZeluxDL.app"
 xcrun stapler validate "target/universal-apple-darwin/release/bundle/dmg/"*.dmg
 ```
 
 Notes:
 * The native messaging host is a separate executable inside the bundle; it must be signed
   too (Tauri does this for `externalBin`). Browsers launch it directly.
-* yt-dlp / deno downloaded at runtime land in `~/Library/Application Support/Prism/tools`
+* yt-dlp / deno downloaded at runtime land in `~/Library/Application Support/ZeluxDL/tools`
   and are executed as child processes; Gatekeeper does not quarantine files written by the
   app itself, so no extra steps are needed.
 
@@ -103,9 +103,9 @@ Notes:
 
 `.github/workflows/release.yml` builds `aarch64-apple-darwin` and `x86_64-apple-darwin`
 DMGs on Apple Silicon runners (`macos-14`; the Intel build is cross-compiled). This already
-works: the first run produced `Prism_1.0.0_aarch64.dmg` and `Prism_1.0.0_x64.dmg`.
+works: release builds produce ZeluxDL-named `.dmg` files for both architectures.
 
 Without signing secrets the app gets an **ad-hoc signature** (`bundle.macOS.signingIdentity
 = "-"`), which Apple Silicon requires to launch at all. Gatekeeper still asks on first launch:
-right-click `Prism.app` → **Open** (or `xattr -dr com.apple.quarantine /Applications/Prism.app`).
+right-click `ZeluxDL.app` → **Open** (or `xattr -dr com.apple.quarantine /Applications/ZeluxDL.app`).
 Add the `APPLE_*` secrets to the repository to get Developer-ID-signed, notarized DMGs.

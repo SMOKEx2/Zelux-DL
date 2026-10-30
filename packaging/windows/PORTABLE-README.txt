@@ -1,14 +1,13 @@
-Prism — portable edition
-========================
+ZeluxDL — portable edition
+=========================
 
-1. Run ZeluxDL.exe. All settings, history and tools are kept in the "data" folder
-   next to it (because portable.txt exists), so the folder can live on a USB drive.
-2. Browser integration: Prism registers its native messaging host for the current
-   Windows user on start. Then add the extension:
-     Chrome / Edge / Brave / Opera / Vivaldi: from the Chrome Web Store (it updates
-     by itself) - https://chromewebstore.google.com/detail/prism-download-manager/mmcdeiglkbfbicdjboocmhehodogilfl
-     Firefox: about:debugging -> This Firefox -> Load Temporary Add-on ->
-     extension\firefox\manifest.json
-3. Settings -> Browser integration shows the status and repairs it in one click.
+1. Run ZeluxDL.exe. Settings, history and tools are kept in the "data" folder
+   next to the app because portable.txt is present.
+2. For browser integration, install the matching extension archive from the
+   ZeluxDL GitHub Releases page, then load its extracted folder in your browser.
+   Firefox users can load extension\firefox\manifest.json temporarily from
+   about:debugging#/runtime/this-firefox.
+3. Settings -> Browser integration shows the connection status and can repair
+   the native messaging host registration.
 
 Requires the Microsoft Edge WebView2 runtime (preinstalled on Windows 10/11).

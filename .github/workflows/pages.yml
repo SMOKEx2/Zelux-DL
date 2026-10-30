@@ -30,7 +30,7 @@ jobs:
   deploy:
     name: Deploy site/
     # The badge refreshes only in the public repository.
-    if: (github.event_name != 'schedule' && github.event_name != 'workflow_run') || github.repository == 'FortoGraphy/prism-download-manager'
+    if: (github.event_name != 'schedule' && github.event_name != 'workflow_run') || github.repository == 'SMOKEx2/Zelux-DL'
     runs-on: ubuntu-latest
     environment:
       name: github-pages

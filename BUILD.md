@@ -1,4 +1,4 @@
-# Building Prism (Windows & Linux)
+# Building ZeluxDL (Windows & Linux)
 
 macOS has its own guide: [`docs/BUILD_MACOS.md`](docs/BUILD_MACOS.md).
 
@@ -10,7 +10,7 @@ macOS has its own guide: [`docs/BUILD_MACOS.md`](docs/BUILD_MACOS.md).
 | Node.js | 24 LTS (npm 11) | builds the UI and the extension |
 | Windows | Visual Studio 2022 Build Tools with "Desktop development with C++", Windows 10/11 SDK | WebView2 runtime is preinstalled on Windows 10/11 |
 | Linux (Debian/Ubuntu 22.04+) | `sudo apt install build-essential curl wget file libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev libxdo-dev patchelf rpm` | `rpm` only needed to build .rpm |
-| Optional | `ffmpeg` on PATH | otherwise Prism downloads a verified build on first video download |
+| Optional | `ffmpeg` on PATH | otherwise ZeluxDL downloads a verified build on first video download |
 
 ## One-time setup
 
@@ -53,13 +53,13 @@ Outputs (in `target/release/bundle/`):
 
 | Platform | Artifacts |
 |---|---|
-| Windows | `nsis/Prism_<ver>_x64-setup.exe`, `msi/Prism_<ver>_x64_en-US.msi` |
-| Linux | `deb/Prism_<ver>_amd64.deb`, `rpm/Prism-<ver>-1.x86_64.rpm`, `appimage/Prism_<ver>_amd64.AppImage` |
+| Windows | `nsis/ZeluxDL_<ver>_x64-setup.exe`, `msi/ZeluxDL_<ver>_x64_en-US.msi` |
+| Linux | `deb/zeluxdl_<ver>_amd64.deb`, `rpm/zeluxdl-<ver>-1.x86_64.rpm`, `appimage/zeluxdl_<ver>_amd64.AppImage` |
 
 Windows portable zip (after `tauri:build`):
 
 ```powershell
-./scripts/make-portable.ps1          # -> packaging/out/Prism-<ver>-windows-x64-portable.zip
+./scripts/make-portable.ps1          # -> packaging/out/ZeluxDL-<ver>-windows-x64-portable.zip
 ```
 
 Building only some bundles: `npx tauri build --bundles nsis` (or `msi`, `deb`, `rpm`, `appimage`).

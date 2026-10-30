@@ -620,9 +620,7 @@ function BrowserIntegration() {
           </b>
           <div className="t-small">
             {status?.extensionOutdated
-              ? false && status?.extensionInstallType === "development"
-                ? t("This one was added by hand and doesn't update by itself. Prism's extension is now in the Chrome Web Store: remove this one and add it from the store (steps below).")
-                : t("Browsers don't reload an unpacked extension's files by themselves. Click ↻ Reload next to Prism on the extensions page, or restart the browser; if it stays old, remove it and load it again from the folder below.")
+              ? t("Browsers don't reload an unpacked extension's files by themselves. Click ↻ Reload next to Prism on the extensions page, or restart the browser; if it stays old, remove it and load it again from the folder below.")
               : status?.lastSeen
                 ? t("Last message {date}", { date: formatDate(status.lastSeen) })
                 : t("Install the extension, then open any web page.")}
@@ -981,9 +979,12 @@ function About() {
         </button>
       </div>
       <p className="lead">{t("Next-generation high-speed download manager with multi-connection acceleration, video grabber, multi-host resolvers, and glassmorphic UI.")}</p>
-      <button type="button" className="linkbtn about__star" onClick={() => void openUrl("https://github.com/FortoGraphy/prism-download-manager")}>
-        {t("Prism is open source. Star it on GitHub")}
-      </button>
+      <div className="about__star">
+        <span className="text-secondary">{t("Source project")}:</span>{" "}
+        <button type="button" className="linkbtn" onClick={() => void openUrl("https://github.com/FortoGraphy/prism-download-manager")}>
+          Prism Download Manager by FortoGraphy
+        </button>
+      </div>
       <p className="t-small text-tertiary">{t("Inter and JetBrains Mono are used under the SIL Open Font License. yt-dlp, ffmpeg and librqbit are separate projects under their own licenses.")}</p>
     </div>
   );

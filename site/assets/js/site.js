@@ -1,10 +1,10 @@
-/* Prism website — vanilla JS, no dependencies.
+/* ZeluxDL website — vanilla JS, no dependencies.
    Theme · nav · OS detection + latest-release links · GitHub stars · engine demo ·
    reveal-on-scroll · tabs · copy buttons · film facade · hero video slot · accents. */
 (function () {
   "use strict";
 
-  var REPO = "FortoGraphy/prism-download-manager";
+  var REPO = "SMOKEx2/Zelux-DL";
   var GH = "https://github.com/" + REPO;
   var API = "https://api.github.com/repos/" + REPO;
   var root = document.documentElement;
@@ -171,17 +171,6 @@
     mac: { key: "mac-arm", name: "macOS", what: "Apple Silicon .dmg" },
     linux: { key: "appimage", name: "Linux", what: ".AppImage (any distro)" }
   };
-  // Direct links used until (or if) the GitHub API answers — clicking always downloads.
-  var FALLBACK_DL = "https://github.com/FortoGraphy/prism-download-manager/releases/download/v1.1.7/";
-  var FALLBACK_FILES = {
-    "win-setup": "Prism_1.1.7_x64-setup.exe",
-    "mac-arm": "Prism_1.1.7_aarch64.dmg",
-    "mac-x64": "Prism_1.1.7_x64.dmg",
-    "deb": "Prism_1.1.7_amd64.deb",
-    "rpm": "Prism-1.1.7-1.x86_64.rpm",
-    "appimage": "Prism_1.1.7_amd64.AppImage"
-  };
-
   var ASSETS = {
     "win-setup": /_x64-setup\.exe$/i,
     "win-msi": /\.msi$/i,
@@ -191,8 +180,8 @@
     "deb": /_amd64\.deb$/i,
     "rpm": /\.x86_64\.rpm$/i,
     "appimage": /\.AppImage$/i,
-    "ext-chromium": /^prism-chromium\.zip$/i,
-    "ext-firefox": /^prism-firefox\.zip$/i,
+    "ext-chromium": /^ZeluxDL-extension-chromium\.zip$/i,
+    "ext-firefox": /^ZeluxDL-extension-firefox\.zip$/i,
     "sums": /^SHA256SUMS\.txt$/i
   };
 
@@ -220,13 +209,13 @@
     $$("[data-dl-primary]").forEach(function (a) {
       var label = a.querySelector("[data-dl-label]");
       if (!c) {
-        label.textContent = (plat.os === "ios" || plat.os === "android") ? "Get Prism for desktop" : "Download Prism";
+        label.textContent = (plat.os === "ios" || plat.os === "android") ? "Get ZeluxDL for desktop" : "Download ZeluxDL";
         a.setAttribute("href", "#download");
         return;
       }
       label.textContent = "Download for " + c.name;
       var asset = release && findAsset(release, c.key);
-      a.setAttribute("href", asset ? asset.browser_download_url : FALLBACK_DL + FALLBACK_FILES[c.key]);
+      a.setAttribute("href", asset ? asset.browser_download_url : GH + "/releases/latest");
     });
     if (!meta) return;
     meta.textContent = "";
@@ -237,7 +226,7 @@
       parts.push(c.what);
       if (asset) parts.push(fmtSize(asset.size));
     } else if (plat.os === "ios" || plat.os === "android") {
-      parts.push("Prism is a desktop app for Windows, macOS and Linux");
+      parts.push("ZeluxDL is a desktop app for Windows, macOS and Linux");
     } else {
       parts.push("Windows · macOS · Linux — 64-bit");
     }
@@ -258,12 +247,17 @@
   function renderRelease(release) {
     $$("[data-asset]").forEach(function (a) {
       var asset = findAsset(release, a.getAttribute("data-asset"));
-      if (!asset) return;
+      if (!asset) {
+        a.setAttribute("href", GH + "/releases/latest");
+        var unavailable = a.querySelector("[data-file]");
+        if (unavailable) unavailable.textContent = "See available release assets";
+        return;
+      }
       a.setAttribute("href", asset.browser_download_url);
       var f = a.querySelector("[data-file]");
       if (f) f.textContent = asset.name + " · " + fmtSize(asset.size);
     });
-    if (release.tag_name) $$("[data-version]").forEach(function (el) { el.textContent = "Prism " + release.tag_name.replace(/^v?/, "v"); });
+    if (release.tag_name) $$("[data-version]").forEach(function (el) { el.textContent = "ZeluxDL " + release.tag_name.replace(/^v?/, "v"); });
   }
 
   function highlightPlatform() {
@@ -312,7 +306,7 @@
     if (typeof n !== "number") return;
     var txt = n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1).replace(/\.0$/, "") + "k" : String(n);
     $$("[data-stars]").forEach(function (el) { el.textContent = txt; el.hidden = false; });
-    $$("[data-gh-star]").forEach(function (a) { a.setAttribute("aria-label", "Star Prism on GitHub — " + n.toLocaleString("en") + " stars"); });
+    $$("[data-gh-star]").forEach(function (a) { a.setAttribute("aria-label", "Star ZeluxDL on GitHub — " + n.toLocaleString("en") + " stars"); });
   }).catch(function () {});
 
   /* ------------------------------------------------------------------- tabs */
@@ -376,18 +370,18 @@
   var NEXT_KIND = { "win-setup": "win", "win-msi": "win", "win-zip": "winzip", "mac-arm": "mac", "mac-x64": "mac", "deb": "deb", "rpm": "rpm", "appimage": "appimage" };
   function nextSteps(kind, file) {
     var f = "<code>" + file + "</code>";
-    var guide = "Prism starts and <b>walks you through connecting your browser</b> &mdash; about a minute.";
+    var guide = "ZeluxDL starts and <b>walks you through connecting your browser</b> &mdash; about a minute.";
     switch (kind) {
       case "win": return ["Open " + f + " from your Downloads.", "If Windows says <i>&ldquo;Windows protected your PC&rdquo;</i>, click <b>More info &rarr; Run anyway</b> (the installer isn&rsquo;t signed with a paid certificate).", guide];
-      case "winzip": return ["Unzip " + f + " anywhere (a USB stick works).", "Run <code>prism.exe</code>. If SmartScreen appears: <b>More info &rarr; Run anyway</b>.", guide];
-      case "mac": return ["Open " + f + ", drag <b>Prism</b> into <b>Applications</b> and the <b>Browser Extension</b> folder into Documents.", "First start only: in Terminal run <code>xattr -dr com.apple.quarantine /Applications/Prism.app</code> (or System Settings &rarr; Privacy &amp; Security &rarr; <b>Open Anyway</b>).", guide];
-      case "deb": return ["Install it: <code>sudo apt install ./" + file + "</code>", "Start <b>Prism</b> from your applications menu.", guide];
-      case "rpm": return ["Install it: <code>sudo dnf install ./" + file + "</code>", "Start <b>Prism</b> from your applications menu.", guide];
+      case "winzip": return ["Unzip " + f + " anywhere (a USB stick works).", "Run <code>ZeluxDL.exe</code>. If SmartScreen appears: <b>More info &rarr; Run anyway</b>.", guide];
+      case "mac": return ["Open " + f + ", drag <b>ZeluxDL</b> into <b>Applications</b> and the <b>Browser Extension</b> folder into Documents.", "First start only: in Terminal run <code>xattr -dr com.apple.quarantine /Applications/ZeluxDL.app</code> (or System Settings &rarr; Privacy &amp; Security &rarr; <b>Open Anyway</b>).", guide];
+      case "deb": return ["Install it: <code>sudo apt install ./" + file + "</code>", "Start <b>ZeluxDL</b> from your applications menu.", guide];
+      case "rpm": return ["Install it: <code>sudo dnf install ./" + file + "</code>", "Start <b>ZeluxDL</b> from your applications menu.", guide];
       default: return ["Make it executable: <code>chmod +x " + file + "</code>", "Run it: <code>./" + file + "</code>", guide];
     }
   }
   function showNext(kind, href) {
-    var file = decodeURIComponent((href.split("?")[0].split("/").pop() || "Prism"));
+    var file = decodeURIComponent((href.split("?")[0].split("/").pop() || "ZeluxDL"));
     var old = $(".next-card");
     if (old) old.remove();
     var card = document.createElement("aside");
@@ -430,7 +424,7 @@
         // Privacy-enhanced embed, created only on click: nothing loads from YouTube before that.
         var f = document.createElement("iframe");
         f.src = "https://www.youtube-nocookie.com/embed/" + yt + "?autoplay=1&rel=0&playsinline=1";
-        f.title = "Prism — the film";
+        f.title = "ZeluxDL — the film";
         f.allow = "autoplay; encrypted-media; picture-in-picture; fullscreen";
         f.allowFullscreen = true;
         f.referrerPolicy = "strict-origin-when-cross-origin";
@@ -446,7 +440,7 @@
       v.playsInline = true;
       v.preload = "auto";
       if (img) v.poster = img.currentSrc || img.src;
-      v.setAttribute("aria-label", "Prism — promo film");
+      v.setAttribute("aria-label", "ZeluxDL — promo film");
       var s = document.createElement("source");
       s.src = src;
       s.type = "video/mp4";

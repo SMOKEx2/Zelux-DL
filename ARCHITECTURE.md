@@ -1,6 +1,6 @@
-# Prism — Architecture
+# ZeluxDL — Architecture
 
-Prism is an open-source, clean-room download manager in the spirit of Internet Download Manager (IDM):
+ZeluxDL is an open-source download manager in the spirit of Internet Download Manager (IDM):
 a fast multi-segment engine, deep browser integration, video grabbing, and a premium "liquid glass" desktop UI.
 
 ## 1. Stack decisions
@@ -47,7 +47,7 @@ flowchart LR
   end
   SW <-- stdio JSON<br/>native messaging --> NH[prism-native-host]
   NH -- HTTP 127.0.0.1:port<br/>Bearer token --> IPC
-  subgraph App[Prism app process]
+  subgraph App[ZeluxDL app process]
     IPC[core::ipc axum server] --> MGR
     UI[React UI<br/>WebView] <-- invoke / events --> TAURI[Tauri commands]
     TAURI --> MGR[core::manager]

@@ -87,23 +87,23 @@ jobs:
           M=target/${{ matrix.target }}/release/bundle/macos
           V=$(node -p "require('./app/src-tauri/tauri.conf.json').version")
           A=$([ "${{ matrix.target }}" = aarch64-apple-darwin ] && echo aarch64 || echo x64)
-          mv "$M/Prism.app.tar.gz" "$M/Prism_${V}_${A}.app.tar.gz"
-          mv "$M/Prism.app.tar.gz.sig" "$M/Prism_${V}_${A}.app.tar.gz.sig"
+          mv "$M/ZeluxDL.app.tar.gz" "$M/ZeluxDL_${V}_${A}.app.tar.gz"
+          mv "$M/ZeluxDL.app.tar.gz.sig" "$M/ZeluxDL_${V}_${A}.app.tar.gz.sig"
       - name: DMG with the browser extension next to the app (macOS)
         if: runner.os == 'macOS'
         run: |
           set -euo pipefail
           B=target/${{ matrix.target }}/release/bundle
           DMG=$(ls "$B"/dmg/*.dmg)
-          STAGE=$(mktemp -d)/Prism
+          STAGE=$(mktemp -d)/ZeluxDL
           mkdir -p "$STAGE/Browser Extension"
-          cp -R "$B/macos/Prism.app" "$STAGE/"
+          cp -R "$B/macos/ZeluxDL.app" "$STAGE/"
           ln -s /Applications "$STAGE/Applications"
           cp -R extension/build/chromium "$STAGE/Browser Extension/Chrome, Edge, Brave"
           cp -R extension/build/firefox "$STAGE/Browser Extension/Firefox"
           cp packaging/macos/README-extension.txt "$STAGE/Browser Extension/How to install.txt"
           rm -f "$DMG"
-          hdiutil create -volname "Prism" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
+          hdiutil create -volname "ZeluxDL" -srcfolder "$STAGE" -ov -format UDZO "$DMG"
           hdiutil imageinfo "$DMG" | head -5
       - name: Portable zip (Windows)
         if: runner.os == 'Windows'
@@ -111,7 +111,7 @@ jobs:
         run: ./scripts/make-portable.ps1 -Target ${{ matrix.target }}
       - uses: actions/upload-artifact@v5
         with:
-          name: prism-${{ matrix.name }}
+          name: zeluxdl-${{ matrix.name }}
           path: |
             target/${{ matrix.target }}/release/bundle/**/*.exe
             target/${{ matrix.target }}/release/bundle/**/*.msi
@@ -126,7 +126,7 @@ jobs:
       - uses: actions/upload-artifact@v5
         if: runner.os == 'Linux'
         with:
-          name: prism-extension
+          name: zeluxdl-extension
           path: extension/build/*.zip
 
   publish:

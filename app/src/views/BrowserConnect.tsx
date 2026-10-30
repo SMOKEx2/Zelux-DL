@@ -34,7 +34,7 @@ const PAGE: Record<string, string> = {
 /** Firefox-based browsers: Firefox's extension, loaded as a temporary add-on. */
 const FIREFOX_FAMILY = ["firefox", "zen"];
 
-/** Prism's extension in the Chrome Web Store: Chrome, Edge, Brave, Opera, Vivaldi, Helium and Chromium install it from there. */
+/** Official ZeluxDL extension packages are published with each GitHub release. */
 export const EXTENSION_STORE_URL = "https://github.com/SMOKEx2/Zelux-DL/releases";
 /** The store's install button as each browser labels it (Chrome's label elsewhere). */
 const ADD_LABEL: Record<string, string> = { brave: "Add to Brave", opera: "Add to Opera" };
@@ -67,8 +67,8 @@ function pickDefault(browsers: BrowserIntegration[]): string {
 }
 
 /**
- * Step-by-step guide that gets the browser extension installed: pick your browser, open Prism in
- * the Chrome Web Store and add it (Firefox: load the Prism folder as a temporary add-on) — with a
+ * Step-by-step guide that gets the browser extension installed: pick your browser and load its
+ * extracted ZeluxDL release package (Firefox: load it as a temporary add-on) — with a
  * live check that turns green the moment the extension connects.
  *
  * Button and setting names of the browser itself ("Add to Chrome", "Developer mode", …) stay in
@@ -83,7 +83,7 @@ export function BrowserConnect({ status, connected, hideOwnStatus }: { status: I
   const [browser, setBrowser] = useState<string | null>(null);
   const current = browser ?? (status ? pickDefault(status.browsers) : "chrome");
   const firefox = FIREFOX_FAMILY.includes(current);
-  // "Prefer to add it by hand?" (below the store guide): the unpacked extension Prism ships.
+  // "Prefer to add it by hand?" (below the release guide): the unpacked extension ZeluxDL ships.
   const [byHand, setByHand] = useState(false);
   const [folder, setFolder] = useState<string | null>(null);
   useEffect(() => {
@@ -92,8 +92,7 @@ export function BrowserConnect({ status, connected, hideOwnStatus }: { status: I
     void api.extensionFolder(firefox).then((path) => { if (active) setFolder(path); }, () => { if (active) setFolder(null); });
     return () => { active = false; };
   }, [firefox]);
-  // A Prism extension someone loaded by hand earlier ("Load unpacked"): the store version
-  // updates by itself, but the browser won't add it while the old one is still installed.
+  // An extension previously loaded by hand ("Load unpacked").
   const manual = false;
   // Store steps start after the "remove the copy added by hand" step when that one shows.
   const step = manual ? 1 : 0;
@@ -325,7 +324,7 @@ export function BrowserConnect({ status, connected, hideOwnStatus }: { status: I
           {byHand && (
             <>
               <p className="t-small text-tertiary">
-                {t("Without the store: load the folder Prism keeps up to date. A copy added this way doesn't update by itself — after a Prism update, click ↻ next to Prism on the extensions page.")}
+                {t("Browsers don't reload an unpacked extension's files by themselves. Click ↻ Reload next to Prism on the extensions page, or restart the browser; if it stays old, remove it and load it again from the folder below.")}
               </p>
               <ol className="bsteps">
                 <li className="bstep">

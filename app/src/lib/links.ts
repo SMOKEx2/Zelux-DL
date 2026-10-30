@@ -2,7 +2,7 @@
 
 import { inTauri } from "./api";
 
-/** Prism on GitHub. */
+/** ZeluxDL on GitHub. */
 export const REPO_URL = "https://github.com/SMOKEx2/Zelux-DL";
 
 export async function openUrl(url: string) {

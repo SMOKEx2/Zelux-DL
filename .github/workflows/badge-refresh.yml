@@ -8,7 +8,7 @@ name: Download badge
 # that loop when no run is waiting (after a runner failure or a GitHub outage).
 #
 # One-time setup in the public repository (without the wait timer the loop stops after a run):
-#   gh api -X PUT repos/FortoGraphy/prism-download-manager/environments/badge-timer -F wait_timer=10
+#   gh api -X PUT repos/SMOKEx2/Zelux-DL/environments/badge-timer -F wait_timer=10
 
 on:
   workflow_dispatch:
@@ -22,7 +22,7 @@ permissions:
 jobs:
   start:
     name: Restart the loop
-    if: github.event_name == 'schedule' && github.repository == 'FortoGraphy/prism-download-manager'
+    if: github.event_name == 'schedule' && github.repository == 'SMOKEx2/Zelux-DL'
     runs-on: ubuntu-latest
     steps:
       - name: Start a run unless one is already waiting

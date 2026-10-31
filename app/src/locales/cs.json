@@ -1081,5 +1081,16 @@
   "No duplicate files found": "Nebyly nalezeny žádné duplicitní soubory",
   "Could not scan duplicate files": "Duplicitní soubory nelze zkontrolovat",
   "Only completed files still present on disk are checked.": "Kontrolují se pouze dokončené soubory, které jsou stále na disku.",
-  "Scan for duplicates": "Zkontrolovat duplicitní soubory"
+  "Scan for duplicates": "Zkontrolovat duplicitní soubory",
+  "YouTube Mix limit": "YouTube Mix limit",
+  "Limits automatically generated Mix playlists only. Creator playlists download all songs.": "Limits automatically generated Mix playlists only. Creator playlists download all songs.",
+  "songs": "songs",
+  "{format} audio": "{format} audio",
+  "Download {number} as {format}": "Download {number} as {format}",
+  "YouTube music playlists": "YouTube music playlists",
+  "Paste playlist links in the extension. Mix playlists default to 200 songs; creator playlists download all songs into a separate folder with one completion notice.": "Paste playlist links in the extension. Mix playlists default to 200 songs; creator playlists download all songs into a separate folder with one completion notice.",
+  "gallery-dl tool status": "gallery-dl tool status",
+  "View gallery-dl below ffmpeg and adjust the YouTube Mix limit below Audio format in Video & streams settings.": "View gallery-dl below ffmpeg and adjust the YouTube Mix limit below Audio format in Video & streams settings.",
+  "Simultaneous video and music downloads": "Simultaneous video and music downloads",
+  "Default 3, adjustable from 1 to 10. Lowering the limit lets active downloads finish before starting more.": "Default 3, adjustable from 1 to 10. Lowering the limit lets active downloads finish before starting more."
 }

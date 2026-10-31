@@ -25,6 +25,50 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio_util::sync::CancellationToken;
 
+/// Changing the limit preserves active work; lower limits only delay new admissions.
+pub(crate) struct VideoLimiter {
+    state: Mutex<(usize, usize)>,
+    changed: tokio::sync::Notify,
+}
+
+impl VideoLimiter {
+    pub(super) fn new(limit: u32) -> Self {
+        Self {
+            state: Mutex::new((0, limit.clamp(1, 10) as usize)),
+            changed: tokio::sync::Notify::new(),
+        }
+    }
+
+    pub(super) fn set_limit(&self, limit: u32) {
+        self.state.lock().1 = limit.clamp(1, 10) as usize;
+        self.changed.notify_waiters();
+    }
+
+    async fn acquire(&self) -> VideoSlot<'_> {
+        loop {
+            let changed = self.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            {
+                let mut state = self.state.lock();
+                if state.0 < state.1 {
+                    state.0 += 1;
+                    return VideoSlot(self);
+                }
+            }
+            changed.await;
+        }
+    }
+}
+
+struct VideoSlot<'a>(&'a VideoLimiter);
+impl Drop for VideoSlot<'_> {
+    fn drop(&mut self) {
+        self.0.state.lock().0 -= 1;
+        self.0.changed.notify_waiters();
+    }
+}
+
 /// Details window payload.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -414,9 +458,25 @@ pub(crate) fn torrent_hash(item: &DownloadItem) -> Option<String> {
         .map(String::from)
 }
 
-pub(crate) fn video_temp_dir(item: &DownloadItem) -> PathBuf {
-    item.save_dir
-        .join(format!(".prism-{}", &item.id[..item.id.len().min(12)]))
+pub(crate) fn video_temp_dir(data_dir: &Path, item: &DownloadItem) -> PathBuf {
+    // Older resumable jobs keep using the files referenced by their checkpoints.
+    if item.resume.is_some()
+        && item
+            .id
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+    {
+        let legacy = item
+            .save_dir
+            .join(format!(".prism-{}", &item.id[..item.id.len().min(12)]));
+        if legacy.is_dir() {
+            return legacy;
+        }
+    }
+    data_dir
+        .join("cache")
+        .join("video")
+        .join(hex::encode(Sha256::digest(item.id.as_bytes())))
 }
 
 pub(crate) fn choice_is_audio(choice: &serde_json::Value) -> bool {
@@ -726,12 +786,13 @@ impl VideoJob {
         tokio::spawn(async move {
             let result = j.run(&core, &item).await;
             let stop = *j.stop.lock();
-            let resume = j.resume_json();
+            let resume = j.resume_json().or_else(|| item.resume.clone());
             let result = match (result, stop) {
                 (_, Some(StopKind::Pause)) => JobResult::Paused { resume },
                 (_, Some(StopKind::Cancel | StopKind::CancelDelete)) => {
                     if stop == Some(StopKind::CancelDelete) {
-                        let _ = tokio::fs::remove_dir_all(video_temp_dir(&item)).await;
+                        let _ = tokio::fs::remove_dir_all(video_temp_dir(&core.0.data_dir, &item))
+                            .await;
                     }
                     JobResult::Cancelled
                 }
@@ -846,6 +907,12 @@ impl VideoJob {
     }
 
     async fn run(&self, core: &Core, item: &DownloadItem) -> Result<(PathBuf, u64)> {
+        self.set(|s| s.status = Status::Queued);
+        let _slot = tokio::select! {
+            permit = core.0.video_slots.acquire() => permit,
+            _ = self.cancel.cancelled() => return Err(anyhow!("stopped")),
+        };
+        self.set(|s| s.status = Status::Connecting);
         let settings = core.settings();
         let spec = item.request.clone().unwrap_or_default();
         let page_url = spec
@@ -936,7 +1003,7 @@ impl VideoJob {
         mut plan: prism_video::AcceleratedPlan,
     ) -> Result<(PathBuf, u64)> {
         let settings = core.settings();
-        let temp = video_temp_dir(item);
+        let temp = video_temp_dir(&core.0.data_dir, item);
         tokio::fs::create_dir_all(&temp).await?;
         hide_dir(&temp);
         let stored: HashMap<String, ResumeState> = item
@@ -1582,6 +1649,66 @@ impl Core {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn video_limit_changes_preserve_active_slots_and_enforce_ten_maximum() {
+        let limiter = VideoLimiter::new(3);
+        let mut slots = Vec::new();
+        for _ in 0..3 {
+            slots.push(limiter.acquire().await);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), limiter.acquire())
+                .await
+                .is_err()
+        );
+        limiter.set_limit(5);
+        for _ in 0..2 {
+            slots.push(limiter.acquire().await);
+        }
+        limiter.set_limit(1);
+        while slots.len() > 1 {
+            slots.pop();
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), limiter.acquire())
+                .await
+                .is_err()
+        );
+        slots.clear();
+        slots.push(limiter.acquire().await);
+        limiter.set_limit(99);
+        for _ in 1..10 {
+            slots.push(limiter.acquire().await);
+        }
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), limiter.acquire())
+                .await
+                .is_err()
+        );
+        slots.clear();
+        limiter.set_limit(0);
+        let _one = limiter.acquire().await;
+        assert!(
+            tokio::time::timeout(Duration::from_millis(10), limiter.acquire())
+                .await
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn video_cache_is_outside_downloads_and_confined_for_imported_ids() {
+        let item = DownloadItem {
+            id: "../../unsafe".into(),
+            save_dir: PathBuf::from("downloads"),
+            ..Default::default()
+        };
+        let data = Path::new("app-data");
+        let cache = video_temp_dir(data, &item);
+        assert_eq!(cache.parent(), Some(data.join("cache/video").as_path()));
+        assert!(!cache.starts_with(&item.save_dir));
+        assert_eq!(cache.file_name().unwrap().len(), 64);
+    }
 
     #[test]
     fn probe_cache_key_is_scoped_to_the_browser_session_without_storing_cookies() {

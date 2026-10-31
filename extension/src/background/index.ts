@@ -104,6 +104,12 @@ async function handle(msg: InternalMessage, sender: chrome.runtime.MessageSender
         /* state already updated by onResult */
       }
       return getConnection();
+    case 'openUrl': {
+      const url = new URL(msg.url.trim());
+      if (!['https:', 'http:'].includes(url.protocol)) return { ok: false, error: 'กรุณาใส่ลิงก์ HTTP หรือ HTTPS' };
+      await native.request({ type: 'openVideoUrl', pageUrl: url.href });
+      return { ok: true } satisfies ActionResult;
+    }
     case 'retryConnection':
       native.retry();
       try {

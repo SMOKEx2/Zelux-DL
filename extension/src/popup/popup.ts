@@ -19,6 +19,8 @@ let videoOptions: VideoOption[] = [];
 let videoLoading = false;
 let videoError = '';
 
+let pastedUrl = '';
+
 function youtubeVideoPage(raw: string): boolean {
   try {
     const u = new URL(raw);
@@ -107,6 +109,10 @@ function render(): void {
         st.settings.captureEnabled ? '' : 'disabled'
       } aria-label="จับการดาวน์โหลด"><span></span></label>
     </section>
+    <form class="url-send glass" id="url-send">
+      <input type="url" id="pasted-url" value="${esc(pastedUrl)}" placeholder="วางลิงก์วิดีโอหรือ Playlist" aria-label="ลิงก์วิดีโอหรือ Playlist" required>
+      <button class="btn primary" type="submit" title="ส่งไปยัง ZeluxDL" aria-label="ส่งไปยัง ZeluxDL">${icons.download(16)}</button>
+    </form>
     ${socialPage ? `<section class="section glass post-picker">
       ${postUrl ? `<h2>สื่อจากโพสต์นี้</h2>
       <p class="muted">แสดงเฉพาะรูปและคลิปจากโพสต์นี้ เลือกรายการก่อนส่งไปยัง ZeluxDL</p>
@@ -273,6 +279,25 @@ async function act(el: HTMLElement): Promise<void> {
     if (a !== 'retry' && a !== 'launch') void refreshStatus();
   }
 }
+
+app.addEventListener('input', (e) => {
+  const input = e.target as HTMLInputElement;
+  if (input.id === 'pasted-url') pastedUrl = input.value;
+});
+app.addEventListener('submit', async (e) => {
+  if ((e.target as HTMLElement).id !== 'url-send') return;
+  e.preventDefault();
+  if (busy) return;
+  busy = true;
+  const button = (e.target as HTMLFormElement).querySelector<HTMLButtonElement>('button')!;
+  button.disabled = true;
+  try {
+    const result = await sendInternal<ActionResult>({ kind: 'openUrl', url: pastedUrl.trim() });
+    if (result?.ok) { toast('ส่งลิงก์ไปยัง ZeluxDL แล้ว'); }
+    else toast(result?.error ?? 'ส่งลิงก์ไม่สำเร็จ', true);
+  } catch (error) { toast(error instanceof Error ? error.message : String(error), true); }
+  finally { busy = false; button.disabled = false; }
+});
 
 app.addEventListener('click', (e) => {
   const el = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');

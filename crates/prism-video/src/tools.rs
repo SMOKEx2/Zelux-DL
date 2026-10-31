@@ -92,8 +92,18 @@ impl ToolInfo {
 pub struct ToolStatus {
     pub yt_dlp: ToolInfo,
     pub ffmpeg: ToolInfo,
+    pub gallery_dl: GalleryInfo,
     pub ffprobe: ToolInfo,
     pub deno: ToolInfo,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GalleryInfo {
+    pub path: Option<PathBuf>,
+    pub version: Option<String>,
+    pub source: ToolSource,
+    pub message: Option<String>,
 }
 
 impl ToolStatus {

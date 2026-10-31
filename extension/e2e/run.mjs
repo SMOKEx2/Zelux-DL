@@ -623,6 +623,12 @@ try {
     await popup.locator('#conn[data-state="connected"]').waitFor({ timeout: 4000 });
     const chipText = await popup.locator('#conn').textContent();
     assert.ok(chipText?.trim(), 'connection status label is empty');
+    const playlistUrl = 'https://www.youtube.com/watch?v=0fcsGS1dEro&list=RD0fcsGS1dEro&start_radio=1';
+    await popup.locator('#pasted-url').fill(playlistUrl);
+    const pasteSince = Date.now();
+    await popup.locator('#pasted-url').press('Enter');
+    const { msg: pasted } = await mock.waitFor((m) => m.type === 'openVideoUrl', 5000, { since: pasteSince });
+    assert.equal(pasted.pageUrl, playlistUrl, 'playlist URL including Mix identity reaches the app unchanged');
     await popup.locator('.media .name', { hasText: 'clip.mp4' }).waitFor({ timeout: 2000 });
     // The popup no longer scans/sends every media item at once; each visible item is explicit.
     assert.equal(await popup.locator('[data-act="collect"]').count(), 0, 'bulk scan control should not be present');

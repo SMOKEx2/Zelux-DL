@@ -360,11 +360,15 @@ fn create_post_media_folder(base: &std::path::Path, page_url: &str) -> Result<Pa
         "{site}-{}-{post}",
         chrono::Local::now().format("%m-%d-%y-%H-%M")
     );
+    create_unique_media_folder(base, &name)
+}
+
+fn create_unique_media_folder(base: &std::path::Path, name: &str) -> Result<PathBuf> {
     std::fs::create_dir_all(base)?;
     let mut suffix = 1;
     loop {
         let folder = base.join(if suffix == 1 {
-            name.clone()
+            name.to_owned()
         } else {
             format!("{name}-{suffix}")
         });
@@ -1016,8 +1020,14 @@ impl Core {
     pub async fn probe_video(
         &self,
         page_url: &str,
-        ctx: prism_video::RequestContext,
+        mut ctx: prism_video::RequestContext,
     ) -> Result<serde_json::Value> {
+        if let Some(id) = prism_video::probe::youtube_playlist_id(page_url) {
+            ctx.want_playlist = true;
+            if id.starts_with("RD") {
+                ctx.playlist_limit = Some(self.settings().video.youtube_mix_limit.clamp(1, 10000));
+            }
+        }
         jobs::probe_video(self, page_url, ctx).await
     }
 
@@ -1081,11 +1091,19 @@ impl Core {
     /// (used for playlist/batch entries, where showing one dialog per entry would be
     /// impractical). The single-video "video" IPC handler goes through `capture()` instead,
     /// so the user can still rename/relocate before it starts.
-    pub fn confirm_video(&self, d: VideoDecision) -> Result<Vec<DownloadItem>> {
+    pub fn confirm_video(&self, mut d: VideoDecision) -> Result<Vec<DownloadItem>> {
         if !d.capture_id.is_empty() {
             self.0.state.lock().videos.remove(&d.capture_id);
         }
         let settings = self.settings();
+        let playlist_id = prism_video::probe::youtube_playlist_id(&d.page_url);
+        if playlist_id
+            .as_deref()
+            .is_some_and(|id| id.starts_with("RD"))
+        {
+            d.entries
+                .truncate(settings.video.youtube_mix_limit.clamp(1, 10000) as usize);
+        }
         let playlist = !d.entries.is_empty();
         // Numbers as wide as the last position: 01..99, 001..120.
         let width = d
@@ -1094,7 +1112,7 @@ impl Core {
             .filter_map(|e| e.index)
             .max()
             .map_or(2, |m| m.to_string().len().max(2));
-        let entries: Vec<NewItem> = if playlist {
+        let mut entries: Vec<NewItem> = if playlist {
             d.entries
                 .iter()
                 .map(|e| {
@@ -1135,8 +1153,40 @@ impl Core {
             n.save_dir = d.save_dir.clone();
             vec![n]
         };
-        if playlist && d.one_at_a_time && matches!(d.mode, StartMode::Now | StartMode::Later) {
-            let queue = self.one_at_a_time_queue()?;
+        if playlist && let Some(id) = playlist_id {
+            let title = d
+                .title
+                .as_deref()
+                .filter(|t| !t.trim().is_empty() && *t != "Video")
+                .or_else(|| d.entries.first().and_then(|e| e.title.as_deref()))
+                .unwrap_or("YouTube playlist");
+            let mut title = super::sanitize_name(title);
+            // Leave room for the identifier when the playlist title is very long.
+            while title.len() > 160 {
+                title.pop();
+            }
+            let short = hex::encode_upper(Sha256::digest(id.as_bytes()));
+            let folder_name = super::sanitize_name(&format!(
+                "{title} [{}-{}]",
+                if id.starts_with("RD") { "RD" } else { "PL" },
+                &short[..8]
+            ));
+            let category = entries[0].category.as_deref().unwrap_or("music");
+            let base = d
+                .save_dir
+                .clone()
+                .unwrap_or_else(|| self.resolve_save_dir(&settings, category));
+            let folder = create_unique_media_folder(&base, &folder_name)?;
+            let group = new_id();
+            for entry in &mut entries {
+                entry.save_dir = Some(folder.clone());
+                if let Some(media) = &mut entry.media {
+                    media.download_group = Some(group.clone());
+                }
+            }
+        }
+        if playlist && matches!(d.mode, StartMode::Now | StartMode::Later) {
+            let queue = self.playlist_queue(d.one_at_a_time)?;
             let items = self.add_items(entries, StartMode::Queue(queue.clone()))?;
             if d.mode == StartMode::Now {
                 self.start_queue(&queue);
@@ -1146,30 +1196,36 @@ impl Core {
         self.add_items(entries, d.mode)
     }
 
-    /// The "One at a time" queue (one download at a time), created on first use.
-    fn one_at_a_time_queue(&self) -> Result<String> {
-        let existing = self
-            .queues()
-            .into_iter()
-            .find(|q| q.id == ONE_AT_A_TIME_QUEUE);
+    /// Playlist starts always respect a bounded queue instead of spawning every entry.
+    fn playlist_queue(&self, one_at_a_time: bool) -> Result<String> {
+        let (id, name, max_concurrent) = if one_at_a_time {
+            (ONE_AT_A_TIME_QUEUE, "One at a time", 1)
+        } else {
+            (
+                "playlist-downloads",
+                "Playlist downloads",
+                self.settings().video.concurrent_downloads.clamp(1, 10),
+            )
+        };
+        let existing = self.queues().into_iter().find(|q| q.id == id);
         match existing {
-            Some(q) if q.max_concurrent == 1 => {}
+            Some(q) if q.max_concurrent == max_concurrent => {}
             Some(mut q) => {
-                q.max_concurrent = 1;
+                q.max_concurrent = max_concurrent;
                 self.upsert_queue(q)?;
             }
             None => {
                 let position = self.queues().len() as i64;
                 self.upsert_queue(crate::model::Queue {
-                    id: ONE_AT_A_TIME_QUEUE.into(),
-                    name: "One at a time".into(),
-                    max_concurrent: 1,
+                    id: id.into(),
+                    name: name.into(),
+                    max_concurrent,
                     position,
                     ..Default::default()
                 })?;
             }
         }
-        Ok(ONE_AT_A_TIME_QUEUE.into())
+        Ok(id.into())
     }
 
     /// Download a sniffed HLS/DASH/direct stream (no yt-dlp involved).
@@ -1687,6 +1743,22 @@ impl Core {
                     }
                     Err(e) => fail("app_error", e.to_string()),
                 }
+            }
+            "openVideoUrl" => {
+                let Some(page_url) = s("pageUrl") else {
+                    return fail("bad_request", "missing pageUrl".into());
+                };
+                if !url::Url::parse(&page_url).is_ok_and(|u| matches!(u.scheme(), "http" | "https"))
+                    || !is_video_page(&page_url)
+                {
+                    return fail(
+                        "bad_request",
+                        "Paste a supported video or playlist URL".into(),
+                    );
+                }
+                self.open_video(page_url, None, Vec::new(), None);
+                self.emit(CoreEvent::ShowMain);
+                serde_json::json!({"ok": true, "accepted": true})
             }
             "openMediaPicker" => {
                 let Some(page_url) = s("pageUrl") else {

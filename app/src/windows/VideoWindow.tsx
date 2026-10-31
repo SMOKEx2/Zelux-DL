@@ -8,7 +8,7 @@ import { formatBytes, formatClock, hostOf } from "../lib/format";
 import { t, tk } from "../lib/i18n";
 import { useApp } from "../lib/store";
 import { displayName } from "../lib/present";
-import { initialMediaSelection, isSinglePostMediaUrl } from "../lib/socialPost";
+import { initialMediaSelection, isSinglePostMediaUrl, mediaSelectionKey } from "../lib/socialPost";
 import type { SniffedStream, StartMode, VideoCapture } from "../lib/types";
 import { attempt, toast } from "../lib/ui";
 import { pickFolder, win } from "../lib/win";
@@ -88,7 +88,8 @@ export default function VideoWindow({ id }: { id: string }) {
           setChoice((c.preselected && p.choices.some((x) => x.id === c.preselected) ? c.preselected : pick?.id) ?? "");
         } else {
           setChoice("v1080");
-          setEntries(initialMediaSelection(p.entries.map((e) => e.url), isSinglePostMediaUrl(c.pageUrl)));
+          if (new URL(c.pageUrl).hostname.endsWith("youtube.com") || new URL(c.pageUrl).hostname === "youtu.be") setFormat("mp3");
+          setEntries(initialMediaSelection(p.entries.map((e, i) => mediaSelectionKey(e.url, i)), isSinglePostMediaUrl(c.pageUrl)));
         }
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -96,7 +97,9 @@ export default function VideoWindow({ id }: { id: string }) {
     })();
   }, [id, settings?.video.preferredHeight, usePostSession]);
 
-  const choices = probe?.kind === "video" ? probe.choices : PLAYLIST_CHOICES;
+  const playlistAudioFormat = (["mp3", "m4a", "opus", "flac"] as const).find((value) => value === settings?.video.audioFormat) ?? "mp3";
+  const audioName = probe?.kind === "playlist" ? playlistAudioFormat.toUpperCase() : "MP3";
+  const choices = useMemo(() => probe?.kind === "video" ? probe.choices : PLAYLIST_CHOICES.map((c) => c.kind === "audio" ? { ...c, audioFormat: playlistAudioFormat, audioBitrateKbps: playlistAudioFormat === "mp3" ? 320 : undefined, label: audioName } : c), [probe, playlistAudioFormat, audioName]);
   const { video, mp3 } = useMemo(() => splitChoices(choices), [choices]);
   const picked = format === "mp3" ? mp3 : video.find((c) => c.id === choice) ?? video[0];
   const subLangs = useMemo(() => (probe?.kind === "video" ? Object.keys(probe.subtitles ?? {}) : []), [probe]);
@@ -110,7 +113,7 @@ export default function VideoWindow({ id }: { id: string }) {
     setBusy(true);
     if (postMedia && probe?.kind === "playlist") {
       const selected = probe.entries.flatMap((entry, i) =>
-        entries.has(entry.url)
+        entries.has(mediaSelectionKey(entry.url, i))
           ? [{ url: entry.url, extension: entry.extension ?? "", httpHeaders: entry.httpHeaders ?? {}, index: i + 1 }]
           : [],
       );
@@ -130,7 +133,7 @@ export default function VideoWindow({ id }: { id: string }) {
         choice: picked,
         options: {
           container,
-          audioFormat: "mp3",
+          audioFormat: probe?.kind === "playlist" ? playlistAudioFormat : "mp3",
           embedSubtitles: subs,
           subLangs: langs.split(/[\s,]+/).filter(Boolean),
           embedThumbnail: thumb,
@@ -145,7 +148,7 @@ export default function VideoWindow({ id }: { id: string }) {
         context: cap.cookies || cap.userAgent ? { cookies: cap.cookies ?? "", userAgent: cap.userAgent ?? "", referer: cap.pageUrl } : undefined,
         entries:
           probe?.kind === "playlist"
-            ? probe.entries.flatMap((e, i) => (entries.has(e.url) ? [{ url: e.url, title: e.title ?? null, index: i + 1 }] : []))
+            ? probe.entries.flatMap((e, i) => (entries.has(mediaSelectionKey(e.url, i)) ? [{ url: e.url, title: e.title ?? null, index: i + 1 }] : []))
             : [],
         oneAtATime: probe?.kind === "playlist" && oneByOne,
         mode,
@@ -223,7 +226,7 @@ export default function VideoWindow({ id }: { id: string }) {
               onChange={setFormat}
               options={[
                 { value: "mp4", label: t("{format} video", { format: containerName }) },
-                { value: "mp3", label: t("MP3 audio") },
+                { value: "mp3", label: probe?.kind === "playlist" ? t("{format} audio", { format: audioName }) : t("MP3 audio") },
               ]}
             />
           </div>
@@ -240,7 +243,7 @@ export default function VideoWindow({ id }: { id: string }) {
         {probe && !postMedia && format === "mp3" && mp3 && (
           <div className="choices" role="radiogroup" aria-label={t("Audio")}>
             <div className="qsec">{t("Audio only")}</div>
-            <ChoiceRow c={{ ...mp3, label: "MP3", subLabel: `320 kbps${mp3.estSize ? ` · ~${formatBytes(mp3.estSize)}` : ""}` }} on onPick={() => undefined} />
+            <ChoiceRow c={{ ...mp3, label: audioName, subLabel: `${audioName === "MP3" ? "320 kbps" : audioName}${mp3.estSize ? ` · ~${formatBytes(mp3.estSize)}` : ""}` }} on onPick={() => undefined} />
           </div>
         )}
 
@@ -332,7 +335,7 @@ export default function VideoWindow({ id }: { id: string }) {
           <Icon name="download" size={15} />
           {probe?.kind === "playlist"
             ? format === "mp3"
-              ? t("Download {number} as MP3", { number: entries.size })
+              ? audioName === "MP3" ? t("Download {number} as MP3", { number: entries.size }) : t("Download {number} as {format}", { number: entries.size, format: audioName })
               : isSinglePostMediaUrl(cap?.pageUrl ?? "")
                 ? t("Download {count} selected items", { count: entries.size })
                 : t("Download {count} videos", { count: entries.size })
@@ -362,27 +365,28 @@ function ChoiceRow({ c, on, onPick }: { c: VideoChoice; on: boolean; onPick: () 
 }
 
 function Playlist({ entries, checked, onChange }: { entries: PlaylistEntry[]; checked: Set<string>; onChange: (s: Set<string>) => void }) {
-  const all = entries.every((e) => checked.has(e.url));
+  const all = entries.every((e, i) => checked.has(mediaSelectionKey(e.url, i)));
   return (
     <div className="plist">
       <div className="plist__head">
-        <Checkbox checked={all} indeterminate={!all && checked.size > 0} onChange={(v) => onChange(new Set(v ? entries.map((e) => e.url) : []))}>
+        <Checkbox checked={all} indeterminate={!all && checked.size > 0} onChange={(v) => onChange(new Set(v ? entries.map((e, i) => mediaSelectionKey(e.url, i)) : []))}>
           {t("{count} of {total} selected", { count: checked.size, total: entries.length })}
         </Checkbox>
       </div>
       <div className="plist__rows">
         {entries.map((e, i) => (
           <div
-            key={e.url}
+            key={mediaSelectionKey(e.url, i)}
             className="plist__row"
             onClick={() => {
               const n = new Set(checked);
-              if (n.has(e.url)) n.delete(e.url);
-              else n.add(e.url);
+              const key = mediaSelectionKey(e.url, i);
+              if (n.has(key)) n.delete(key);
+              else n.add(key);
               onChange(n);
             }}
           >
-            <Checkbox checked={checked.has(e.url)} label={t("Select {name}", { name: e.title ?? e.url })} onChange={() => undefined} />
+            <Checkbox checked={checked.has(mediaSelectionKey(e.url, i))} label={t("Select {name}", { name: e.title ?? e.url })} onChange={() => undefined} />
             <span className="tnum text-tertiary">{i + 1}</span>
             <span className="thumb" style={e.thumbnail ? { backgroundImage: `url("${e.thumbnail}")` } : undefined} />
             <span className="ellipsis">{e.title ?? e.url}</span>

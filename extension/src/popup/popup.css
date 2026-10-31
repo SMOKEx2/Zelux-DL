@@ -64,3 +64,6 @@ main { padding: 12px; display: flex; flex-direction: column; gap: 10px; }
 }
 .toast.show { opacity: 1; transform: translate(-50%, 0); }
 .toast.bad { color: var(--bad); }
+.url-send { display: flex; align-items: center; justify-content: center; gap: 8px; padding: 10px; margin: 10px 0; border-radius: 14px; }
+.url-send input { flex: 1; min-width: 0; height: 34px; padding: 0 10px; color: inherit; background: rgb(0 0 0 / 0.18); border: 1px solid rgb(255 255 255 / 0.1); border-radius: 9px; font: inherit; outline: none; }
+.url-send input:focus-visible { border-color: #8b7bff; box-shadow: 0 0 0 2px rgb(139 123 255 / 0.18); }

@@ -1,3 +1,14 @@
+# ZeluxDL 2.0.6
+
+## What's new
+
+- Send a YouTube playlist URL from the browser extension to the app's audio download picker.
+- Limit YouTube Mix downloads to 200 tracks by default, configurable below Audio format. Creator playlists download all selected tracks without that limit.
+- Save each playlist in a separate folder named after the playlist or first track, with a short playlist identifier and one completion notice for the group.
+- Show gallery-dl tool status directly below ffmpeg in Video & streams settings.
+- Start playlists with three concurrent downloads by default, configurable from one to ten in Video & streams settings. The same limit protects bulk Resume; the optional sequential mode still runs one track at a time.
+- Store new accelerated media working files in the app's video cache instead of creating `.prism-*` folders alongside downloads. Existing resumable work keeps its checkpoint location until it finishes.
+
 # ZeluxDL 2.0.5
 
 ## What's new

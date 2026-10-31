@@ -1,6 +1,6 @@
 {
   "name": "zeluxdl-extension",
-  "version": "2.0.5",
+  "version": "2.0.6",
   "private": true,
   "description": "ZeluxDL download manager browser integration (Chromium MV3 + Firefox MV3)",
   "license": "MIT",

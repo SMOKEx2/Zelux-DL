@@ -151,6 +151,7 @@ impl VideoService {
         ToolStatus {
             yt_dlp,
             ffmpeg,
+            gallery_dl: gallery::status(d),
             ffprobe,
             deno,
         }
@@ -185,6 +186,11 @@ impl VideoService {
             || (!o.prefer_system_ffmpeg && ff_src == ToolSource::System);
         if need_ffmpeg && let Err(e) = tools::install_ffmpeg(&http, &d, &progress).await {
             errors.push(format!("ffmpeg: {e}"));
+        }
+        if gallery::supported()
+            && let Err(e) = gallery::ensure_binary(&d, &o).await
+        {
+            errors.push(format!("gallery-dl: {e}"));
         }
         drop(_guard);
         let status = self.tool_status().await;

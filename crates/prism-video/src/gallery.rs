@@ -62,6 +62,27 @@ fn binary_path(tools_dir: &Path) -> Result<(PathBuf, Asset)> {
     Ok((tools_dir.join(name), a))
 }
 
+pub(crate) fn status(tools_dir: &Path) -> tools::GalleryInfo {
+    let path = binary_path(tools_dir)
+        .ok()
+        .map(|(path, _)| path)
+        .filter(|p| p.is_file());
+    tools::GalleryInfo {
+        version: path.as_ref().map(|_| RELEASE.to_owned()),
+        source: if path.is_some() {
+            tools::ToolSource::Managed
+        } else {
+            tools::ToolSource::Missing
+        },
+        path,
+        message: Some("Pinned social-post media extractor; installed with video tools".into()),
+    }
+}
+
+pub(crate) fn supported() -> bool {
+    asset().is_ok()
+}
+
 pub(crate) async fn ensure_binary(tools_dir: &Path, options: &VideoOptions) -> Result<PathBuf> {
     let (dest, a) = binary_path(tools_dir)?;
     if dest.is_file() {

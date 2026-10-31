@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { initialMediaSelection, isSinglePostMediaUrl } from "./socialPost";
+import { initialMediaSelection, isSinglePostMediaUrl, mediaSelectionKey } from "./socialPost";
 
 describe("single-post media URLs", () => {
   it.each([
@@ -33,4 +33,12 @@ it("does not preselect a post's entire media set", () => {
 
 it("keeps playlist auto-selection unchanged for non-post URLs", () => {
   expect(initialMediaSelection(["one", "two"], false)).toEqual(new Set(["one", "two"]));
+});
+
+it("selects repeated playlist tracks independently", () => {
+  const keys = ["same", "same", "other"].map(mediaSelectionKey);
+  const selected = initialMediaSelection(keys, false);
+  expect(selected.size).toBe(3);
+  selected.delete(keys[0]);
+  expect(selected.has(keys[1])).toBe(true);
 });

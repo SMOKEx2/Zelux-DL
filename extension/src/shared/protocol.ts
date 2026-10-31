@@ -302,6 +302,7 @@ export interface HostPingReply extends OkReply {
 }
 
 export type AppRequest =
+  | { type: 'openVideoUrl'; pageUrl: string }
   | HelloRequest
   | DownloadRequest
   | BatchRequest
@@ -316,6 +317,7 @@ export type AppRequest =
   | { type: 'hostPing' };
 
 export interface ReplyMap {
+  openVideoUrl: OkReply;
   hello: HelloReply;
   download: DownloadReply;
   batch: BatchReply;

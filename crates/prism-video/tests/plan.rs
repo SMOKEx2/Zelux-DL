@@ -266,7 +266,7 @@ fn probe_and_global_args() {
             "--flat-playlist",
             "--yes-playlist",
             "--",
-            "https://www.youtube.com/watch?v=x&list=PL1"
+            "https://www.youtube.com/playlist?list=PL1"
         ]
     );
     assert_eq!(
@@ -324,6 +324,7 @@ fn context_args_and_cookies() {
             ("Cookie".into(), "ignored".into()),
         ],
         want_playlist: false,
+        playlist_limit: None,
     };
     let o = VideoOptions::default();
     let cf = PathBuf::from("c.txt");

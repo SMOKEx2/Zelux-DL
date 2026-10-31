@@ -87,6 +87,8 @@ pub struct RequestContext {
     pub headers: Vec<(String, String)>,
     /// Treat `watch?v=..&list=..` URLs as the playlist instead of the single video.
     pub want_playlist: bool,
+    /// Upper bound for an automatically generated YouTube Mix (never applied to curated lists).
+    pub playlist_limit: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------

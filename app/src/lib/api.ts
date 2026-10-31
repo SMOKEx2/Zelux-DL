@@ -307,6 +307,7 @@ export interface ToolInfo {
 }
 
 export interface ToolStatus {
+  galleryDl?: ToolInfo;
   ytDlp?: ToolInfo;
   ffmpeg?: ToolInfo;
   ffprobe?: ToolInfo;

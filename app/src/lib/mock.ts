@@ -174,7 +174,7 @@ const settings: Settings = {
   clipboard: { monitor: true, ask: true },
   grabber: { defaultDepth: 2, maxPages: 2000, concurrentRequests: 6, respectRobots: true },
   antivirus: { enabled: false, kind: "auto", command: "", args: "", extensions: [] },
-  video: { ytdlpPath: "", ffmpegPath: "", autoUpdate: true, preferredHeight: 1080, container: "mp4", audioFormat: "m4a", embedSubtitles: false, subtitleLangs: "en.*", embedThumbnail: true, embedMetadata: true, embedChapters: true, sponsorblock: "off", accelerate: true, cookiesFromBrowser: "", fileTemplate: "%(title)s [%(id)s].%(ext)s", numberPlaylistVideos: false },
+  video: { ytdlpPath: "", ffmpegPath: "", autoUpdate: true, preferredHeight: 1080, container: "mp4", audioFormat: "m4a", youtubeMixLimit: 200, concurrentDownloads: 3, embedSubtitles: false, subtitleLangs: "en.*", embedThumbnail: true, embedMetadata: true, embedChapters: true, sponsorblock: "off", accelerate: true, cookiesFromBrowser: "", fileTemplate: "%(title)s [%(id)s].%(ext)s", numberPlaylistVideos: false },
   huggingFace: { endpoint: "", token: "", folder: "" },
   shortcuts: {},
   // The demo bootstrap version: "What's new" opens with ?sheet=whatsnew, or by itself with ?lastseen=1.0.9 (an update).
@@ -773,6 +773,7 @@ const commands: Record<string, (args: Record<string, unknown>) => unknown> = {
     };
   },
   tool_status: () => ({
+    galleryDl: { source: "managed", version: "2026.10.30", path: "gallery-dl" },
     ytDlp: { tool: "yt-dlp", source: "managed", version: "2026.10.09", path: "…\tools\yt-dlp.exe" },
     ffmpeg: { tool: "ffmpeg", source: "system", version: "9.0.1", path: "C:\ffmpeg\bin\ffmpeg.exe" },
     ffprobe: { tool: "ffprobe", source: "system", version: "9.0.1", path: "C:\ffmpeg\bin\ffprobe.exe" },

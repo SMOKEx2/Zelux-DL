@@ -13,6 +13,63 @@ const A: &str = "https://www.youtube.com/watch?v=aaaaaaaaaaa";
 const B: &str = "https://www.youtube.com/watch?v=bbbbbbbbbbb";
 const C: &str = "https://www.youtube.com/watch?v=ccccccccccc";
 
+#[tokio::test]
+async fn playlist_folders_are_unique_grouped_and_mix_only_is_limited() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = core_in(tmp.path()).await;
+    assert_eq!(core.settings().video.youtube_mix_limit, 200);
+    core.update_settings(&json!({"video": {"youtubeMixLimit": 2}}))
+        .unwrap();
+    let entries = json!([{"url": A, "title": "First song"}, {"url": B, "title": "Second song"}, {"url": C, "title": "Third song"}]);
+    let curated = core
+        .confirm_video(decision(entries.clone(), json!({})))
+        .unwrap();
+    assert_eq!(curated.len(), 3);
+    assert!(
+        curated[0]
+            .save_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .contains("My playlist [PL-")
+    );
+    assert!(
+        curated
+            .iter()
+            .all(|item| item.save_dir == curated[0].save_dir
+                && item.media.as_ref().unwrap().download_group
+                    == curated[0].media.as_ref().unwrap().download_group)
+    );
+    assert!(curated[0].media.as_ref().unwrap().download_group.is_some());
+    let repeated = core
+        .confirm_video(decision(entries.clone(), json!({})))
+        .unwrap();
+    assert_ne!(curated[0].save_dir, repeated[0].save_dir);
+    let long_title = core
+        .confirm_video(decision(
+            entries.clone(),
+            json!({"title": "เพลง".repeat(100)}),
+        ))
+        .unwrap();
+    let folder = long_title[0]
+        .save_dir
+        .file_name()
+        .unwrap()
+        .to_string_lossy();
+    assert!(folder.contains(" [PL-") && folder.ends_with(']'));
+    let mix = core.confirm_video(decision(entries, json!({"pageUrl": "https://www.youtube.com/watch?v=aaaaaaaaaaa&list=RDaaaaaaaaaaa", "title": ""}))).unwrap();
+    assert_eq!(mix.len(), 2);
+    assert!(
+        mix[0]
+            .save_dir
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("First song [RD-")
+    );
+    core.shutdown().await;
+}
+
 async fn core_in(dir: &Path) -> Core {
     let core = Core::start(CoreOptions {
         data_dir: dir.join("data"),
@@ -180,9 +237,75 @@ async fn one_at_a_time_puts_the_playlist_into_a_one_download_queue() {
         1
     );
 
-    // Without the option the entries don't join it.
+    // Without the sequential option a playlist still uses a bounded queue.
     let items = core.confirm_video(decision(entries, json!({}))).unwrap();
-    assert!(items.iter().all(|i| i.queue_id.is_none()));
+    assert!(
+        items
+            .iter()
+            .all(|i| i.queue_id.as_deref() == Some("playlist-downloads"))
+    );
+    assert_eq!(
+        core.queues()
+            .iter()
+            .find(|q| q.id == "playlist-downloads")
+            .unwrap()
+            .max_concurrent,
+        3
+    );
+    for (requested, expected) in [(8, 8), (100, 10), (0, 1)] {
+        let settings = core
+            .update_settings(&json!({"video":{"concurrentDownloads":requested}}))
+            .unwrap();
+        assert_eq!(settings.video.concurrent_downloads, expected);
+        assert_eq!(
+            core.queues()
+                .iter()
+                .find(|q| q.id == "playlist-downloads")
+                .unwrap()
+                .max_concurrent,
+            expected
+        );
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_large_playlist_never_starts_more_than_three_jobs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let core = core_with_fake_tools(tmp.path(), "youtube_bbb.json").await;
+    let entries: Vec<_> = (0..200)
+        .map(|i| json!({"url": A, "title": format!("Track {i}"), "index": i + 1}))
+        .collect();
+    let items = core
+        .confirm_video(decision(json!(entries), json!({"mode": {"type": "now"}})))
+        .unwrap();
+    assert_eq!(items.len(), 200);
+    let mut saw_active = false;
+    for _ in 0..12 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let active = core
+            .bootstrap()
+            .items
+            .iter()
+            .filter(|i| i.status.is_active())
+            .count();
+        saw_active |= active > 0;
+        assert!(active <= 3, "started {active} jobs at once");
+    }
+    assert!(saw_active, "the queue must actually start jobs");
+    // Toolbar Resume bypasses queue admission, but must not launch 200 extractors.
+    core.start_items(&items.iter().map(|i| i.id.clone()).collect::<Vec<_>>());
+    for _ in 0..10 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        let active = core
+            .bootstrap()
+            .items
+            .iter()
+            .filter(|i| i.status.is_active())
+            .count();
+        assert!(active <= 3, "Resume started {active} heavy jobs at once");
+    }
+    core.stop_queue("playlist-downloads");
+    core.shutdown().await;
 }
 
 /// A stand-in yt-dlp printing `fixture` (after ~1 s) for anything but `--version`.

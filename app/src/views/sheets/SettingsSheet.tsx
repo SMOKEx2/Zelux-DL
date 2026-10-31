@@ -744,6 +744,7 @@ function Video({ s }: { s: Settings }) {
       <Group title={t("Tools")}>
         {tool("ytDlp", "yt-dlp")}
         {tool("ffmpeg", "ffmpeg")}
+        {tool("galleryDl", "gallery-dl")}
         {tool("deno", t("Deno (YouTube signatures)"))}
         <Row title={t("Keep yt-dlp updated automatically")}>
           <Switch checked={s.video.autoUpdate} label={t("Auto-update yt-dlp")} onChange={(v) => save({ video: { autoUpdate: v } })} />
@@ -772,6 +773,12 @@ function Video({ s }: { s: Settings }) {
         </Row>
         <Row title={t("Audio format")}>
           <Segmented size="sm" label={t("Audio format")} value={s.video.audioFormat} onChange={(v) => save({ video: { audioFormat: v } })} options={["mp3", "m4a", "opus", "flac"].map((c) => ({ value: c, label: c.toUpperCase() }))} />
+        </Row>
+        <Row title={t("YouTube Mix limit")} hint={t("Limits automatically generated Mix playlists only. Creator playlists download all songs.")}>
+          <NumberField value={s.video.youtubeMixLimit ?? 200} min={1} max={10000} label={t("YouTube Mix limit")} suffix={t("songs")} onCommit={(v) => save({ video: { youtubeMixLimit: v } })} />
+        </Row>
+        <Row title={t("Simultaneous video and music downloads")} hint={t("Default 3, adjustable from 1 to 10. Lowering the limit lets active downloads finish before starting more.")}>
+          <NumberField value={s.video.concurrentDownloads ?? 3} min={1} max={10} label={t("Simultaneous video and music downloads")} onCommit={(v) => save({ video: { concurrentDownloads: v } })} />
         </Row>
         <Toggle title={t("Embed subtitles")} value={s.video.embedSubtitles} onChange={(v) => save({ video: { embedSubtitles: v } })} />
         <Row title={t("Subtitle languages")} hint={t("e.g. en.*, cs, all")}>

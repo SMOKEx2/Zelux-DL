@@ -97,18 +97,82 @@ pub fn context_args(
 
 /// Probe-specific arguments (`-J`, flat playlists).
 pub fn probe_args(url: &str, ctx: &RequestContext) -> Vec<String> {
-    vec![
+    let playlist = youtube_playlist_id(url);
+    let mut args = vec![
         "-J".into(),
         "--no-warnings".into(),
         "--flat-playlist".into(),
-        if ctx.want_playlist || is_single_post_media_url(url) {
+        if ctx.want_playlist || playlist.is_some() || is_single_post_media_url(url) {
             "--yes-playlist".into()
         } else {
             "--no-playlist".into()
         },
-        "--".into(),
-        url.into(),
-    ]
+    ];
+    if playlist.as_deref().is_some_and(|id| id.starts_with("RD")) {
+        args.extend([
+            "--playlist-end".into(),
+            ctx.playlist_limit
+                .unwrap_or(200)
+                .clamp(1, 10000)
+                .to_string(),
+        ]);
+    }
+    let target = match playlist {
+        Some(id) if !id.starts_with("RD") => format!("https://www.youtube.com/playlist?list={id}"),
+        _ => url.to_owned(),
+    };
+    args.extend(["--".into(), target]);
+    args
+}
+
+pub fn youtube_playlist_id(raw: &str) -> Option<String> {
+    let url = url::Url::parse(raw).ok()?;
+    let host = url.host_str()?;
+    if !matches!(url.scheme(), "http" | "https")
+        || !(host == "youtu.be" || host == "youtube.com" || host.ends_with(".youtube.com"))
+    {
+        return None;
+    }
+    url.query_pairs()
+        .find(|(key, _)| key == "list")
+        .map(|(_, id)| id.into_owned())
+        .filter(|id| {
+            !id.is_empty()
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+        })
+}
+
+#[cfg(test)]
+mod youtube_playlist_tests {
+    use super::*;
+
+    #[test]
+    fn mix_is_bounded_but_curated_playlist_is_not() {
+        let mix = "https://www.youtube.com/watch?v=0fcsGS1dEro&list=RD0fcsGS1dEro&start_radio=1";
+        let args = probe_args(mix, &RequestContext::default());
+        assert!(args.windows(2).any(|a| a == ["--playlist-end", "200"]));
+        assert!(args.iter().any(|a| a == "--yes-playlist"));
+        let ctx = RequestContext {
+            playlist_limit: Some(17),
+            ..Default::default()
+        };
+        assert!(
+            probe_args(mix, &ctx)
+                .windows(2)
+                .any(|a| a == ["--playlist-end", "17"])
+        );
+        let curated = "https://www.youtube.com/watch?v=m4lNSIy_bUg&list=PLW0neZhJcBZg";
+        let args = probe_args(curated, &ctx);
+        assert!(!args.iter().any(|a| a == "--playlist-end"));
+        assert_eq!(
+            args.last().unwrap(),
+            "https://www.youtube.com/playlist?list=PLW0neZhJcBZg"
+        );
+        assert!(youtube_playlist_id("https://youtube.com.evil.test/watch?list=PL123").is_none());
+        assert!(youtube_playlist_id("file://youtube.com/playlist?list=PL123").is_none());
+    }
 }
 
 /// Social post URLs may contain several images/videos; treat their media as a playlist even

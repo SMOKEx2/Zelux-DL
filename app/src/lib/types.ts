@@ -253,6 +253,8 @@ export interface Settings {
     preferredHeight: number;
     container: string;
     audioFormat: string;
+    youtubeMixLimit: number;
+    concurrentDownloads: number;
     embedSubtitles: boolean;
     subtitleLangs: string;
     embedThumbnail: boolean;

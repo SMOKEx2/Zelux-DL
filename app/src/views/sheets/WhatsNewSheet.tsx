@@ -18,6 +18,16 @@ type Change = { icon: IconName; title: string; body: string; credit?: string; ac
  */
 const CHANGES: Change[] = [
   {
+    icon: "music",
+    title: tk("YouTube music playlists"),
+    body: tk("Paste playlist links in the extension. Mix playlists default to 200 songs; creator playlists download all songs into a separate folder with one completion notice."),
+  },
+  {
+    icon: "settings",
+    title: tk("gallery-dl tool status"),
+    body: tk("View gallery-dl below ffmpeg and adjust the YouTube Mix limit below Audio format in Video & streams settings."),
+  },
+  {
     icon: "folder-open",
     title: tk("Social post folders and duplicate skips"),
     body: tk("Posts from Facebook, Instagram, and X are grouped into a folder named for the site and post time; single images stay in the main folder. Duplicate post images are skipped and reported."),

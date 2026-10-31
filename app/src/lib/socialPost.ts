@@ -29,3 +29,8 @@ export function isSinglePostMediaUrl(raw: string): boolean {
 export function initialMediaSelection(urls: readonly string[], requireChoice: boolean): Set<string> {
   return requireChoice ? new Set() : new Set(urls);
 }
+
+/** A playlist may contain the same URL at more than one position. */
+export function mediaSelectionKey(url: string, index: number): string {
+  return `${index}:${url}`;
+}

@@ -145,6 +145,8 @@ pub(crate) struct Inner {
     pub events: broadcast::Sender<CoreEvent>,
     pub engine: prism_engine::Engine,
     pub video: prism_video::VideoService,
+    /// Bound extractor/converter processes even when Resume bypasses queue admission.
+    pub video_slots: jobs::VideoLimiter,
     pub torrent: tokio::sync::OnceCell<prism_torrent::TorrentEngine>,
     pub queue_limiters: Mutex<HashMap<String, Arc<prism_engine::RateLimiter>>>,
     /// Held while queue admission counts free slots and starts items (see `admit`).
@@ -247,12 +249,14 @@ impl Core {
             queue_was_busy: HashSet::new(),
             last_schedule_tick: chrono::Local::now().naive_local(),
         };
+        let video_slots = jobs::VideoLimiter::new(state.settings.video.concurrent_downloads);
         let core = Core(Arc::new(Inner {
             db,
             state: Mutex::new(state),
             events,
             engine,
             video,
+            video_slots,
             torrent: tokio::sync::OnceCell::new(),
             queue_limiters: Mutex::new(HashMap::new()),
             admission: Mutex::new(()),
@@ -523,6 +527,7 @@ impl Core {
             let mut st = self.0.state.lock();
             let mut s = st.settings.clone();
             s.apply_patch(patch).context("invalid settings")?;
+            s.video.concurrent_downloads = s.video.concurrent_downloads.clamp(1, 10);
             st.settings = s.clone();
             s
         };
@@ -550,6 +555,18 @@ impl Core {
         self.0.engine.global_limiter().set_rate(global);
         self.apply_engine_config();
         self.0.video.set_options(jobs::video_options(&s));
+        self.0.video_slots.set_limit(s.video.concurrent_downloads);
+        if let Some(mut queue) = self
+            .queues()
+            .into_iter()
+            .find(|q| q.id == "playlist-downloads")
+            && queue.max_concurrent != s.video.concurrent_downloads
+        {
+            queue.max_concurrent = s.video.concurrent_downloads;
+            if let Err(error) = self.upsert_queue(queue) {
+                tracing::warn!("could not update playlist concurrency: {error:#}");
+            }
+        }
         if let Some(t) = self.0.torrent.get() {
             t.set_limits(global, global);
         }
@@ -740,7 +757,11 @@ impl Core {
             return Ok(());
         }
         self.with_item(id, |i| {
-            i.status = Status::Connecting;
+            i.status = if i.kind == ItemKind::Video {
+                Status::Queued
+            } else {
+                Status::Connecting
+            };
             i.error = None;
             i.last_try_at = Some(now_ms());
             if let Some(media) = &mut i.media {
@@ -872,10 +893,10 @@ impl Core {
                 job.pause();
             }
             if delete_files {
-                remove_item_files(&item);
+                remove_item_files(&self.0.data_dir, &item);
             } else if leaving_list && item.status != Status::Completed {
                 // A partial file can't be resumed once its item is gone: don't leave it behind.
-                remove_partial_files(&item);
+                remove_partial_files(&self.0.data_dir, &item);
             }
             if !leaving_list {
                 self.with_item(id, |i| {
@@ -946,7 +967,7 @@ impl Core {
             job.cancel(true);
         }
         let item = self.item(id).ok_or_else(|| anyhow!("unknown item"))?;
-        remove_item_files(&item);
+        remove_item_files(&self.0.data_dir, &item);
         self.with_item(id, |i| {
             i.downloaded = 0;
             i.resume = None;
@@ -1599,7 +1620,7 @@ fn move_file(from: &Path, to: &Path) -> std::io::Result<()> {
     }
 }
 
-fn remove_item_files(item: &DownloadItem) {
+fn remove_item_files(data_dir: &Path, item: &DownloadItem) {
     // A skipped duplicate references the original file; it does not own that file.
     if item
         .media
@@ -1609,7 +1630,7 @@ fn remove_item_files(item: &DownloadItem) {
         return;
     }
     let _ = std::fs::remove_file(item.path());
-    remove_partial_files(item);
+    remove_partial_files(data_dir, item);
 }
 
 /// What was running before a restart for an update (see [`Core::shutdown_for_restart`]).
@@ -1667,7 +1688,7 @@ fn resume_part_path(item: &DownloadItem) -> Option<PathBuf> {
 }
 
 /// The in-progress file, its sidecar directory and a video's temp folder.
-fn remove_partial_files(item: &DownloadItem) {
+fn remove_partial_files(data_dir: &Path, item: &DownloadItem) {
     if let Some(part) = resume_part_path(item) {
         // Only Prism's own partial files/folders (the path may come from an imported list).
         let name = part
@@ -1688,7 +1709,7 @@ fn remove_partial_files(item: &DownloadItem) {
     side.push(".d");
     let _ = std::fs::remove_dir_all(PathBuf::from(side));
     if item.kind == ItemKind::Video {
-        let _ = std::fs::remove_dir_all(jobs::video_temp_dir(item));
+        let _ = std::fs::remove_dir_all(jobs::video_temp_dir(data_dir, item));
     }
 }
 

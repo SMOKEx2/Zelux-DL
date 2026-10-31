@@ -1035,5 +1035,16 @@
   "No duplicate files found": "ไม่พบไฟล์ซ้ำ",
   "Could not scan duplicate files": "สแกนหาไฟล์ซ้ำไม่ได้",
   "Only completed files still present on disk are checked.": "ตรวจเฉพาะไฟล์ที่ดาวน์โหลดเสร็จและยังอยู่ในดิสก์",
-  "Scan for duplicates": "สแกนหาไฟล์ซ้ำ"
+  "Scan for duplicates": "สแกนหาไฟล์ซ้ำ",
+  "YouTube Mix limit": "จำนวนเพลงสูงสุดของ YouTube Mix",
+  "Limits automatically generated Mix playlists only. Creator playlists download all songs.": "จำกัดเฉพาะ Mix ที่ YouTube สร้างอัตโนมัติ ส่วน Playlist ที่ผู้ใช้สร้างจะโหลดทุกเพลง",
+  "songs": "เพลง",
+  "{format} audio": "เสียง {format}",
+  "Download {number} as {format}": "ดาวน์โหลด {number} เพลงเป็น {format}",
+  "YouTube music playlists": "ดาวน์โหลดเพลงจาก YouTube Playlist",
+  "Paste playlist links in the extension. Mix playlists default to 200 songs; creator playlists download all songs into a separate folder with one completion notice.": "วางลิงก์ Playlist ในส่วนขยาย โดย Mix จำกัดเริ่มต้น 200 เพลง ส่วน Playlist ที่ผู้ใช้สร้างจะโหลดทั้งหมด แยกโฟลเดอร์และแจ้งเสร็จครั้งเดียว",
+  "gallery-dl tool status": "สถานะเครื่องมือ gallery-dl",
+  "View gallery-dl below ffmpeg and adjust the YouTube Mix limit below Audio format in Video & streams settings.": "ดู gallery-dl ใต้ ffmpeg และปรับจำนวนเพลงสูงสุดของ YouTube Mix ใต้รูปแบบเสียง ในการตั้งค่าวิดีโอและสตรีม",
+  "Simultaneous video and music downloads": "จำนวนวิดีโอและเพลงที่โหลดพร้อมกัน",
+  "Default 3, adjustable from 1 to 10. Lowering the limit lets active downloads finish before starting more.": "ค่าเริ่มต้น 3 งาน ปรับได้ 1–10 งาน เมื่อลดจำนวน งานที่กำลังโหลดจะทำต่อจนจบก่อนเริ่มงานเพิ่ม"
 }

@@ -46,6 +46,7 @@ function reply(msg) {
     case 'probeStream':
       return { ok: true, variants: MOCK_VARIANTS.map((v) => ({ ...v, url: new URL(v.url, msg.url).href })) };
     case 'open':
+    case 'openVideoUrl':
       return { ok: true };
     default:
       return { ok: false, error: { code: 'unknown_type', message: `unknown message type ${msg.type}` } };
